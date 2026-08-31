@@ -25,6 +25,10 @@ async fn main() {
         },
         base.clone(),
         key.clone(),
+        // A dry run queues nothing: it never reaches the IVR webhook that would
+        // collect a hand-over. This argument was added to CallControl and never
+        // reached here, which is why the tool stopped compiling.
+        rustvani::vokoo::Handovers::new(),
     );
 
     let mut runner = FlowRunner::new(&flow, &control);
@@ -40,6 +44,13 @@ async fn main() {
                 let label = flow.node(next).map(|n| n.name.as_str()).unwrap_or(next);
                 println!("   {outcome:<14} -> {label}");
             }
+        }
+        // Added to NodeAction after this tool was last built. A flow that
+        // opens on a monitor node is a real shape the runner reports; the dry
+        // run has nothing to listen to, so it says so and stops.
+        NodeAction::Monitor { node, .. } => {
+            println!("-> opens on MONITOR '{}' — nothing to listen to in a dry run", node.name);
+            return;
         }
         NodeAction::Finished(reason) => {
             println!("-> the call would END without a conversation: {reason}");
