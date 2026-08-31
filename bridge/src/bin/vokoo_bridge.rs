@@ -257,6 +257,7 @@ fn write_trail(
     record: &rustvani::vokoo::CallRecord,
     runner: &rustvani::vokoo::FlowRunner<'_>,
     written: &mut usize,
+    trigger: &str,
 ) {
     for (offset, step) in runner.trail.iter().skip(*written).enumerate() {
         // The runner's own position in the walk is the sequence. Letting the
@@ -268,7 +269,11 @@ fn write_trail(
             &step.implementation,
             &step.outcome,
             0,
-            "call.answered",
+            // Which handler this step belonged to. It was written as
+            // "call.answered" whatever ran, which made the conversation and any
+            // post-call work indistinguishable in one call's timeline — the
+            // thing call_events.trigger_event exists to separate.
+            trigger,
             serde_json::json!({}),
         );
     }
@@ -769,7 +774,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                         ),
                     }
                 }
-                write_trail(&record, r, &mut trail_written);
+                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
             }
             // Listening before anyone has spoken. The tap the listener drinks
             // from belongs to the conversational pipeline, and there is no
@@ -781,7 +786,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                     "[call={call}] flow starts at {} — listening before a conversation is not supported yet",
                     node.name
                 );
-                write_trail(&record, r, &mut trail_written);
+                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
                 record
                     .close(Some("monitor_first"), None, None, serde_json::json!({}))
                     .await;
@@ -789,7 +794,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             }
             rustvani::vokoo::NodeAction::Finished(reason) => {
                 log::info!("[call={call}] flow ended before any conversation: {reason}");
-                write_trail(&record, r, &mut trail_written);
+                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
                 record.close(Some(&reason), None, None, serde_json::json!({})).await;
                 return;
             }
@@ -889,8 +894,28 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                 }
             }
         };
-        let rt = RealtimeProcessor::new(session, PIPELINE_SAMPLE_RATE)
-            .with_outcomes(outcome_tx.clone())
+        let mut rt = RealtimeProcessor::new(session, PIPELINE_SAMPLE_RATE)
+            .with_outcomes(outcome_tx.clone());
+
+        // Tools are reachable only when a flow ran: the organisation and the
+        // carrier's ucid come from the call control the flow built, and a call
+        // that fell back to the number's agent has neither. Without this the
+        // model is told a tool call cannot be answered, which is the truth for
+        // that call rather than a failure.
+        if let Some(c) = control.as_ref() {
+            let ctx = c.service();
+            rt = rt.with_tools(rustvani::services::realtime::ToolDispatch {
+                supabase_url: ctx.supabase_url.to_string(),
+                service_key: ctx.service_key.to_string(),
+                org_id: ctx.org_id.to_string(),
+                ucid: ctx.ucid.to_string(),
+                // The flow's own reporting function, which is answered by the
+                // flow and must not be looked up as a tool.
+                outcome_function: "finish_call".into(),
+            });
+        }
+
+        let rt = rt
             .with_greeting(env_or(
                 "GREETING_PROMPT",
                 "The caller has just connected. Greet them in one short sentence                  and ask how you can help.",
@@ -1070,7 +1095,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                     }
                 };
                 log::info!("[call={call}] FLOW_TRAIL {}", serde_json::json!(r.trail));
-                write_trail(&record, r, &mut trail_written);
+                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
                 if keep_open {
                     listening = true;
                     continue;
