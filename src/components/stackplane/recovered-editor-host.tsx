@@ -120,9 +120,31 @@ type AgentTool = NodeType | "reviewNote"
 
 type StarterKind = "reception" | "handoff" | "afterHours" | "monitoredTransfer"
 
-export function RecoveredEditorHost() {
-  const initialDiagrams = useMemo(() => loadInitialDiagrams(), [])
+/**
+ * The editor, over whatever supplies its diagrams.
+ *
+ * With no props it keeps its original behaviour: diagrams from localStorage,
+ * saved back there. Given a diagram and a save handler it edits that instead,
+ * which is how a real flow reaches the canvas — the flow is fetched and
+ * converted outside this component, so it knows nothing about the API or about
+ * transitions.
+ */
+export function RecoveredEditorHost({
+  diagram: providedDiagram,
+  onSave,
+}: {
+  diagram?: Diagram
+  onSave?: (diagram: Diagram) => Promise<boolean>
+} = {}) {
+  const initialDiagrams = useMemo(
+    () => (providedDiagram ? [providedDiagram] : loadInitialDiagrams()),
+    [providedDiagram],
+  )
   const [diagrams, setDiagrams] = useState<Diagram[]>(initialDiagrams)
+  // localStorage is this editor's own store. A diagram handed in belongs to the
+  // caller, and a second copy here would be one the next reader has no reason
+  // to prefer and no way to tell is stale.
+  const ownsStorage = !providedDiagram
   const [routeDiagramId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null
     return readRouteDiagramId()
@@ -185,14 +207,16 @@ export function RecoveredEditorHost() {
         if (!response.ok) return
         const payload = (await response.json()) as { workspace?: { diagrams?: Diagram[] } }
         const backendDiagrams = payload.workspace?.diagrams
-        if (cancelled || !Array.isArray(backendDiagrams)) return
+        // Same reason: the caller's diagram is the subject, and the workspace
+        // endpoint knows nothing about it.
+        if (cancelled || !ownsStorage || !Array.isArray(backendDiagrams)) return
         const normalized = backendDiagrams.map(normalizeDiagram).filter((item) => item.graph.nodes.length > 0)
         if (normalized.length === 0) {
           setBackendLoaded(true)
           return
         }
         setDiagrams(normalized)
-        writeJSON(STORAGE_KEY, normalized)
+        if (ownsStorage) writeJSON(STORAGE_KEY, normalized)
         setBackendLoaded(true)
       } catch {
         // Offline: keep the localStorage copy already loaded into state.
@@ -252,7 +276,7 @@ export function RecoveredEditorHost() {
               })
             : item,
         )
-        writeJSON(STORAGE_KEY, next)
+        if (ownsStorage) writeJSON(STORAGE_KEY, next)
         return next
       })
     },
@@ -427,7 +451,7 @@ export function RecoveredEditorHost() {
         draft.updatedAt = now()
         return draft
       })
-      writeJSON(STORAGE_KEY, next)
+      if (ownsStorage) writeJSON(STORAGE_KEY, next)
       const nextActive = next.find((item) => item.id === diagram.id)
       if (nextActive) {
         if (options.syncBackend) void syncBackendFromRecoveredDiagram(nextActive)
@@ -565,6 +589,14 @@ export function RecoveredEditorHost() {
 
   async function saveActiveDiagram() {
     if (!diagram) return
+    // A provided diagram belongs to whoever provided it. Writing it to
+    // localStorage as well would leave a second copy that the next reader has
+    // no reason to prefer, and no way to tell is stale.
+    if (onSave) {
+      const saved = await onSave(diagram)
+      setToast(saved ? "Saved." : "Could not save.")
+      return
+    }
     writeJSON(STORAGE_KEY, diagrams)
     const synced = await syncBackendFromRecoveredDiagram(diagram)
     setToast(synced ? "Saved to backend." : "Saved locally. Backend sync failed.")
