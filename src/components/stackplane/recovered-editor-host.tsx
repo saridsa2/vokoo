@@ -1078,7 +1078,7 @@ export function RecoveredEditorHost({
         <header className="canvas-toolbar">
           {/* Back to the flow list. This canvas is entered from there, so the
               first control is the way out of it. */}
-          <button className="round-button menu-button" aria-label="Back to flows" title="Back to flows" onClick={() => (window.location.href = "/flows")}><Icon name="back" /></button>
+          <button className="round-button menu-button" aria-label="Back to the composer" title="Back to the composer" onClick={() => (window.location.href = "/composer")}><Icon name="back" /></button>
           <div className="title-pill">
             <input className="diagram-name" value={diagram.name} aria-label="Flow name" onChange={(event) => renameDiagram(event.target.value)} />
           </div>

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { ScreenPlaceholder } from "@/components/application/screen/screen-placeholder";
 import { AgentsScreen } from "@/components/application/screens/agents-screen";
 import { ResourceListScreen } from "@/components/application/screens/resource-list-screen";
-import { ComposerScreen } from "@/components/application/screens/composer-screen";
+import { FlowsWorkspaceScreen } from "@/components/application/screens/flows-workspace-screen";
 import { CredentialsScreen } from "@/components/application/screens/credentials-screen";
 import { MembersScreen, OrganizationScreen } from "@/components/application/screens/settings-screens";
 
@@ -48,7 +48,7 @@ type ScreenDefinition = {
 };
 
 const SCREENS: Record<string, ScreenDefinition> = {
-    composer: { title: "Composer", description: "Describe an agent in plain language and generate its configuration." },
+    composer: { title: "Composer", description: "The flows that decide what happens on a call.", resource: "flows" },
 
     agents: {
         title: "Agents",
@@ -103,7 +103,9 @@ export default async function ConsoleScreen({ params }: { params: Promise<{ scre
     // Bespoke screens first, then anything with a column definition renders
     // through the shared list. Whatever is left falls back to a placeholder
     // naming the endpoint it will read.
-    if (route === "composer") return <ComposerScreen />;
+    // The composer is the workspace: it lists the flows, and opening one goes
+    // to /flows/:id, which takes the whole window.
+    if (route === "composer") return <FlowsWorkspaceScreen />;
     if (route === "agents") return <AgentsScreen />;
     if (route === "settings/credentials") return <CredentialsScreen />;
     if (route === "settings/organization") return <OrganizationScreen />;
