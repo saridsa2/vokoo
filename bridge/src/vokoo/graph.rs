@@ -264,6 +264,105 @@ async fn load(base: &str, key: &str, did: &str) -> Result<Option<Flow>, String> 
 /// `agentPhoneName` alongside the key. Neither is a secret, both are per
 /// organisation, and neither belongs in an environment variable — connecting
 /// KooKoo in the console has to be the one place these are configured.
+/// The provider's model id for an agent, from the catalogue.
+///
+/// `LIVE_MODEL` in `bridge.env` applies one model to every call, which is wrong
+/// in two ways: a second agent cannot choose a different model, and an id
+/// renamed by the provider needs a file edited on the server. The catalogue is
+/// where that id belongs, so a rename becomes an `UPDATE`.
+///
+/// Two requests rather than one embedded query: `agents.model` names a
+/// `catalogue_models.id` but is not a foreign key to it, so PostgREST has no
+/// relationship to traverse.
+///
+/// `None` on anything unexpected — no such agent, a model missing from the
+/// catalogue, a row marked inactive, a request that failed. The caller keeps
+/// `LIVE_MODEL`, so a catalogue mistake degrades the call rather than silencing
+/// the phone. The same contract `resolve_for_did` and `agent_prompt` follow.
+pub async fn model_for_agent(base: &str, key: &str, agent_id: &str) -> Option<String> {
+    if base.is_empty() || key.is_empty() || agent_id.is_empty() {
+        return None;
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let agents = get(
+        &client,
+        base,
+        key,
+        "agents",
+        &[
+            ("id", format!("eq.{agent_id}")),
+            ("select", "model".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|e| log::warn!("[model] could not read agent {agent_id} ({e})"))
+    .ok()?;
+
+    let model_id = agents.first().and_then(|a| a.get("model")).and_then(Value::as_str)?;
+
+    let models = get(
+        &client,
+        base,
+        key,
+        "catalogue_models",
+        &[
+            ("id", format!("eq.{model_id}")),
+            ("is_active", "eq.true".into()),
+            ("select", "provider_model_id".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|e| log::warn!("[model] could not read the catalogue for {model_id} ({e})"))
+    .ok()?;
+
+    let resolved = models
+        .first()
+        .and_then(|m| m.get("provider_model_id"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    if resolved.is_none() {
+        log::warn!("[model] {model_id} is not an active row in catalogue_models");
+    }
+    resolved
+}
+
+/// The agent's instructions, with its skills folded in.
+///
+/// The bridge used to send a system prompt from its environment, so the skills
+/// attached to an agent in the console never reached the model: it was told it
+/// was a receptionist and left to invent what a receptionist there can do. It
+/// invented differently on different calls — the same request for a
+/// cardiologist was refused twice and accepted once.
+///
+/// `compose_agent_prompt` assembles the prompt, the skills, each skill's tools
+/// and the closing instruction to escalate anything not on the list. That last
+/// line is what makes an out-of-scope request a decision rather than a guess.
+pub async fn agent_prompt(base: &str, key: &str, agent_id: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+
+    let response = client
+        .post(format!("{base}/rest/v1/rpc/compose_agent_prompt"))
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&serde_json::json!({ "p_agent_id": agent_id }))
+        .send()
+        .await
+        .ok()?;
+
+    response.json::<Option<String>>().await.ok().flatten().filter(|s| !s.trim().is_empty())
+}
+
 pub async fn vendor_account(
     base: &str,
     key: &str,

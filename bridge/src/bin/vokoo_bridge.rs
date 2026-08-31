@@ -701,14 +701,74 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
 
     let mut agent_node_id: Option<String> = None;
     let mut trail_written = 0usize;
+    // Replaced by the flow's agent, when there is one.
+    let mut instructions = cfg.system_prompt.clone();
+    // Likewise the model: `LIVE_MODEL` is the fallback, not the source.
+    let mut live_model = cfg.live_model.clone();
     if let Some(r) = runner.as_mut() {
         match r.advance().await {
-            rustvani::vokoo::NodeAction::RunAgent { node, timeout_seconds, .. } => {
+            rustvani::vokoo::NodeAction::RunAgent { node, agent_id, timeout_seconds } => {
                 log::info!(
                     "[call={call}] flow reached agent node {} (timeout {}s)",
                     node.name, timeout_seconds
                 );
                 agent_node_id = Some(node.id.clone());
+
+                // The flow names an agent; that agent's prompt and skills live
+                // in the database. Falling back to the environment's prompt
+                // keeps a call working when the lookup fails, but it is a
+                // degraded call: without the skill list the model has no
+                // boundary to refuse against and improvises one.
+                if !agent_id.is_empty() {
+                    match rustvani::vokoo::agent_prompt(
+                        &cfg.supabase_url,
+                        &cfg.service_key,
+                        &agent_id,
+                    )
+                    .await
+                    {
+                        Some(prompt) => {
+                            log::info!(
+                                "[call={call}] agent {agent_id} — composed prompt, {} chars",
+                                prompt.len()
+                            );
+                            instructions = prompt;
+                        }
+                        None => log::warn!(
+                            "[call={call}] could not compose a prompt for agent {agent_id} — \
+                             falling back to SYSTEM_PROMPT, which carries no skills"
+                        ),
+                    }
+
+                    // And its model. The catalogue decides which provider model
+                    // this agent runs on, so a provider rename is an `UPDATE`
+                    // rather than an edit to `bridge.env` on the server. A
+                    // missing or inactive row leaves `LIVE_MODEL` standing:
+                    // degraded, not silent.
+                    match rustvani::vokoo::graph::model_for_agent(
+                        &cfg.supabase_url,
+                        &cfg.service_key,
+                        &agent_id,
+                    )
+                    .await
+                    {
+                        Some(model) => {
+                            if model != live_model {
+                                log::info!(
+                                    "[call={call}] agent {agent_id} — model {model} from the \
+                                     catalogue (LIVE_MODEL says {})",
+                                    cfg.live_model
+                                );
+                            }
+                            live_model = model;
+                        }
+                        None => log::warn!(
+                            "[call={call}] no catalogue model for agent {agent_id} — \
+                             falling back to LIVE_MODEL {}",
+                            cfg.live_model
+                        ),
+                    }
+                }
                 write_trail(&record, r, &mut trail_written);
             }
             // Listening before anyone has spoken. The tap the listener drinks
@@ -793,14 +853,14 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
 
     let mut realtime_controls: Option<RealtimeControls> = None;
     let (task, context) = if realtime_mode {
-        log::info!("[call={call}] realtime mode — provider={} model={} voice={}", cfg.realtime_provider, cfg.live_model, cfg.live_voice);
+        log::info!("[call={call}] realtime mode — provider={} model={} voice={}", cfg.realtime_provider, live_model, cfg.live_voice);
         let session: Box<dyn RealtimeSession> = if cfg.realtime_provider == "openai" {
             match OpenAIRealtimeSession::connect(OpenAIRealtimeConfig {
                 api_key: cfg.realtime_key.clone(),
                 base_url: cfg.realtime_base_url.clone(),
-                model: cfg.live_model.clone(),
+                model: live_model.clone(),
                 voice: cfg.live_voice.clone(),
-                instructions: cfg.system_prompt.clone(),
+                instructions: instructions.clone(),
                 ..OpenAIRealtimeConfig::default()
             })
             .await
@@ -814,9 +874,9 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         } else {
             match GeminiLiveSession::connect(GeminiLiveConfig {
                 api_key: cfg.llm_key.clone(),
-                model: cfg.live_model.clone(),
+                model: live_model.clone(),
                 voice: Some(cfg.live_voice.clone()),
-                instructions: cfg.system_prompt.clone(),
+                instructions: instructions.clone(),
                 functions: if flow.is_some() { vec![outcome_function()] } else { Vec::new() },
                 transcribe_only: false,
             })
