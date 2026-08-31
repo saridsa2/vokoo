@@ -89,3 +89,17 @@ export const NAV_TITLES: Record<string, string> = Object.fromEntries(
  * navigation depend on what a screen happens to draw.
  */
 export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer"]);
+
+/**
+ * Routes that take the whole window, navigation included.
+ *
+ * Editing one flow is a place you go rather than a screen you are on: the
+ * canvas wants the width, and it carries its own way out in the back button
+ * beside the flow's name. A rail down the side would cost a column to show
+ * where you already know you are.
+ *
+ * A predicate rather than a set, because the route names a record.
+ */
+export function isFullScreenRoute(pathname: string) {
+    return /^\/flows\/[^/]+$/.test(pathname);
+}

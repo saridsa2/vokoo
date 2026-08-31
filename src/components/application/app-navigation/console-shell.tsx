@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { SidebarNavigationSectionsSubheadings } from "@/components/application/app-navigation/sidebar-navigation/sidebar-sections-subheadings";
-import { NAV_SECTIONS, SPLIT_SCREEN_ROUTES } from "@/components/application/app-navigation/vokoo-nav";
+import { isFullScreenRoute, NAV_SECTIONS, SPLIT_SCREEN_ROUTES } from "@/components/application/app-navigation/vokoo-nav";
 import { SignInScreen } from "@/components/application/auth/sign-in-screen";
 import { useNavCollapse } from "@/hooks/use-nav-collapse";
 import { useSession } from "@/hooks/use-session";
@@ -31,6 +31,14 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
 
     if (!session) {
         return <SignInScreen />;
+    }
+
+    // The auth gate above still applies: this returns the screen without the
+    // navigation, not outside the shell. A route that skipped the shell to get
+    // the width would also skip the gate, which is how a screen ships
+    // unauthenticated by omission.
+    if (isFullScreenRoute(pathname)) {
+        return <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-primary">{children}</main>;
     }
 
     return (
