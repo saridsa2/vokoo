@@ -154,21 +154,38 @@ async fn get(
     response.json::<Vec<Value>>().await.map_err(|e| e.to_string())
 }
 
-/// The published flow for a DID, or `None` to fall back to the agent.
+/// The event a flow handles. A call is the durable object; flows are handlers
+/// bound to events on it, siblings rather than subflows.
+pub const TRIGGER_ANSWERED: &str = "call.answered";
+pub const TRIGGER_ENDED: &str = "call.ended";
+
+/// The published flow that answers a DID, or `None` to fall back to the agent.
 pub async fn resolve_for_did(base: &str, key: &str, did: &str) -> Option<Flow> {
+    resolve_for_event(base, key, did, TRIGGER_ANSWERED).await
+}
+
+/// The published flow bound to one event on a DID.
+///
+/// `number_flows` binds a number to a flow per event, so a number can answer
+/// with one flow and do its post-call work with another. Until that table
+/// exists the lookup falls back to `phone_numbers.flow_id`, which only ever
+/// meant the answering flow — so the fallback applies to `call.answered` and
+/// nothing else. A post-call handler that silently ran the conversation flow
+/// would put a caller-facing node on a call that has already ended.
+pub async fn resolve_for_event(base: &str, key: &str, did: &str, trigger: &str) -> Option<Flow> {
     if base.is_empty() || key.is_empty() || did.is_empty() {
         return None;
     }
-    match load(base, key, did).await {
+    match load(base, key, did, trigger).await {
         Ok(flow) => flow,
         Err(e) => {
-            log::warn!("[flow] could not load a flow for {did} ({e}) — using the agent");
+            log::warn!("[flow] could not load a {trigger} flow for {did} ({e}) — using the agent");
             None
         }
     }
 }
 
-async fn load(base: &str, key: &str, did: &str) -> Result<Option<Flow>, String> {
+async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<Flow>, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
@@ -181,15 +198,52 @@ async fn load(base: &str, key: &str, did: &str) -> Result<Option<Flow>, String> 
         "phone_numbers",
         &[
             ("number", format!("in.({})", spellings(did).join(","))),
-            ("select", "flow_id".into()),
+            ("select", "id,flow_id".into()),
             ("limit", "1".into()),
         ],
     )
     .await?;
 
-    let Some(flow_id) = numbers.first().and_then(|n| n.get("flow_id")).and_then(Value::as_str)
-    else {
-        return Ok(None);
+    let Some(number) = numbers.first() else { return Ok(None) };
+    let number_id = number.get("id").and_then(Value::as_str).unwrap_or_default();
+
+    // The binding is asked first, and its absence is not an error: this runs
+    // against databases from either side of the migration that introduces it.
+    // A failed request here means the table is not there yet, which is a
+    // different thing from the number having no handler for this event.
+    let bound = match get(
+        &client,
+        base,
+        key,
+        "number_flows",
+        &[
+            ("phone_number_id", format!("eq.{number_id}")),
+            ("trigger_event", format!("eq.{trigger}")),
+            ("select", "flow_id".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    {
+        Ok(rows) => rows.first().and_then(|r| r.get("flow_id")).and_then(Value::as_str).map(str::to_owned),
+        Err(e) => {
+            log::debug!("[flow] no number_flows binding readable ({e}) — falling back to phone_numbers.flow_id");
+            None
+        }
+    };
+
+    let flow_id = match bound {
+        Some(id) => id,
+        // See resolve_for_event: the legacy pointer only ever meant the
+        // answering flow.
+        None if trigger == TRIGGER_ANSWERED => {
+            let Some(id) = number.get("flow_id").and_then(Value::as_str) else { return Ok(None) };
+            id.to_owned()
+        }
+        None => {
+            log::info!("[flow] {did} has no {trigger} handler");
+            return Ok(None);
+        }
     };
 
     // Draft flows are excluded by the query rather than filtered after: a draft
@@ -332,6 +386,50 @@ pub async fn model_for_agent(base: &str, key: &str, agent_id: &str) -> Option<St
         log::warn!("[model] {model_id} is not an active row in catalogue_models");
     }
     resolved
+}
+
+/// The functions an agent may call, from its skills' tools.
+///
+/// A sibling of [`agent_prompt`]: the prompt names these tools in prose, and
+/// until this existed nothing declared them, so the model was told about tools
+/// it had no channel to invoke. It reported failures of work it had never been
+/// able to attempt.
+///
+/// Each entry is `{ name, description, schema }`. `schema` is stored as a plain
+/// JSON Schema, which is what a provider's `parameters` field takes — so it is
+/// passed through rather than translated, and the model, the dispatcher's
+/// validation and the composer's config form all read one declaration.
+pub async fn agent_tools(base: &str, key: &str, agent_id: &str) -> Vec<Value> {
+    if base.is_empty() || key.is_empty() || agent_id.is_empty() {
+        return Vec::new();
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let response = client
+        .post(format!("{base}/rest/v1/rpc/compose_agent_tools"))
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
+        .json(&serde_json::json!({ "p_agent_id": agent_id }))
+        .send()
+        .await;
+
+    // An empty list is the safe failure: the agent keeps its prompt and its
+    // outcome function, and simply cannot act. Refusing the call instead would
+    // trade a limited agent for no agent.
+    match response {
+        Ok(r) => r.json::<Vec<Value>>().await.unwrap_or_default(),
+        Err(e) => {
+            log::warn!("[tools] could not read declarations for agent {agent_id}: {e}");
+            Vec::new()
+        }
+    }
 }
 
 /// The agent's instructions, with its skills folded in.

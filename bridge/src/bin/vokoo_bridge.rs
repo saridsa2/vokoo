@@ -122,6 +122,36 @@ struct AgentConfig {
 /// rather than a keyword match on a transcript. `gone_quiet` and `timeout` are
 /// deliberately absent: those are observed by the bridge, and a model asked to
 /// judge its own silence would be guessing.
+/// One of the agent's tools, as the provider wants it.
+///
+/// `tools.schema` is stored as a plain JSON Schema, which is what `parameters`
+/// takes, so it is passed through unchanged. A tool with no schema is skipped
+/// rather than declared with empty parameters: the model would call it with
+/// nothing and the dispatcher would reject it for missing arguments, which
+/// spends a caller's patience to reach a failure we can predict here.
+fn tool_declaration(tool: &serde_json::Value) -> Option<gemini_live::FunctionDeclaration> {
+    let name = tool.get("name")?.as_str()?.to_string();
+    let schema = tool.get("schema")?.clone();
+    if !schema.is_object() {
+        log::warn!("[tools] {name} has no usable schema — not declaring it");
+        return None;
+    }
+    Some(gemini_live::FunctionDeclaration {
+        name,
+        description: tool
+            .get("description")
+            .and_then(|d| d.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        parameters: schema,
+        // Left to the provider's defaults, as the outcome function does. These
+        // control response scheduling for Gemini 2.5-era tools; choosing values
+        // here would be picking behaviour nobody has asked for.
+        scheduling: None,
+        behavior: None,
+    })
+}
+
 fn outcome_function() -> gemini_live::FunctionDeclaration {
     gemini_live::FunctionDeclaration {
         name: "finish_call".into(),
@@ -710,6 +740,9 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     let mut instructions = cfg.system_prompt.clone();
     // Likewise the model: `LIVE_MODEL` is the fallback, not the source.
     let mut live_model = cfg.live_model.clone();
+    // The agent's own tools, declared to the provider beside the flow's
+    // outcome function.
+    let mut agent_functions: Vec<serde_json::Value> = Vec::new();
     if let Some(r) = runner.as_mut() {
         match r.advance().await {
             rustvani::vokoo::NodeAction::RunAgent { node, agent_id, timeout_seconds } => {
@@ -744,6 +777,26 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                              falling back to SYSTEM_PROMPT, which carries no skills"
                         ),
                     }
+
+                    // And the functions those skills grant. The prompt names
+                    // them; without a declaration the model can only talk about
+                    // them, which is how a call came to report "Internal error
+                    // checking slots" for a tool it had never been able to call.
+                    agent_functions = rustvani::vokoo::agent_tools(
+                        &cfg.supabase_url,
+                        &cfg.service_key,
+                        &agent_id,
+                    )
+                    .await;
+                    log::info!(
+                        "[call={call}] agent {agent_id} — {} tool(s) declared: {}",
+                        agent_functions.len(),
+                        agent_functions
+                            .iter()
+                            .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
 
                     // And its model. The catalogue decides which provider model
                     // this agent runs on, so a provider rename is an `UPDATE`
@@ -882,7 +935,15 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                 model: live_model.clone(),
                 voice: Some(cfg.live_voice.clone()),
                 instructions: instructions.clone(),
-                functions: if flow.is_some() { vec![outcome_function()] } else { Vec::new() },
+                functions: if flow.is_some() {
+                    // The outcome function first: it is the one the flow waits
+                    // on, and it exists whether or not the agent has tools.
+                    let mut declared = vec![outcome_function()];
+                    declared.extend(agent_functions.iter().filter_map(tool_declaration));
+                    declared
+                } else {
+                    Vec::new()
+                },
                 transcribe_only: false,
             })
             .await

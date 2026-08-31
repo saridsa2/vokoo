@@ -23,7 +23,7 @@ pub mod runner;
 pub mod tools;
 
 pub use control::{CallControl, CallHandle};
-pub use graph::{agent_prompt, Flow, FlowNode, NodeType};
+pub use graph::{agent_prompt, agent_tools, Flow, FlowNode, NodeType};
 pub use handover::{Handover, Handovers};
 pub use record::CallRecord;
 pub use runner::{FlowRunner, NodeAction, Outcome};
