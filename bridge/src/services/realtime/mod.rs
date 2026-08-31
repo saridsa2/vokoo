@@ -185,6 +185,8 @@ pub struct RealtimeProcessor {
     /// Where caller audio goes once listening. A separate transcribe-only
     /// session drinks from here.
     tap: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>,
+    speaking: Arc<std::sync::atomic::AtomicBool>,
+    spoken: Arc<tokio::sync::Notify>,
 }
 
 impl RealtimeProcessor {
@@ -200,6 +202,8 @@ impl RealtimeProcessor {
             greeting: None,
             outcomes: None,
             tools: None,
+            speaking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            spoken: Arc::new(tokio::sync::Notify::new()),
             listening: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tap: Arc::new(Mutex::new(None)),
         }
@@ -215,6 +219,8 @@ impl RealtimeProcessor {
             session: self.session.clone(),
             listening: self.listening.clone(),
             tap: self.tap.clone(),
+            speaking: self.speaking.clone(),
+            spoken: self.spoken.clone(),
         }
     }
 
@@ -253,6 +259,8 @@ impl RealtimeProcessor {
         let pipeline_rate = self.pipeline_rate;
         let outcomes = self.outcomes.clone();
         let tools = self.tools.clone();
+        let speaking = self.speaking.clone();
+        let spoken = self.spoken.clone();
         let session = self.session.clone();
         let listening = self.listening.clone();
         let (out_rate, events) = {
@@ -276,6 +284,7 @@ impl RealtimeProcessor {
 
                 let frame = match event {
                     RealtimeEvent::Audio(pcm) => {
+                        speaking.store(true, std::sync::atomic::Ordering::Relaxed);
                         // Belt and braces. The listen-only session cannot make
                         // audio at all, but the conversational one may still
                         // have a chunk in flight when the switch happens, and
@@ -336,7 +345,14 @@ impl RealtimeProcessor {
                         log::info!("[realtime] agent: {t}");
                         continue;
                     }
-                    RealtimeEvent::TurnComplete => continue,
+                    // The end of a turn was discarded, which left nothing able to
+                    // answer "has the caller heard this yet?". A hand-over acting
+                    // on an outcome needs that answer or it cuts the agent off.
+                    RealtimeEvent::TurnComplete => {
+                        speaking.store(false, std::sync::atomic::Ordering::Relaxed);
+                        spoken.notify_waiters();
+                        continue;
+                    }
                     // Reported, not acted on here: the flow owns what an
                     // outcome means, and this processor owns only audio.
                     RealtimeEvent::ToolCall { id, name, args } => {
@@ -402,6 +418,32 @@ pub struct RealtimeControls {
     session: Arc<Mutex<Box<dyn RealtimeSession>>>,
     listening: Arc<std::sync::atomic::AtomicBool>,
     tap: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>,
+    /// True between the first audio of a turn and the model finishing it.
+    speaking: Arc<std::sync::atomic::AtomicBool>,
+    /// Woken when a turn finishes, so a waiter does not have to poll.
+    spoken: Arc<tokio::sync::Notify>,
+}
+
+impl RealtimeControls {
+    /// Wait for the agent to finish the sentence it is in the middle of.
+    ///
+    /// The model reports an outcome the moment it has *decided*, not when the
+    /// caller has *heard* it. Acting immediately cuts the agent off mid-word —
+    /// on a hand-over the caller hears "I'm passing you to a—" and then ringing.
+    ///
+    /// Bounded, because a turn that never completes must not hold the call
+    /// open: past the limit the flow proceeds and the tail is lost, which is
+    /// the same outcome as today rather than a worse one.
+    pub async fn wait_until_spoken(&self, limit: std::time::Duration) {
+        if !self.speaking.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let _ = tokio::time::timeout(limit, self.spoken.notified()).await;
+        // The provider has stopped generating, but audio already handed to the
+        // transport is still on its way to the caller. A short grace lets the
+        // last chunks drain rather than being cut by the socket closing.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
 }
 
 impl RealtimeControls {

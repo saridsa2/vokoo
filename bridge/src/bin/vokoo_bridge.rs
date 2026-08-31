@@ -1050,6 +1050,15 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                 );
                 agent_outcome = Some(outcome.to_string());
 
+                // Let the agent finish its sentence before the flow acts on the
+                // outcome. The model reports the moment it has decided, which is
+                // while it is still speaking — a hand-over that fires here cuts
+                // the line mid-word and the caller hears "I'm passing you to a—"
+                // followed by ringing.
+                if let Some(c) = realtime_controls.as_ref() {
+                    c.wait_until_spoken(std::time::Duration::from_secs(4)).await;
+                }
+
                 // Walk the rest of the graph here rather than after the call,
                 // because a node may want the call kept open.
                 let (Some(r), Some(node_id)) = (runner.as_mut(), agent_node_id.as_ref()) else {
