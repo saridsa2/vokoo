@@ -2683,6 +2683,14 @@ button:disabled {
   left: -13px;
 }
 
+/* Pinned to the panel's bottom edge when the panel opens upward, because that
+   is the edge whose position is known — the top depends on how tall the content
+   turned out. */
+.inspector-node-dialog[data-inspector-anchor="bottom"] .inspector-node-caret {
+  top: auto;
+  bottom: var(--inspector-connector-bottom);
+}
+
 .inspector-node-dialog[data-inspector-side="left"] .inspector-node-caret {
   right: -13px;
   transform: translateY(-50%) rotate(225deg);

@@ -1811,7 +1811,16 @@ function NodeInspector({
       open
       className="inspector-node-dialog"
       data-inspector-side={placement.side}
-      style={{ left: placement.left, top: placement.top, "--inspector-connector-y": `${placement.connectorY}px` } as React.CSSProperties}
+      data-inspector-anchor={placement.anchor}
+      style={
+        {
+          left: placement.left,
+          top: placement.anchor === "top" ? placement.top : undefined,
+          bottom: placement.anchor === "bottom" ? placement.bottom : undefined,
+          "--inspector-connector-y": `${placement.connectorY}px`,
+          "--inspector-connector-bottom": `${placement.connectorBottom}px`,
+        } as React.CSSProperties
+      }
     >
       <div aria-hidden="true" className="inspector-node-caret" />
       <aside
@@ -2592,6 +2601,42 @@ function getInspectorPlacement(node: DiagramNode, viewport: Viewport, viewMode: 
   const chromeHeight = 230
   const minBodyHeight = 200
   const minPanelHeight = chromeHeight + minBodyHeight
+  const left = Math.round(
+    clamp(rawLeft, viewportPadding, Math.max(viewportPadding, window.innerWidth - width - viewportPadding)),
+  )
+  const nodeBottom = nodeTop + nodeHeight
+  const nodeMiddle = nodeTop + nodeHeight / 2
+
+  // A node in the bottom third opens upward. Anchoring by the top and letting
+  // the panel grow down means a node near the floor gets a dialog running off
+  // the screen, or shoved up so far it no longer reads as belonging to that
+  // node. Anchoring by the bottom also lets the browser use the panel's real
+  // height rather than the reservation, which is usually smaller.
+  if (nodeTop > window.innerHeight * 0.7) {
+    const bottom = clamp(
+      window.innerHeight - nodeBottom,
+      viewportPadding,
+      Math.max(viewportPadding, window.innerHeight - minPanelHeight - viewportPadding),
+    )
+    const maxHeight = Math.min(
+      window.innerHeight - viewportPadding * 2,
+      Math.max(minPanelHeight, window.innerHeight - bottom - viewportPadding),
+    )
+    const panelBottom = window.innerHeight - bottom
+    return {
+      anchor: "bottom" as const,
+      side,
+      width,
+      maxHeight,
+      left,
+      top: 0,
+      bottom: Math.round(bottom),
+      // Measured from the panel's bottom, since that is the edge we pinned.
+      connectorY: 0,
+      connectorBottom: Math.round(clamp(panelBottom - nodeMiddle, 28, Math.max(28, maxHeight - 28))),
+    }
+  }
+
   const top = clamp(
     nodeTop,
     viewportPadding,
@@ -2603,14 +2648,16 @@ function getInspectorPlacement(node: DiagramNode, viewport: Viewport, viewMode: 
     window.innerHeight - viewportPadding * 2,
     Math.max(minPanelHeight, window.innerHeight - top - viewportPadding),
   )
-  const connectorY = clamp(nodeTop + nodeHeight / 2 - top, 28, Math.max(28, maxHeight - 28))
   return {
+    anchor: "top" as const,
     side,
     width,
     maxHeight,
-    left: Math.round(clamp(rawLeft, viewportPadding, Math.max(viewportPadding, window.innerWidth - width - viewportPadding))),
+    left,
     top: Math.round(top),
-    connectorY: Math.round(connectorY),
+    bottom: 0,
+    connectorY: Math.round(clamp(nodeMiddle - top, 28, Math.max(28, maxHeight - 28))),
+    connectorBottom: 0,
   }
 }
 
