@@ -21,7 +21,7 @@ export function ScreenPlaceholder({
     return (
         <>
             <ScreenHeader title={title} description={description} />
-            <div className="p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-6">
                 <div className="rounded-xl border border-dashed border-secondary p-12 text-center">
                     <p className="text-sm font-medium text-primary">{title} is not built yet</p>
                     <p className="mx-auto mt-1 max-w-md text-sm text-tertiary">

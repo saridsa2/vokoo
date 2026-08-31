@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeftDouble, ChevronRightDouble, SearchLg } from "@/components/icons";
+import { ChevronLeftDouble, ChevronRightDouble } from "@/components/icons";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { VokooLogo } from "@/components/foundations/logo/vokoo-logo";
 import { Tooltip } from "@/components/base/tooltip/tooltip";
@@ -56,10 +56,7 @@ export const SidebarNavigationSectionsSubheadings = ({
             ) : (
                 <div className="flex items-center justify-between gap-5 px-4 lg:pl-5">
                     <VokooLogo className="h-6" />
-                    <div className="flex items-center gap-1">
-                        <ThemeToggle />
-                        <ButtonUtility size="xs" color="tertiary" tooltip="Search" icon={SearchLg} />
-                    </div>
+                    <ThemeToggle />
                 </div>
             )}
 

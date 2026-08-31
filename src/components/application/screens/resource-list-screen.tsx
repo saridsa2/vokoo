@@ -47,12 +47,12 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
             <ScreenHeader
                 title={view.title}
                 description={view.description}
-                actions={view.createLabel ? <Button size="sm">{view.createLabel}</Button> : undefined}
-            />
-
-            <div className="flex flex-col gap-4 p-6">
-                {records.length > 0 && (
-                    <div className="max-w-xs">
+                // Rendered whether or not there are rows yet. Showing it only
+                // once records land makes the pinned header change shape as the
+                // request resolves, and a header that jumps is worse than a
+                // search field with nothing to filter.
+                search={
+                    <div className="w-full md:w-64">
                         <Input
                             icon={SearchLg}
                             placeholder={`Search ${view.title.toLowerCase()}`}
@@ -61,7 +61,11 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
                             aria-label={`Search ${view.title}`}
                         />
                     </div>
-                )}
+                }
+                actions={view.createLabel ? <Button size="sm">{view.createLabel}</Button> : undefined}
+            />
+
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
 
                 {error ? (
                     <div className="rounded-xl bg-error-primary p-6 ring-1 ring-error_subtle">
@@ -83,7 +87,10 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
                         </EmptyState.Content>
                     </EmptyState>
                 ) : (
-                    <TableCard.Root size="md">
+                    // shrink-0: the card sets overflow-hidden, so as a flex child it
+                    // would compress and clip rows rather than let the body scroll.
+                    // Keep its natural height and let the scroll happen above it.
+                    <TableCard.Root size="md" className="shrink-0">
                         <Table aria-label={view.title}>
                             <Table.Header>
                                 {view.columns.map((column, index) => (

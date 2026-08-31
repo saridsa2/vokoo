@@ -101,7 +101,7 @@ export function CredentialsScreen() {
                 description="Accounts VoKoo uses on your behalf — the model providers your agents run on, and the carrier that carries the calls."
             />
 
-            <div className="flex flex-col gap-6 p-6">
+            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6">
                 <p className="flex max-w-3xl items-start gap-2 border border-secondary bg-secondary px-3 py-2 text-xs text-tertiary">
                     <IconLock className="mt-0.5 size-3.5 shrink-0" />
                     <span>

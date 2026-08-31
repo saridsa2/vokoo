@@ -34,7 +34,7 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
     }
 
     return (
-        <div className="flex min-h-dvh flex-col bg-primary lg:flex-row">
+        <div className="flex h-dvh flex-col overflow-hidden bg-primary lg:flex-row">
             <SidebarNavigationSectionsSubheadings
                 activeUrl={pathname}
                 items={NAV_SECTIONS}
@@ -42,7 +42,9 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
                 isPinned={nav.isPinned}
                 onPinnedChange={nav.setPinned}
             />
-            <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
+            {/* The screen owns its own scrolling: a flex column whose header
+                is flex-none and whose body scrolls, so the header stays put. */}
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
     );
 }

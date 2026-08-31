@@ -377,7 +377,7 @@ export function AgentsScreen() {
 
     if (error) {
         return (
-            <div className="grid h-dvh place-items-center p-8">
+            <div className="grid h-full place-items-center p-8">
                 <div className="max-w-md text-center">
                     <p className="text-sm font-semibold text-primary">Could not load agents</p>
                     <p className="mt-1 text-sm text-tertiary">{error.message}</p>
@@ -387,7 +387,7 @@ export function AgentsScreen() {
     }
 
     return (
-        <div className="grid h-dvh grid-cols-1 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+        <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
             {/* ---------- list ---------- */}
             <aside className="flex min-h-0 flex-col border-secondary lg:border-r">
                 <div className="flex items-center justify-between px-5 py-4">

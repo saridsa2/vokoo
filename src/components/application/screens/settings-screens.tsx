@@ -108,7 +108,8 @@ export function OrganizationScreen() {
                 }
             />
 
-            <div className="max-w-2xl p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                <div className="max-w-2xl">
                 {error ? (
                     <ErrorNote error={error} />
                 ) : isLoading ? (
@@ -131,6 +132,7 @@ export function OrganizationScreen() {
                         </div>
                     </section>
                 )}
+                </div>
             </div>
         </>
     );
@@ -152,7 +154,7 @@ export function MembersScreen() {
                 actions={<Button size="sm">Invite Member</Button>}
             />
 
-            <div className="p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto p-6">
                 {error ? (
                     <ErrorNote error={error} />
                 ) : isLoading ? (

@@ -275,7 +275,7 @@ function Composer() {
 
     if (error) {
         return (
-            <div className="grid h-dvh place-items-center p-8">
+            <div className="grid h-full place-items-center p-8">
                 <p className="text-sm text-tertiary">{error.message}</p>
             </div>
         );
@@ -285,7 +285,7 @@ function Composer() {
     const inspectedTransition = graph?.transitions.find((t) => t.id === selectedTransition) ?? null;
 
     return (
-        <div className="flex h-dvh flex-col">
+        <div className="flex h-full min-h-0 flex-col">
             <ScreenHeader
                 title={flow?.name ?? "Composer"}
                 description={flow?.description ?? "What happens when one of your numbers is called."}
