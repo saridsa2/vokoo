@@ -1977,16 +1977,6 @@ button:disabled {
   height: 15px;
 }
 
-.node-action-edit {
-  left: 42px;
-  top: 78px;
-  width: 34px;
-  height: 34px;
-  background: #3c0c4f;
-  color: #fff;
-  box-shadow: 0 14px 28px rgba(60, 12, 79, 0.22);
-}
-
 .node-action-delete {
   right: 20px;
   top: 20px;

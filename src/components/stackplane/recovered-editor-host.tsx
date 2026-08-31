@@ -4,7 +4,6 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type * as React from "react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 import {
-    Settings01,
     ArrowRotateRight,
     ArrowRotateLeft,
     ArrowLeft,
@@ -1206,7 +1205,6 @@ function BoardNode({
         <>
           {node.description ? <div className="node-tooltip">{node.description}</div> : null}
           <div className="selection-ring" />
-          <button className="node-action node-action-edit" data-board-nodrag="true" aria-label="Configure node" onClick={(event) => { event.stopPropagation(); onOpenInspector() }}><Icon name="settings" /></button>
           <button className="node-action node-action-delete" data-board-nodrag="true" aria-label="Delete node" onClick={(event) => { event.stopPropagation(); onDelete() }}><Icon name="trash" /></button>
         </>
       ) : null}
@@ -2759,9 +2757,6 @@ function Icon({ name }: { name: string }) {
   const props = { className: iconClass, strokeWidth: 2.2 }
   const icons: Record<string, React.ReactNode> = {
     bolt: <Sparkles {...props} />,
-    // The node action that opens the inspector. Its aria-label has always said
-    // "Configure node"; the icon said "magic".
-    settings: <Settings01 {...props} />,
     check: <Check {...props} />,
     chevronUp: <ChevronUp {...props} />,
     database: <IconDocument {...props} />,
