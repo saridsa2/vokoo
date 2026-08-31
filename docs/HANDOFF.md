@@ -9,6 +9,74 @@ holds what is happening right now.
 
 ## 31 August 2026 — this Mac (Claude Code)
 
+### State at pause
+
+Branch `console-and-canvas`, pushed to origin. `main` untouched at 95b1f8e.
+The bridge on the VPS is running everything below; the database has migrations
+0026–0030 applied.
+
+**Working and verified on real data**
+
+- The composer is the flows workspace: cards at `/composer`, opening one goes to
+  `/flows/:id`, full window, back button returns. Loads the live flow with its
+  real config, edits it, saves it.
+- Save proven on a duplicate rather than the live flow: one node renamed, and a
+  diff against the original showed transitions, start, variables and the other
+  six nodes byte-identical. `lib/flow-diagram.ts` round-trips 7 nodes and 11
+  transitions with nothing lost.
+- The agent's tools are declared to the model and callable. A live call showed
+  `agent called check_slots({...})`, the dispatcher answering, and the model
+  speaking from the real error rather than inventing one.
+- Model resolved from `catalogue_models` per call; flows resolved per event
+  through `number_flows` (proved by nulling `phone_numbers.flow_id` and watching
+  it still resolve).
+
+**Built, not yet exercised by a call**
+
+- `call.ended` handlers. `trigger_event` still only ever says `call.answered`
+  because nothing invokes an ended flow.
+- The narration fallback and the 20s idle timeout. Both deployed; neither has
+  fired on a real call.
+- `tool.call` as a flow step.
+
+**Known broken or missing**
+
+- The four tools point at `vayuveda.example`, which does not resolve. The agent
+  can call `check_slots` correctly and reaches nothing — this is what stands
+  between the demo working and the demo being good.
+- `n_desk --timeout--> n_abandoned` in the live flow. `kookoo.transfer` declares
+  only `ok` and `failed`, so the runner can never take that line. The node has a
+  `no_answer_message`, which suggests a ring-out path was intended and the
+  outcome was never added to the catalogue.
+- Publish. Save writes `flows.graph`; `api.publishFlow` writes a version
+  snapshot and the new canvas does not call it.
+- The old composer — `composer-screen.tsx`, `flow-canvas-node.tsx`,
+  `flow-canvas-edges.tsx`, `@xyflow/react` — is unreferenced and still present,
+  deliberately, until the new path has been used in anger.
+
+**Next, in order**
+
+1. The trigger anchor on the canvas. The four reactive triggers exist in the
+   schema; drawing them retires the `start`-through-context envelope, because
+   `start` is just the node the trigger points at.
+2. An initiating trigger for care journeys. This is the one category we do not
+   have: nothing *happened*, we decided. It needs a schedule, a cohort query and
+   something that places outbound calls, none of which exist.
+3. Give the tools real endpoints.
+
+### The traps
+
+- **The repo's `bridge/` is not the deployed tree.** Files are copied to
+  `/opt/vokoo/rustvani` and built there. Diff before copying — clobbering
+  `mod.rs` cost a build today because the deployed copy re-exported
+  `agent_prompt` and the repo copy did not.
+- **Writes to the VPS and the database need `Bash(ssh vokoo:*)`** in
+  `.claude/settings.local.json`. Without it the classifier blocks them.
+- **`npm install` needs `FA_PACKAGE_TOKEN`** — on this Mac it is at
+  `~/.fa_package_token`.
+- Restarting `vokoo-bridge` drops the phone line briefly.
+
+
 ### Division of work
 
 - **Composer and flows** — the other agent, home laptop. Not editing at present.
