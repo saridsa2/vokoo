@@ -77,6 +77,35 @@ pub struct ToolDispatch {
     /// The function the flow declared for reporting an outcome. It is answered
     /// by the flow, not by a tool, so it must not be dispatched.
     pub outcome_function: String,
+    /// The outcomes that function accepts. Used to read an outcome back out of
+    /// speech when the model narrates the call instead of making it.
+    pub outcome_values: Vec<String>,
+}
+
+/// An outcome the model spoke rather than called.
+///
+/// Gemini intermittently emits the invocation as content: the words are
+/// synthesised and played to the caller, and no toolCall message is framed. Seen
+/// once in eight outcomes. The flow has one exit from an agent node, so when
+/// that happens the call parks until the node's timeout — on a real call the
+/// caller heard function syntax read aloud, then twenty-five seconds of silence.
+///
+/// Reading it back out of the transcript is a recovery, not a fix. The caller
+/// has already heard something they should not have; what this saves is the
+/// hand-over that was supposed to follow.
+fn narrated_outcome(text: &str, function: &str, values: &[String]) -> Option<String> {
+    if !text.contains(function) {
+        return None;
+    }
+    // Prefer an explicit `outcome="x"`, and fall back to any known outcome
+    // appearing in the sentence. Longest first, so `out_of_scope` is not
+    // matched as `done` would be inside a longer word.
+    let mut candidates: Vec<&String> = values.iter().collect();
+    candidates.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    candidates
+        .into_iter()
+        .find(|v| text.contains(v.as_str()))
+        .map(|v| v.to_string())
 }
 
 /// One bidirectional audio session with a speech-to-speech provider.
@@ -187,6 +216,16 @@ pub struct RealtimeProcessor {
     tap: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Vec<u8>>>>>,
     speaking: Arc<std::sync::atomic::AtomicBool>,
     spoken: Arc<tokio::sync::Notify>,
+    /// Unix millis of the last event from the provider, caller or agent. What
+    /// "idle" is measured against.
+    last_event: Arc<std::sync::atomic::AtomicU64>,
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl RealtimeProcessor {
@@ -204,6 +243,7 @@ impl RealtimeProcessor {
             tools: None,
             speaking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             spoken: Arc::new(tokio::sync::Notify::new()),
+            last_event: Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
             listening: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tap: Arc::new(Mutex::new(None)),
         }
@@ -221,6 +261,7 @@ impl RealtimeProcessor {
             tap: self.tap.clone(),
             speaking: self.speaking.clone(),
             spoken: self.spoken.clone(),
+            last_event: self.last_event.clone(),
         }
     }
 
@@ -261,6 +302,11 @@ impl RealtimeProcessor {
         let tools = self.tools.clone();
         let speaking = self.speaking.clone();
         let spoken = self.spoken.clone();
+        // What the agent has said this turn, so a narrated function call can be
+        // recognised once the sentence is complete. Cleared on every turn.
+        let last_event = self.last_event.clone();
+        let mut turn_text = String::new();
+        let mut called_this_turn = false;
         let session = self.session.clone();
         let listening = self.listening.clone();
         let (out_rate, events) = {
@@ -281,6 +327,10 @@ impl RealtimeProcessor {
 
             loop {
                 let Some(event) = events.recv().await else { break };
+                // Any traffic at all counts: caller speech, agent speech, a
+                // turn ending. Idle means the conversation has stopped, not
+                // that the agent has stopped.
+                last_event.store(now_millis(), std::sync::atomic::Ordering::Relaxed);
 
                 let frame = match event {
                     RealtimeEvent::Audio(pcm) => {
@@ -343,6 +393,9 @@ impl RealtimeProcessor {
                     RealtimeEvent::UserTextInterim(_) => continue,
                     RealtimeEvent::AgentText(t) => {
                         log::info!("[realtime] agent: {t}");
+                        // Output transcription arrives in fragments, so the
+                        // sentence only exists once the turn is assembled.
+                        turn_text.push_str(&t);
                         continue;
                     }
                     // The end of a turn was discarded, which left nothing able to
@@ -351,12 +404,43 @@ impl RealtimeProcessor {
                     RealtimeEvent::TurnComplete => {
                         speaking.store(false, std::sync::atomic::Ordering::Relaxed);
                         spoken.notify_waiters();
+
+                        // Only when the model did not actually call it: a turn
+                        // that both called and mentioned the function is the
+                        // normal case, and must not report twice.
+                        if !called_this_turn {
+                            if let (Some(t), Some(tx)) = (tools.as_ref(), outcomes.as_ref()) {
+                                if let Some(outcome) = narrated_outcome(
+                                    &turn_text,
+                                    &t.outcome_function,
+                                    &t.outcome_values,
+                                ) {
+                                    log::warn!(
+                                        "[realtime] the agent spoke {} instead of calling it — \
+                                         taking {outcome} from the transcript",
+                                        t.outcome_function
+                                    );
+                                    let _ = tx
+                                        .send((
+                                            t.outcome_function.clone(),
+                                            serde_json::json!({
+                                                "outcome": outcome,
+                                                "note": "read from speech; the model narrated the call",
+                                            }),
+                                        ))
+                                        .await;
+                                }
+                            }
+                        }
+                        turn_text.clear();
+                        called_this_turn = false;
                         continue;
                     }
                     // Reported, not acted on here: the flow owns what an
                     // outcome means, and this processor owns only audio.
                     RealtimeEvent::ToolCall { id, name, args } => {
                         log::info!("[realtime] agent called {name}({args})");
+                        called_this_turn = true;
 
                         // The flow's own function is a report, not a request:
                         // the agent says how it finished and the flow decides
@@ -422,6 +506,7 @@ pub struct RealtimeControls {
     speaking: Arc<std::sync::atomic::AtomicBool>,
     /// Woken when a turn finishes, so a waiter does not have to poll.
     spoken: Arc<tokio::sync::Notify>,
+    last_event: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl RealtimeControls {
@@ -434,6 +519,21 @@ impl RealtimeControls {
     /// Bounded, because a turn that never completes must not hold the call
     /// open: past the limit the flow proceeds and the tail is lost, which is
     /// the same outcome as today rather than a worse one.
+    /// How long since anything was heard from either side.
+    ///
+    /// A conversation where the caller is talking and the agent is listening
+    /// looks identical, from the flow's loop, to a call the agent has abandoned:
+    /// neither produces an outcome. This is what separates them.
+    pub fn idle_for(&self) -> std::time::Duration {
+        let last = self.last_event.load(std::sync::atomic::Ordering::Relaxed);
+        std::time::Duration::from_millis(now_millis().saturating_sub(last))
+    }
+
+    /// Whether the agent is mid-sentence.
+    pub fn is_speaking(&self) -> bool {
+        self.speaking.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub async fn wait_until_spoken(&self, limit: std::time::Duration) {
         if !self.speaking.load(std::sync::atomic::Ordering::Relaxed) {
             return;

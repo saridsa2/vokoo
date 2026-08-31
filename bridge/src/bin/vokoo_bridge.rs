@@ -973,6 +973,13 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                 // The flow's own reporting function, which is answered by the
                 // flow and must not be looked up as a tool.
                 outcome_function: "finish_call".into(),
+                // The same set outcome_function declares. Kept beside it so a
+                // narrated outcome is read against what the flow actually
+                // accepts, rather than a guess.
+                outcome_values: ["done", "wants_human", "out_of_scope", "failed"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             });
         }
 
@@ -1096,10 +1103,62 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     // leaves the loop.
     tokio::pin!(socket_fut, task_fut);
     let mut listening = false;
+
+    // How long the agent node may sit with nobody speaking before the flow
+    // takes a default.
+    //
+    // The node's own timeout is ten minutes, which is the right bound for a
+    // caller who is thinking or on hold. It is the wrong bound for a call the
+    // agent has already abandoned: when the model announces a hand-over and
+    // never reports one, nothing else will ever arrive, and the caller sits in
+    // silence until they give up. Two of the last four calls ended that way.
+    //
+    // `gone_quiet` rather than `failed`, because that is what actually
+    // happened from the flow's point of view, and a flow that routes it can
+    // still hand the caller to a person.
+    let idle_limit = std::time::Duration::from_secs(
+        env_or("AGENT_IDLE_SECONDS", "20").parse().unwrap_or(20),
+    );
+
     loop {
         tokio::select! {
             r = &mut socket_fut => { log::info!("[call={call}] socket closed: {r:?}"); break }
             r = &mut task_fut   => { log::info!("[call={call}] pipeline ended: {r:?}"); break }
+
+            // Nothing has reached this loop for a while. The pipeline is still
+            // carrying audio either way, so this measures the flow being stuck,
+            // not the call being quiet.
+            _ = tokio::time::sleep(idle_limit),
+                if runner.is_some() && agent_outcome.is_none() && !listening => {
+                let idle = realtime_controls
+                    .as_ref()
+                    .map(|c| !c.is_speaking() && c.idle_for() >= idle_limit)
+                    .unwrap_or(false);
+                if !idle {
+                    // Either mid-sentence, or the caller is still talking. The
+                    // timer measures this loop's silence; the conversation has
+                    // its own.
+                    continue;
+                }
+                log::warn!(
+                    "[call={call}] no outcome after {}s and the agent is not speaking — \
+                     taking gone_quiet",
+                    idle_limit.as_secs()
+                );
+                if let Err(e) = outcome_tx
+                    .send((
+                        "finish_call".to_string(),
+                        serde_json::json!({
+                            "outcome": "gone_quiet",
+                            "note": "no outcome reported; the flow was waiting",
+                        }),
+                    ))
+                    .await
+                {
+                    log::warn!("[call={call}] could not report the idle outcome: {e}");
+                    break;
+                }
+            }
             Some((name, args)) = outcome_rx.recv(), if runner.is_some() && agent_outcome.is_none() => {
                 if name != "finish_call" {
                     continue;

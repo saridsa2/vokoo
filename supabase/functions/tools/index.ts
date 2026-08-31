@@ -75,15 +75,22 @@ function validate(schema: Record<string, unknown>, args: Record<string, unknown>
  * a trace that fails to write must not fail the call.
  */
 function trace(row: Record<string, unknown>) {
-  fetch(`${SUPABASE_URL}/rest/v1/rpc/call_event`, {
-    method: "POST",
-    headers: {
-      apikey: SERVICE_KEY,
-      Authorization: `Bearer ${SERVICE_KEY}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(row),
-  }).catch((error) => console.error("[tools] trace failed", error));
+  // Held open with waitUntil. Spawning the write and returning is not enough:
+  // the isolate is retired once the response is sent, and the runtime logged
+  // "early termination has been triggered" while a real call's trace went
+  // missing. The caller still does not wait for this — waitUntil defers the
+  // retirement, it does not delay the response.
+  EdgeRuntime.waitUntil(
+    fetch(`${SUPABASE_URL}/rest/v1/rpc/call_event`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(row),
+    }).catch((error) => console.error("[tools] trace failed", error)),
+  );
 }
 
 Deno.serve(async (req) => {
