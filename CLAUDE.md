@@ -40,26 +40,53 @@ Gemini declares `finish_call(outcome, note)` and both transcriptions,
 `vokoo_bridge.rs` resolves the flow before building the pipeline and continues
 the flow when the agent reports an outcome.
 
-## Config lives in the database, not in files
+## Config lives in the database — except the model, which does not
 
-`bridge.env` is generated from the published agent. The model id is
-`catalogue_models.provider_model_id` — a row, so a Google rename is an update,
-not a deploy. This has already paid for itself: `models/gemini-live-2.5-flash-preview`
-was invented and wrong; the fix was one `UPDATE`.
+Numbers, flows and agents live in the database, and change without a deploy.
+
+**The model id does not, and this section used to claim otherwise.** It said
+`bridge.env` was generated from the published agent and that the model id came
+from `catalogue_models.provider_model_id`. Neither the bridge nor the control
+plane reads that column — `catalogue_models` appears nowhere in `bridge/src/`
+or `server/src/`. The bridge takes the model from one line:
+
+```rust
+// bridge/src/bin/vokoo_bridge.rs:306
+live_model: env_or("LIVE_MODEL", "models/gemini-3.1-flash-live-preview"),
+```
+
+An environment variable, with a model id hardcoded as the fallback in Rust. So
+the id now sits in three places that can drift: `agents.model`, `LIVE_MODEL` in
+`bridge.env`, and that fallback. On 31 August all three said
+`gemini-3.1-flash-live-preview` while `catalogue_models` had no such row at all
+— the console showed "Unknown model" over a call path that worked.
+
+Read `bridge/README.md` for the accurate account: it says plainly that
+`bridge.env` holds the keys **and the model selection**.
+
+Making the catalogue authoritative is bridge work: resolve
+`provider_model_id` for the agent the flow reached, per call, falling back to
+`LIVE_MODEL`. The mechanism exists — `src/vokoo/graph.rs` already reads
+PostgREST to turn a DID into a flow, and `runner.rs` already carries `agent_id`
+to the agent node.
 
 **Ask the provider which models exist** rather than guessing:
 `GET /v1beta/models` and filter on `bidiGenerateContent`.
 
 ## Known broken or missing
 
-- **`finish_call` has never fired on a real call.** Without it the flow never
-  leaves the agent node — no transfer, no `FLOW_TRAIL`. Unverified whether the
-  model calls it.
+- ~~`finish_call` has never fired on a real call.~~ **It has.** The trace for
+  the call at 31 Aug 08:11 reads: `Open right now?` (business_hours → open),
+  `Reception` (agent → wants_human), `Hand to the front desk` (kookoo.transfer
+  → ok), `Handed over` (kookoo.release → __end__). The agent reported an
+  outcome, the flow left the agent node, and the transfer ran.
 - **`Conference` has never been exercised.** Untested end to end.
 - **Latency is unmeasured.** Transcription was only enabled after the last call.
 - `condition`, `loop`, `code` fail at runtime — no expression language decided.
 - A second agent node in one flow ends the call.
-- `calls` table has never had a row.
+- ~~`calls` table has never had a row.~~ It has 9, with 27 `call_events` rows.
+  Still empty on those calls: `transcript`, `recording_url`, `cost`, and every
+  `call_events.duration_ms`.
 - Tools reach the prompt; nothing executes one.
 - `vokoo-console` has **no git commits**.
 

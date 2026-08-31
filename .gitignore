@@ -45,3 +45,6 @@ next-env.d.ts
 # scratch
 /tmp/
 *.log
+
+# VAPI reference screenshots — 242MB of local design reference, not source.
+docs/vapi-screens/*.png
