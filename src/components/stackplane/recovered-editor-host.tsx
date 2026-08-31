@@ -802,6 +802,22 @@ export function RecoveredEditorHost({
   function startEdge(nodeId: string, outcome: string, handle: HandleSide = "right") {
     const source = diagram?.graph.nodes.find((node) => node.id === nodeId)
     if (!source || !outcomeForType(source.type, outcome)) return
+
+    // An outcome leads to one node. If it already does, there is nothing to
+    // draw, and offering to draw it costs two clicks to reach a refusal:
+    // finishEdge rejected the duplicate only after the whole canvas had entered
+    // edge mode. Show the line that is already there instead — from there it
+    // can be deleted and redrawn, which is what someone clicking a wired
+    // outcome usually wants.
+    const existing = diagram?.graph.edges.find(
+      (edge) => edge.sourceNodeId === nodeId && edge.outcome === outcome,
+    )
+    if (existing) {
+      setSelectedEdgeId(existing.id)
+      setSelectedNodeId(nodeId)
+      return
+    }
+
     setEdgeSource({ nodeId, handle, outcome })
     const sourcePoint = outcomeHandlePoint(source, outcome, viewMode)
     setConnectionPreview({ source: sourcePoint, target: sourcePoint })
