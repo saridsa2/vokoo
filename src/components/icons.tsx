@@ -10,6 +10,8 @@ import {
     faArrowLeftLong,
     faArrowRight,
     faArrowRightLong,
+    faArrowRotateLeft,
+    faArrowRotateRight,
     faArrowUpFromBracket,
     faArrowsRotate,
     faBars,
@@ -152,6 +154,10 @@ export const ArrowLeft = icon(faArrowLeft);
 export const ArrowNarrowLeft = icon(faArrowLeftLong);
 export const ArrowNarrowRight = icon(faArrowRightLong);
 export const ArrowRight = icon(faArrowRight);
+// Undo and redo. A mirrored refresh glyph reads as "reload", which is a
+// different promise to the reader than "step back".
+export const ArrowRotateLeft = icon(faArrowRotateLeft);
+export const ArrowRotateRight = icon(faArrowRotateRight);
 export const Bell01 = icon(faBell);
 export const BookClosed = icon(faBook);
 export const BookOpen01 = icon(faBookOpen);

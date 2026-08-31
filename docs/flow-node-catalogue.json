@@ -1,0 +1,401 @@
+[
+    {
+        "id": "condition",
+        "label": "Condition",
+        "fields": [
+            {
+                "key": "expression",
+                "type": "expression",
+                "label": "Test",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "true",
+                "label": "True"
+            },
+            {
+                "id": "false",
+                "label": "False"
+            }
+        ],
+        "suspends": false,
+        "node_type": "condition",
+        "sort_order": 0,
+        "description": "Chooses a path by testing the flow's variables. More than two ways out is normal — a call routes by language or department far more often than by yes and no.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "loop",
+        "label": "Loop",
+        "fields": [
+            {
+                "key": "while",
+                "type": "expression",
+                "label": "Repeat while",
+                "required": true
+            },
+            {
+                "key": "max_iterations",
+                "type": "number",
+                "label": "At most",
+                "required": true
+            },
+            {
+                "key": "max_seconds",
+                "hint": "seconds",
+                "type": "number",
+                "label": "For no longer than",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "each",
+                "label": "Each pass"
+            },
+            {
+                "id": "done",
+                "label": "Finished"
+            },
+            {
+                "id": "exhausted",
+                "label": "Ran out"
+            }
+        ],
+        "suspends": false,
+        "node_type": "loop",
+        "sort_order": 1,
+        "description": "Repeats until a test holds or a bound is reached. Both bounds are required: on a live call an extra pass is dead air, and the caller hangs up.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "var",
+        "label": "Set a value",
+        "fields": [
+            {
+                "key": "name",
+                "type": "text",
+                "label": "Variable",
+                "required": true
+            },
+            {
+                "key": "value",
+                "type": "expression",
+                "label": "Value",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "ok",
+                "label": "Set"
+            }
+        ],
+        "suspends": false,
+        "node_type": "var",
+        "sort_order": 2,
+        "description": "Writes a variable into the flow's state so a later node can use it.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "code",
+        "label": "Run an expression",
+        "fields": [
+            {
+                "key": "source",
+                "type": "code",
+                "label": "Code",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "ok",
+                "label": "Returned"
+            },
+            {
+                "id": "failed",
+                "label": "Threw"
+            }
+        ],
+        "suspends": false,
+        "node_type": "code",
+        "sort_order": 3,
+        "description": "Evaluates a snippet. The escape hatch, so a missing primitive never blocks a flow.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "business_hours",
+        "label": "Opening hours",
+        "fields": [
+            {
+                "key": "timezone",
+                "hint": "e.g. Asia/Kolkata",
+                "type": "text",
+                "label": "Time zone",
+                "required": true
+            },
+            {
+                "key": "opens",
+                "type": "time",
+                "label": "Opens",
+                "required": true
+            },
+            {
+                "key": "closes",
+                "type": "time",
+                "label": "Closes",
+                "required": true
+            },
+            {
+                "key": "days",
+                "type": "weekdays",
+                "label": "Open on",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "open",
+                "label": "Open"
+            },
+            {
+                "id": "closed",
+                "label": "Closed"
+            }
+        ],
+        "suspends": false,
+        "node_type": "condition",
+        "sort_order": 4,
+        "description": "Sends the call one way inside opening hours and another way outside them.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "agent",
+        "label": "Agent",
+        "fields": [
+            {
+                "key": "agent_id",
+                "type": "agent",
+                "label": "Agent",
+                "required": true
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "done",
+                "label": "Finished"
+            },
+            {
+                "id": "out_of_scope",
+                "label": "Not one of its skills"
+            },
+            {
+                "id": "wants_human",
+                "label": "Asked for a person"
+            },
+            {
+                "id": "failed",
+                "label": "Something went wrong"
+            },
+            {
+                "id": "gone_quiet",
+                "label": "Caller went quiet"
+            },
+            {
+                "id": "timeout",
+                "label": "Ran too long"
+            }
+        ],
+        "suspends": true,
+        "node_type": "custom",
+        "sort_order": 5,
+        "description": "Hands the conversation to an agent. It finishes as one of its outcomes and the flow continues from there. The agent never transfers anyone — it reports what happened and the flow decides what that means.",
+        "provider_action": null,
+        "default_timeout_seconds": 600
+    },
+    {
+        "id": "kookoo.conference",
+        "label": "Bring in a person",
+        "fields": [
+            {
+                "key": "phoneno",
+                "type": "phone",
+                "label": "Number to dial",
+                "required": true
+            },
+            {
+                "key": "play_ring",
+                "type": "boolean",
+                "label": "Play ringing to the caller"
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "ok",
+                "label": "They joined"
+            },
+            {
+                "id": "failed",
+                "label": "No answer"
+            },
+            {
+                "id": "timeout",
+                "label": "Rang out"
+            }
+        ],
+        "suspends": true,
+        "node_type": "custom",
+        "sort_order": 6,
+        "description": "Dials someone and puts them into the call. The agent can stay on the line and hand over, rather than the caller being dropped into a cold transfer.",
+        "provider_action": "Conference",
+        "default_timeout_seconds": 45
+    },
+    {
+        "id": "kookoo.transfer",
+        "label": "Hand the call over",
+        "fields": [
+            {
+                "help": "Passed to the carrier exactly as written.",
+                "name": "phoneno",
+                "type": "string",
+                "label": "Number to dial",
+                "required": true
+            },
+            {
+                "name": "record",
+                "type": "boolean",
+                "label": "Record the call",
+                "default": true,
+                "required": false
+            },
+            {
+                "help": "Spoken to the caller when the transfer rings out, before hanging up.",
+                "name": "no_answer_message",
+                "type": "text",
+                "label": "If nobody answers",
+                "required": false
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "ok",
+                "label": "Handed over"
+            },
+            {
+                "id": "failed",
+                "label": "No number to dial"
+            }
+        ],
+        "suspends": false,
+        "node_type": "custom",
+        "sort_order": 7,
+        "description": "Ends the conversation and connects the caller to another number. The agent leaves the call, so it cannot listen in afterwards — use \"Bring in a person\" if the agent should stay on the line.",
+        "provider_action": null,
+        "default_timeout_seconds": 30
+    },
+    {
+        "id": "kookoo.hold",
+        "label": "Hold",
+        "fields": [
+        ],
+        "outcomes": [
+            {
+                "id": "ok",
+                "label": "On hold"
+            },
+            {
+                "id": "failed",
+                "label": "Failed"
+            }
+        ],
+        "suspends": false,
+        "node_type": "custom",
+        "sort_order": 8,
+        "description": "Parks the caller with hold music while something slow happens.",
+        "provider_action": "Hold",
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "kookoo.hangup",
+        "label": "Hang up",
+        "fields": [
+            {
+                "key": "reason",
+                "hint": "booked, transferred, abandoned",
+                "type": "text",
+                "label": "Reason",
+                "required": true
+            }
+        ],
+        "outcomes": [
+        ],
+        "suspends": false,
+        "node_type": "custom",
+        "sort_order": 10,
+        "description": "Ends the call and records why, which is what the call log groups by.",
+        "provider_action": "Disconnect",
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "kookoo.release",
+        "label": "Step back",
+        "fields": [
+            {
+                "help": "Recorded on the call as ended_reason.",
+                "name": "reason",
+                "type": "string",
+                "label": "Why",
+                "required": false
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "__end__",
+                "label": "Done"
+            }
+        ],
+        "suspends": false,
+        "node_type": "custom",
+        "sort_order": 11,
+        "description": "Ends the flow without hanging up. Use after handing the call over, when the carrier is connecting the caller to somebody else.",
+        "provider_action": null,
+        "default_timeout_seconds": null
+    },
+    {
+        "id": "agent.monitor",
+        "label": "Listen in",
+        "fields": [
+            {
+                "help": "Recorded on the call as ended_reason.",
+                "name": "reason",
+                "type": "string",
+                "label": "Why",
+                "required": false
+            }
+        ],
+        "outcomes": [
+            {
+                "id": "call_ended",
+                "label": "Call ended"
+            },
+            {
+                "id": "failed",
+                "label": "Could not listen"
+            }
+        ],
+        "suspends": true,
+        "node_type": "custom",
+        "sort_order": 12,
+        "description": "The agent stops speaking and stays on the call, transcribing it, until the caller hangs up. Use after a transfer, so the part of the conversation handled by a person is still recorded.",
+        "provider_action": null,
+        "default_timeout_seconds": 7200
+    }
+]
