@@ -841,6 +841,25 @@ export function RecoveredEditorHost({
     clearEdgeMode()
   }
 
+  // Escape is the way out of anything modal on the board. Edge mode had no exit
+  // except completing an edge: the toolbar button lights up to show the state
+  // but only explains it, and the bottom bar's clear-selection button was
+  // removed when the toolbar was consolidated. Leaving a canvas in a mode with
+  // no cancel is worse than the mode being easy to enter.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return
+      if (edgeSource) {
+        clearEdgeMode()
+        return
+      }
+      if (inspectorNodeId) closeInspector()
+      else setSelectedNodeId(null)
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  })
+
   function clearEdgeMode() {
     setEdgeSource(null)
     setConnectionPreview(null)
@@ -1084,7 +1103,18 @@ export function RecoveredEditorHost({
           </div>
           <div className="toolbar-divider" />
           <button className="icon-button" aria-label="Add node" title="Add node" onClick={() => openPalette(window.innerWidth / 2, window.innerHeight / 2)}><Icon name="plus" /></button>
-          <button className={`icon-button ${edgeSource ? "active" : ""}`} aria-label="Draw edge" title="Draw edge" onClick={() => setToast("Choose an outcome connection point on a node.")}><Icon name="route" /></button>
+          <button
+            className={`icon-button ${edgeSource ? "active" : ""}`}
+            aria-label={edgeSource ? "Cancel drawing" : "Draw edge"}
+            title={edgeSource ? "Cancel drawing (Esc)" : "Draw edge"}
+            onClick={() =>
+              edgeSource
+                ? clearEdgeMode()
+                : setToast("Click the dot beside an outcome to draw from it.")
+            }
+          >
+            <Icon name="route" />
+          </button>
           <button className="icon-button" aria-label="Tidy layout" title="Tidy layout" onClick={cleanupLayout}><Icon name="layers" /></button>
           <div className="toolbar-divider" />
           <button className="icon-button" aria-label="Undo" title="Undo" disabled={!canUndo} onClick={undo}><Icon name="undo" /></button>
@@ -1223,8 +1253,20 @@ function BoardNode({
             aria-label={`Connect ${outcome.label} outcome`}
             onClick={(event) => {
               event.stopPropagation()
-              if (edgeSource && edgeSource.nodeId !== node.id) onFinishEdge(node.id, "left")
-              else onStartEdge(node.id, outcome.id, "right")
+              // Finishing an edge accepts the whole row: the target is the node,
+              // so anywhere on it is an unambiguous answer to "which node".
+              if (edgeSource && edgeSource.nodeId !== node.id) {
+                onFinishEdge(node.id, "left")
+                return
+              }
+              // Starting one does not. The dot is what looks like a connector,
+              // and the row is mostly words — clicking "Finished" to read it
+              // should not begin drawing a line.
+              if ((event.target as HTMLElement).closest(".node-outcome-point")) {
+                onStartEdge(node.id, outcome.id, "right")
+                return
+              }
+              onSelect()
             }}
           >
             <span className="node-outcome-point" aria-hidden />
