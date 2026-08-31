@@ -2792,7 +2792,12 @@ button:disabled {
   color: var(--node-color);
 }
 
-.inspector-node-icon i {
+/* `svg` alongside `i` for the same reason as .node-icon: these icons are Font
+   Awesome components that emit svg, so a rule matching `i` alone never reached
+   the glyph and it sized itself off whatever it inherited. */
+.inspector-node-icon i,
+.inspector-node-icon svg {
+  display: block;
   width: 19px;
   height: 19px;
   font-size: 19px;

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type * as React from "react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 import {
+    Settings01,
     ArrowRotateRight,
     ArrowRotateLeft,
     ArrowLeft,
@@ -890,6 +891,25 @@ export function RecoveredEditorHost() {
     panRef.current = null
   }
 
+  // Zoom on the wheel, keeping whatever is under the pointer under the pointer.
+  //
+  // The +/- buttons worked; nothing listened for the wheel, which is how anyone
+  // expects to zoom a canvas. Zooming about the viewport centre instead would
+  // walk the thing you are looking at off the screen.
+  function zoomAt(clientX: number, clientY: number, delta: number) {
+    setViewport((current) => {
+      const next = clamp(current.zoom + delta, BOARD_MIN_ZOOM, BOARD_MAX_ZOOM)
+      if (next === current.zoom) return current
+      // The world point under the cursor, which must not move.
+      const world = screenToWorld(clientX, clientY, current)
+      return {
+        zoom: next,
+        x: clientX - window.innerWidth / 2 - world.x * next,
+        y: clientY - window.innerHeight / 2 - world.y * next,
+      }
+    })
+  }
+
   function zoomBy(delta: number) {
     setViewport((current) => ({ ...current, zoom: clamp(current.zoom + delta, BOARD_MIN_ZOOM, BOARD_MAX_ZOOM) }))
   }
@@ -958,6 +978,17 @@ export function RecoveredEditorHost() {
       <section className="stage">
         <div
           className="board"
+          // Passive listeners cannot preventDefault, and without that the page
+          // scrolls while the canvas zooms.
+          onWheel={(event) => {
+            if (event.ctrlKey || event.metaKey || Math.abs(event.deltaY) > 0) {
+              event.preventDefault()
+              // Trackpads report small continuous deltas and mice report large
+              // stepped ones; scaling by a fraction keeps both usable without
+              // reading the device.
+              zoomAt(event.clientX, event.clientY, -event.deltaY * 0.0015)
+            }
+          }}
           data-readonly="false"
           role="application"
           aria-label="Diagram canvas"
@@ -1188,7 +1219,7 @@ function BoardNode({
         <>
           {node.description ? <div className="node-tooltip">{node.description}</div> : null}
           <div className="selection-ring" />
-          <button className="node-action node-action-edit" data-board-nodrag="true" aria-label="Configure node" onClick={(event) => { event.stopPropagation(); onOpenInspector() }}><Icon name="bolt" /></button>
+          <button className="node-action node-action-edit" data-board-nodrag="true" aria-label="Configure node" onClick={(event) => { event.stopPropagation(); onOpenInspector() }}><Icon name="settings" /></button>
           <button className="node-action node-action-delete" data-board-nodrag="true" aria-label="Delete node" onClick={(event) => { event.stopPropagation(); onDelete() }}><Icon name="trash" /></button>
         </>
       ) : null}
@@ -1638,10 +1669,14 @@ function EdgeLayer({
     <>
       <svg className="edge-layer" aria-hidden="true">
         <defs>
-          <marker id="arrow" viewBox="0 0 20 20" refX="20" refY="10" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+          {/* 16 rather than 8. The edge uses a non-scaling stroke, so the line
+              holds 3.2px at every zoom while the marker scales with the world —
+              at the default zoom an 8-unit head rendered about 5px and read as a
+              slightly thicker line end rather than an arrow. */}
+          <marker id="arrow" viewBox="0 0 20 20" refX="20" refY="10" markerWidth="16" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
             <path d="M 0 0 L 20 10 L 0 20 z" />
           </marker>
-          <marker id="arrow-active" viewBox="0 0 20 20" refX="20" refY="10" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+          <marker id="arrow-active" viewBox="0 0 20 20" refX="20" refY="10" markerWidth="16" markerHeight="16" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
             <path d="M 0 0 L 20 10 L 0 20 z" />
           </marker>
         </defs>
@@ -2695,6 +2730,9 @@ function Icon({ name }: { name: string }) {
   const props = { className: iconClass, strokeWidth: 2.2 }
   const icons: Record<string, React.ReactNode> = {
     bolt: <Sparkles {...props} />,
+    // The node action that opens the inspector. Its aria-label has always said
+    // "Configure node"; the icon said "magic".
+    settings: <Settings01 {...props} />,
     check: <Check {...props} />,
     chevronUp: <ChevronUp {...props} />,
     database: <IconDocument {...props} />,
