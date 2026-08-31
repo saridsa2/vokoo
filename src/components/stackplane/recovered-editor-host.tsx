@@ -2577,9 +2577,19 @@ function getInspectorPlacement(node: DiagramNode, viewport: Viewport, viewMode: 
   const width = Math.min(650, Math.max(320, window.innerWidth - 32))
   const side = nodeLeft + nodeWidth + gap + width <= window.innerWidth - viewportPadding ? "right" : "left"
   const rawLeft = side === "right" ? nodeLeft + nodeWidth + gap : nodeLeft - width - gap
-  const preferredMaxHeight = Math.min(640, window.innerHeight - viewportPadding * 2)
-  const top = clamp(nodeTop, viewportPadding, Math.max(viewportPadding, window.innerHeight - preferredMaxHeight - viewportPadding))
-  const maxHeight = Math.max(260, window.innerHeight - top - viewportPadding)
+  // Reserve what the panel needs at minimum, not what it could grow to.
+  // Reserving the full 640 pinned `top` to about 65px on a 720px window — so
+  // the panel sat at the top of the screen whatever the node's position, and a
+  // node near the bottom was edited by a dialog nowhere near it. The body
+  // already scrolls, so a panel that follows the node down and gets shorter is
+  // the better trade.
+  const minPanelHeight = 260
+  const top = clamp(
+    nodeTop,
+    viewportPadding,
+    Math.max(viewportPadding, window.innerHeight - minPanelHeight - viewportPadding),
+  )
+  const maxHeight = Math.max(minPanelHeight, window.innerHeight - top - viewportPadding)
   const connectorY = clamp(nodeTop + nodeHeight / 2 - top, 28, Math.max(28, maxHeight - 28))
   return {
     side,
