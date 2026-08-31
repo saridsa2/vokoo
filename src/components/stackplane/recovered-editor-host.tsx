@@ -84,7 +84,6 @@ type InspectorDraft = {
 }
 
 type Viewport = { x: number; y: number; zoom: number }
-type PointerTarget = { kind: "canvas" } | { kind: "node"; nodeId: string } | null
 
 type AgentMessage = {
   id: string
@@ -142,12 +141,6 @@ export function RecoveredEditorHost() {
   const [palette, setPalette] = useState<{ x: number; y: number; world: Point } | null>(null)
   const [starterMenu, setStarterMenu] = useState<{ x: number; y: number } | null>(null)
   const [agentOpen, setAgentOpen] = useState(false)
-  const [pointer, setPointer] = useState(() => ({
-    x: typeof window === "undefined" ? 0 : window.innerWidth / 2,
-    y: typeof window === "undefined" ? 0 : window.innerHeight * 0.64,
-    visible: false,
-    target: null as PointerTarget,
-  }))
   const [viewport, setViewport] = useState<Viewport>(() => (typeof window === "undefined" ? { x: 0, y: 0, zoom: 0.78 } : loadCamera()))
   const [viewMode, setViewMode] = useState<ViewMode>("full")
   const [hydrated] = useState(() => typeof window !== "undefined")
@@ -850,8 +843,6 @@ export function RecoveredEditorHost() {
   }
 
   function handleBoardPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    const target = getPointerTarget(event.target as HTMLElement)
-    setPointer({ x: event.clientX, y: event.clientY, visible: true, target })
     // Throttle live-cursor broadcasts to ~30/s.
     const tick = performance.now()
     if (tick - cursorTickRef.current > 33) {
@@ -994,10 +985,7 @@ export function RecoveredEditorHost() {
           aria-label="Diagram canvas"
           onPointerDown={handleBoardPointerDown}
           onPointerMove={handleBoardPointerMove}
-          onPointerLeave={() => {
-            setPointer((current) => ({ ...current, visible: false }))
-            collab.setCursor(null)
-          }}
+          onPointerLeave={() => collab.setCursor(null)}
           onPointerUp={handleBoardPointerUp}
           onContextMenu={(event) => {
             event.preventDefault()
@@ -1079,7 +1067,6 @@ export function RecoveredEditorHost() {
         {starterMenu ? <StarterArchitectureMenu anchor={starterMenu} onApply={applyStarter} onClose={() => setStarterMenu(null)} /> : null}
         {agentOpen ? <AgentPanel key={diagram.id} diagram={diagram} supervisor={supervisorFeed} runs={codingRunsByNodeId} onApplyProposal={applyAgentProposal} onClose={() => setAgentOpen(false)} onRunTool={runAgentTool} /> : null}
 
-        <PointerHint pointer={pointer} edgeActive={Boolean(edgeSource)} />
 
 
         <div className="zoom-controls">
@@ -2125,27 +2112,6 @@ function ConfigFieldEditor({ field, value, onChange }: { field: ConfigField; val
   )
 }
 
-function PointerHint({ pointer, edgeActive }: { pointer: { x: number; y: number; visible: boolean; target: PointerTarget }; edgeActive: boolean }) {
-  const visible = pointer.visible && pointer.target !== null
-  const left = pointer.target?.kind === "node" ? { label: "Select", opacity: 1 } : pointer.target?.kind === "canvas" ? { label: "", opacity: 0.18 } : { label: "", opacity: 0.14 }
-  const right = pointer.target?.kind === "node" ? { label: "Configure", opacity: 1 } : pointer.target?.kind === "canvas" ? { label: "Add", opacity: 1 } : { label: "", opacity: 0.14 }
-  const shift = edgeActive ? { label: "Drag", opacity: 1, active: true } : pointer.target?.kind === "node" ? { label: "Edge", opacity: 1, active: false } : { label: "", opacity: 0.14, active: false }
-  return (
-    <div
-      className={`board-hint ${visible ? "" : "hidden"} ${edgeActive ? "edge-brush-active" : ""}`}
-      data-canvas-cursor-helper="true"
-      data-visible={visible ? "true" : "false"}
-      style={{ left: Math.round(pointer.x), top: Math.round(pointer.y) }}
-    >
-      <HintItem button="left" action={left} />
-      <HintItem button="right" action={right} />
-      <span className={`hint-item shift-item ${shift.label ? "" : "is-muted"} ${shift.active ? "active" : ""}`} style={{ "--hint-opacity": shift.opacity } as React.CSSProperties}>
-        {shift.active ? <span className="cursor-icon" aria-hidden="true"><IconSquads className="size-7" /></span> : <span className="keycap" aria-hidden="true">Shift</span>}
-        <b>{shift.label}</b>
-      </span>
-    </div>
-  )
-}
 
 function HintItem({ button, action }: { button: "left" | "right"; action: { label: string; opacity: number } }) {
   return (
@@ -2542,13 +2508,6 @@ function rankNodes(ids: string[], edges: { source: string; target: string }[]) {
     if (!changed) break
   }
   return ranks
-}
-
-function getPointerTarget(element: HTMLElement): PointerTarget {
-  const node = element.closest("[data-node-id]") as HTMLElement | null
-  if (node?.dataset.nodeId) return { kind: "node", nodeId: node.dataset.nodeId }
-  if (element.closest(".board")) return { kind: "canvas" }
-  return null
 }
 
 function normalizeDiagram(diagram: Diagram): Diagram {
