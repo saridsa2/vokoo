@@ -1,0 +1,334 @@
+/* Maps the VoKoo design tokens onto Untitled UI's theme contract.
+ *
+ * `vokoo-tokens.css` is the design system's own export, copied in verbatim and
+ * never edited — re-exporting the system replaces that file and nothing else.
+ * This file is the adapter: it points Untitled UI's `--color-brand-*`,
+ * `--color-neutral-*` and semantic tokens at those values, which re-skins the
+ * whole component library without forking a single component.
+ *
+ * The load-bearing decision: this system is ~97% achromatic and its primary
+ * action is BLACK, not a brand hue. So `--color-brand-*` becomes an ink ramp
+ * rather than a colour ramp — every component that reaches for
+ * `bg-brand-solid` (buttons, toggles, active tabs, checkboxes) then renders
+ * black, which is the intent.
+ *
+ * Violet (#0447ff) and ember (#ff4704) are defined in the token file but are
+ * deliberately NOT referenced by any semantic token here. They belong to
+ * product visuals only — never buttons, links, badges or borders.
+ */
+
+@theme {
+    /* ---- spacing: undo a namespace collision ----
+     *
+     * The token file declares `--spacing-4: 4px`, `--spacing-8: 8px` and so on.
+     * Those are absolute pixel values, but in Tailwind v4 `--spacing-*` IS the
+     * spacing namespace, where the suffix is a MULTIPLIER of `--spacing`
+     * (`size-4` = 4 × 0.25rem = 16px). Registering them meant `size-4` computed
+     * to 4px, `p-6` to 6px, and so on — every spacing and size utility across
+     * the whole component library rendered at roughly a quarter scale. It first
+     * showed up as a checkbox with no box.
+     *
+     * Clearing the namespace and restoring the base restores Tailwind's scale,
+     * which already expresses the same values (`p-4` = 16px = `--spacing-16`).
+     * The design system's own `--spacing-N` variables remain available for
+     * direct `var()` use; they simply no longer reconfigure utilities.
+     */
+    --spacing-*: initial;
+    --spacing: 0.25rem;
+
+    /* ---- brand ramp = ink ----
+     * Untitled UI drives filled actions from brand-600 and hover states from
+     * brand-500/700. Grading warm-grey → black keeps hovers legible while the
+     * resting state stays pure ink.
+     */
+    --color-brand-25: #fdfcfc;
+    --color-brand-50: #f5f3f1;
+    --color-brand-100: #ebe8e4;
+    --color-brand-200: #d9d5d0;
+    --color-brand-300: #a59f97;
+    --color-brand-400: #777169;
+    --color-brand-500: #44403b;
+    --color-brand-600: #000000;
+    --color-brand-700: #000000;
+    --color-brand-800: #000000;
+    --color-brand-900: #000000;
+    --color-brand-950: #000000;
+
+    /* ---- neutral ramp = warm greys ----
+     * Interpolated between the system's named greys. Never pure white and never
+     * a cold grey: Tailwind's default neutrals read blue against eggshell, and
+     * warmth is this system's defining tonal quality.
+     */
+    --color-neutral-25: #fdfcfc;
+    --color-neutral-50: #f5f3f1;
+    --color-neutral-100: #ebe8e4;
+    --color-neutral-200: #ded9d3;
+    --color-neutral-300: #c6c0b8;
+    --color-neutral-400: #a59f97;
+    --color-neutral-500: #777169;
+    --color-neutral-600: #5c5750;
+    --color-neutral-700: #44403b;
+    --color-neutral-800: #2b2825;
+    --color-neutral-900: #1a1816;
+    --color-neutral-950: #000000;
+
+    /* ---- typography ----
+     * Geist for display and body, Geist Mono for technical micro-copy. Both are
+     * loaded by `next/font` in the root layout and exposed as CSS variables, so
+     * they are self-hosted with no request to Google at runtime.
+     *
+     * The token file names Waldenburg for display; it is a licensed face we do
+     * not have, and Geist Light carries the same whisper-weight intent.
+     */
+    --font-body: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+    --font-display: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+    --font-mono: var(--font-geist-mono-loaded), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    /* Display carries NEGATIVE tracking, body POSITIVE. The opposing directions
+     * are deliberate: it is what separates the editorial headline voice from
+     * the calm body voice. Weight 300 on display is the brand's signature and
+     * must never be bolded.
+     */
+    --text-display-xs: var(--text-heading-sm);
+    --text-display-xs--line-height: var(--leading-heading-sm);
+    --text-display-xs--letter-spacing: var(--tracking-heading-sm);
+    --text-display-xs--font-weight: 300;
+
+    --text-display-sm: var(--text-heading);
+    --text-display-sm--line-height: var(--leading-heading);
+    --text-display-sm--letter-spacing: var(--tracking-heading);
+    --text-display-sm--font-weight: 300;
+
+    --text-display-md: var(--text-display);
+    --text-display-md--line-height: var(--leading-display);
+    --text-display-md--letter-spacing: var(--tracking-display);
+    --text-display-md--font-weight: 300;
+
+    --text-xs: var(--text-caption);
+    --text-xs--line-height: var(--leading-caption);
+
+    --text-sm: var(--text-body-sm);
+    --text-sm--line-height: var(--leading-body-sm);
+    --text-sm--letter-spacing: var(--tracking-body-sm);
+
+    --text-md: var(--text-body);
+    --text-md--line-height: var(--leading-body);
+    --text-md--letter-spacing: var(--tracking-body);
+
+    --text-lg: var(--text-subheading);
+    --text-lg--line-height: var(--leading-subheading);
+
+    --text-xl: var(--text-body-lg);
+    --text-xl--line-height: var(--leading-body-lg);
+
+    /* ---- radii ----
+     * Deliberately NOT re-aliased here. The token file declares the same names
+     * as Untitled UI (--radius-md, -lg, -2xl, -3xl, -full) and is imported
+     * after it, so the design system's values already win.
+     *
+     * Aliasing them was worse than redundant: `--radius-lg: var(--radius-lg)`
+     * is self-referential, which makes the property invalid rather than
+     * circular-but-harmless — every `rounded-lg` in the app silently lost its
+     * radius, including the checkbox, which rendered as a bare fragment.
+     */
+    --radius-xs: 0px;
+    --radius-sm: 0px;
+
+    /* Controls are square (a product decision — see the components layer).
+     *
+     * Untitled UI styles every control wrapper with `rounded-lg`: the input
+     * shell, select trigger, button, textarea. Squaring that one token squares
+     * all of them at once, and leaves cards and panels alone because those use
+     * `rounded-xl` / `rounded-2xl`.
+     *
+     * Chasing the wrappers by class instead would miss any component added
+     * later, which is how half a UI ends up square and half rounded. */
+    --radius-lg: 0px;
+    --radius-md: 0px;
+
+    /* ---- elevation ----
+     * Near-invisible only. Blurred elevation breaks the flat editorial feel;
+     * separation comes from hairline borders instead.
+     */
+    --shadow-xs: var(--shadow-subtle-2);
+    --shadow-sm: var(--shadow-subtle);
+    --shadow-md: var(--shadow-subtle);
+    --shadow-lg: var(--shadow-subtle-5);
+    --shadow-xl: var(--shadow-subtle-5);
+    --shadow-2xl: var(--shadow-subtle-5);
+}
+
+/* Deliberately NOT inside `@layer base`.
+ *
+ * Untitled UI's theme.css defines these same tokens, and layered rules lose to
+ * unlayered ones regardless of source order — inside a layer, our
+ * `--color-text-primary: ink` was silently losing to its `neutral-900`, which
+ * reads as a near-black that is close enough to look right and wrong enough to
+ * miss the system's pure-ink contrast.
+ *
+ * Surfaces stack eggshell → taupe → stone; Untitled UI would otherwise derive
+ * them from its neutral ramp and land pure white at the top.
+ */
+:root:not(.dark-mode),
+.light-mode {
+    --color-bg-primary: var(--color-eggshell);
+    --color-bg-primary_alt: var(--color-eggshell);
+    --color-bg-primary_hover: var(--color-warm-taupe);
+    --color-bg-secondary: var(--color-warm-taupe);
+    --color-bg-secondary_alt: var(--color-warm-taupe);
+    --color-bg-secondary_hover: var(--color-stone);
+    --color-bg-secondary_subtle: var(--color-warm-taupe);
+    --color-bg-tertiary: var(--color-stone);
+    --color-bg-quaternary: var(--color-stone);
+
+    /* Stone, not taupe. The sidebar sits on eggshell, and taupe is only 2%
+     * darker — a selected nav item was washing out against it. Stone is the
+     * next surface step and reads as genuinely selected. */
+    --color-bg-active: var(--color-stone);
+
+        /* Filled actions are ink. */
+    --color-bg-brand-solid: var(--color-ink);
+    --color-bg-brand-solid_hover: var(--color-graphite);
+    --color-bg-brand-primary: var(--color-warm-taupe);
+    --color-bg-brand-secondary: var(--color-stone);
+
+    --color-text-primary: var(--color-ink);
+    --color-text-secondary: var(--color-graphite);
+    --color-text-tertiary: var(--color-smoke);
+    --color-text-quaternary: var(--color-ash);
+    --color-text-placeholder: var(--color-ash);
+    --color-text-brand-primary: var(--color-ink);
+    --color-text-brand-secondary: var(--color-ink);
+    --color-text-brand-tertiary: var(--color-graphite);
+
+    --color-fg-primary: var(--color-ink);
+    --color-fg-secondary: var(--color-graphite);
+    --color-fg-tertiary: var(--color-smoke);
+    --color-fg-quaternary: var(--color-ash);
+    --color-fg-brand-primary: var(--color-ink);
+    --color-fg-brand-secondary: var(--color-graphite);
+
+        /* Hairlines, used in preference to shadows for separation. */
+    --color-border-primary: var(--color-stone);
+    --color-border-secondary: var(--color-stone);
+    --color-border-tertiary: var(--color-warm-taupe);
+    --color-border-brand: var(--color-ink);
+
+    /* Focus is ink: the palette has no interactive hue to borrow. */
+    --color-focus-ring: var(--color-graphite);
+}
+
+/* ---- dark ----
+ *
+ * The reference system defines light only, so this is an inversion of it rather
+ * than a second palette: the same warm family, flipped. Greys stay warm (never
+ * a blue-grey) so both modes read as the same product.
+ *
+ * The filled action inverts too. Ink-on-dark would be invisible, so a primary
+ * button becomes eggshell with ink text — which is the correct behaviour for an
+ * achromatic system, where the action colour is "maximum contrast against the
+ * canvas" rather than a fixed hue.
+ */
+:root.dark-mode,
+.dark-mode {
+    --color-bg-primary: #171512;
+    --color-bg-primary_alt: #171512;
+    --color-bg-primary_hover: #232019;
+    --color-bg-secondary: #1f1c18;
+    --color-bg-secondary_alt: #1f1c18;
+    --color-bg-secondary_hover: #2b2721;
+    --color-bg-secondary_subtle: #1f1c18;
+    --color-bg-tertiary: #2b2721;
+    --color-bg-quaternary: #3a352d;
+    --color-bg-active: #2b2721;
+
+    --color-bg-brand-solid: var(--color-eggshell);
+    --color-bg-brand-solid_hover: var(--color-stone);
+    --color-bg-brand-primary: #2b2721;
+    --color-bg-brand-secondary: #3a352d;
+
+    --color-text-primary: var(--color-eggshell);
+    --color-text-secondary: #ded9d3;
+    --color-text-tertiary: #a59f97;
+    --color-text-quaternary: #7d766c;
+    --color-text-placeholder: #7d766c;
+    /* Filled buttons carry ink text on the eggshell fill. */
+    --color-text-primary_on-brand: var(--color-ink);
+    --color-text-secondary_on-brand: var(--color-graphite);
+    --color-text-brand-primary: var(--color-eggshell);
+    --color-text-brand-secondary: var(--color-eggshell);
+    --color-text-brand-tertiary: #ded9d3;
+
+    --color-fg-primary: var(--color-eggshell);
+    --color-fg-secondary: #ded9d3;
+    --color-fg-tertiary: #a59f97;
+    --color-fg-quaternary: #7d766c;
+    --color-fg-brand-primary: var(--color-eggshell);
+    --color-fg-brand-secondary: #ded9d3;
+    --color-fg-white: var(--color-ink);
+
+    --color-border-primary: #3a352d;
+    --color-border-secondary: #2b2721;
+    --color-border-tertiary: #232019;
+    --color-border-brand: var(--color-eggshell);
+
+    --color-focus-ring: var(--color-ash);
+}
+
+/* Filled buttons in dark mode.
+ *
+ * Untitled UI pairs `bg-brand-solid` with a hardcoded `text-white`. That holds
+ * for a fixed brand hue, but this system is achromatic: the filled action is
+ * "maximum contrast against the canvas", so on dark it inverts to eggshell —
+ * and white text lands on a near-white button and vanishes.
+ *
+ * Pairing the label to the fill fixes every filled button at once. Deliberately
+ * unlayered: Tailwind's utilities sit in `@layer utilities`, which beats
+ * `@layer components`, so a layered rule here would lose to `.text-white`.
+ */
+.dark-mode :is(.bg-brand-solid, [class*="bg-brand-solid"]).text-white,
+.dark-mode :is(.bg-brand-solid, [class*="bg-brand-solid"]).text-white * {
+    color: var(--color-ink);
+}
+
+/* Display type is Inter 300 wherever a display size is used. Weight 300 is the
+ * brand's signature restraint and must never be bolded — without this the
+ * scaffold's own font-weight utilities reassert semibold and lose it. */
+.text-display-xs,
+.text-display-sm,
+.text-display-md,
+.text-display-lg,
+.text-display-xl {
+    font-weight: 300;
+}
+
+@layer components {
+    /* Square controls.
+     *
+     * A deliberate departure from the reference system, which specifies fully
+     * pilled buttons (9999px). Square reads as more precise and more
+     * instrument-like for an operations console, and it is the look chosen for
+     * this product.
+     *
+     * Applied here rather than at each call site so components added later stay
+     * in step, and set on the wrappers React Aria renders (`[data-rac]`) as
+     * well as plain elements.
+     */
+    button,
+    button[data-rac],
+    a[data-rac][role="button"],
+    input[data-rac],
+    textarea[data-rac],
+    .ds-square {
+        border-radius: 0;
+    }
+
+    /* Cards, panels and menus keep their radius — the squaring is for controls
+     * only, and flattening surfaces too would lose the system's soft editorial
+     * geometry. */
+    [role="dialog"],
+    [role="listbox"],
+    [role="menu"] {
+        border-radius: var(--radius-2xl);
+    }
+}
