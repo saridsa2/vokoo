@@ -2583,13 +2583,26 @@ function getInspectorPlacement(node: DiagramNode, viewport: Viewport, viewMode: 
   // node near the bottom was edited by a dialog nowhere near it. The body
   // already scrolls, so a panel that follows the node down and gets shorter is
   // the better trade.
-  const minPanelHeight = 260
+  // The panel's chrome — header, name and description, footer — is about 230px
+  // and does not shrink, and the body is floored at 120. So a panel shorter
+  // than roughly 350 cannot contain its own contents: it overflows and the body
+  // is what gets clipped, which is why a low node opened a dialog whose fields
+  // were not there at all. Reserve enough for the chrome plus a body worth
+  // scrolling.
+  const chromeHeight = 230
+  const minBodyHeight = 200
+  const minPanelHeight = chromeHeight + minBodyHeight
   const top = clamp(
     nodeTop,
     viewportPadding,
     Math.max(viewportPadding, window.innerHeight - minPanelHeight - viewportPadding),
   )
-  const maxHeight = Math.max(minPanelHeight, window.innerHeight - top - viewportPadding)
+  // Never taller than the window it sits in: on a short viewport the minimum
+  // above would otherwise win and hang the panel off both ends.
+  const maxHeight = Math.min(
+    window.innerHeight - viewportPadding * 2,
+    Math.max(minPanelHeight, window.innerHeight - top - viewportPadding),
+  )
   const connectorY = clamp(nodeTop + nodeHeight / 2 - top, 28, Math.max(28, maxHeight - 28))
   return {
     side,
