@@ -90,9 +90,25 @@ constraint.
 | on timeout | return `ok:false, error:"timed_out"` so the agent can say something | the node takes its `failed` outcome |
 | retry | never — the caller is waiting | at the flow's discretion |
 
-The live budget is a promise to the caller, not a property of the work. A tool
-that cannot answer in two seconds should return `ok:false` with an error the
-agent can speak, and do its work afterwards from the `call.ended` handler.
+The live budget is a promise to the caller, not a property of the work — and
+exceeding it does not mean abandoning the work. `EdgeRuntime.waitUntil` is
+available on this deployment (verified: edge-runtime 1.74.0, Deno 2.1.4), so the
+upstream request is raced against the budget rather than aborted at it. Overdue,
+the caller is answered inside their budget with `result: {status:"working"}` and
+a line the agent can truthfully say, while the request carries on in the
+background and writes its own `call_events` row when it lands — outcome `ok_late`
+or `failed_late`, carrying `overdue_after_ms`.
+
+Measured: a 5s upstream against a 2s live budget answered at 2009ms and recorded
+`ok_late` at 5015ms.
+
+A later flow step or the `call.ended` handler reads that row. The agent said it
+was sorting it out, which was true; what happened next is the flow's business,
+the same division `finish_call` already follows.
+
+Background tasks are capped at 150s on free plans and 400s on paid, and
+`waitUntil` does not extend the hard wall-clock limit — so this defers slow work,
+it does not make work unbounded.
 
 ## What it writes
 

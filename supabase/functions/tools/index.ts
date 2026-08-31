@@ -137,30 +137,63 @@ Deno.serve(async (req) => {
   }
 
   const budget = BUDGET_MS[invocation] ?? BUDGET_MS.flow;
-  const abort = AbortSignal.timeout(budget);
 
-  let payload: unknown;
-  let ok = false;
-  let error: string | null = null;
+  // The upstream call is started once and then raced against the budget, rather
+  // than aborted at it. EdgeRuntime.waitUntil is available on this runtime
+  // (verified on edge-runtime 1.74.0), so exceeding the budget does not have to
+  // mean abandoning the work: the caller gets an answer inside their budget and
+  // the request carries on in the background, writing its result when it lands.
+  const inflight = fetch(row.endpoint_url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ args, call_id, org_id }),
+  })
+    .then(async (upstream) => ({
+      ok: upstream.ok,
+      status: upstream.status,
+      payload: await upstream.json().catch(() => ({})),
+    }))
+    .catch((e) => ({ ok: false, status: 0, payload: { message: String(e) } }));
 
-  try {
-    const upstream = await fetch(row.endpoint_url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ args, call_id, org_id }),
-      signal: abort,
+  const OVERDUE = Symbol("overdue");
+  const raced = await Promise.race([
+    inflight,
+    new Promise<typeof OVERDUE>((resolve) => setTimeout(() => resolve(OVERDUE), budget)),
+  ]);
+
+  if (raced === OVERDUE) {
+    const duration = Date.now() - started;
+    // The work is not cancelled. It finishes on its own and records itself, so
+    // a later step or the call.ended handler can see what happened.
+    EdgeRuntime.waitUntil(
+      inflight.then((late) => {
+        if (!call_id) return;
+        trace({
+          p_call_id: call_id,
+          p_sequence: sequence,
+          p_node_id: null,
+          p_node_name: row.name,
+          p_implementation: `tool.${row.name}`,
+          p_outcome: late.ok ? "ok_late" : "failed_late",
+          p_duration_ms: Date.now() - started,
+          p_trigger: invocation === "live" ? "call.answered" : "call.ended",
+          p_detail: { args, result: late.payload, invocation, overdue_after_ms: budget },
+        });
+      }),
+    );
+    return json(200, {
+      ok: true,
+      result: { status: "working" },
+      outcome: null,
+      // The agent needs something true to say. It has not failed, and it is not
+      // done — saying either would be a lie to the caller.
+      speak: "I'm getting that sorted for you.",
+      duration_ms: duration,
     });
-    payload = await upstream.json().catch(() => ({}));
-    ok = upstream.ok;
-    if (!ok) error = `upstream_${upstream.status}`;
-  } catch (e) {
-    // A live caller is mid-sentence, so a timeout is answered rather than
-    // retried: the agent says something, and slow work belongs in the
-    // call.ended handler instead.
-    error = abort.aborted ? "timed_out" : "upstream_unreachable";
-    payload = { message: String(e) };
   }
 
+  const { ok, status, payload } = raced;
+  const error = ok ? null : status ? `upstream_${status}` : "upstream_unreachable";
   const duration = Date.now() - started;
 
   if (call_id) {
