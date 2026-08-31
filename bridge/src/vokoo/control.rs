@@ -42,6 +42,15 @@ pub struct CallHandle {
     pub org_id: String,
 }
 
+/// Borrowed for one call into VoKoo's own services. Not stored anywhere: it is
+/// a view onto the call control's own fields.
+pub struct ServiceContext<'a> {
+    pub supabase_url: &'a str,
+    pub service_key: &'a str,
+    pub org_id: &'a str,
+    pub ucid: &'a str,
+}
+
 /// The account the commands are issued against.
 #[derive(Debug, Clone)]
 struct Account {
@@ -92,6 +101,23 @@ impl CallControl {
             service_key,
             account: Arc::new(Mutex::new(None)),
             handovers,
+        }
+    }
+
+    /// Where this call reaches VoKoo's own services, and who it belongs to.
+    ///
+    /// The tool dispatcher needs all four, and they already live here for the
+    /// duration of a call. The alternative was threading the same values
+    /// through `FlowRunner`, which would have given a second place for them to
+    /// be wrong. `ucid` rather than the `calls` row id: the runner never sees
+    /// that id, and the carrier's ucid is the identifier that outlives the
+    /// socket.
+    pub fn service(&self) -> ServiceContext<'_> {
+        ServiceContext {
+            supabase_url: &self.supabase_url,
+            service_key: &self.service_key,
+            org_id: &self.handle.org_id,
+            ucid: &self.handle.ucid,
         }
     }
 

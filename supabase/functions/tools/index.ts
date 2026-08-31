@@ -19,6 +19,8 @@ type Body = {
   args?: Record<string, unknown>;
   org_id?: string;
   call_id?: string | null;
+  /** The carrier's ucid, for callers that never see the calls row id. */
+  ucid?: string | null;
   invocation?: "live" | "flow";
   sequence?: number | null;
 };
@@ -105,11 +107,36 @@ Deno.serve(async (req) => {
     return fail("bad_request", "body is not JSON", 400);
   }
 
-  const { tool, args = {}, org_id, call_id = null, invocation = "flow", sequence = null } = body;
+  const { tool, args = {}, org_id, ucid = null, invocation = "flow", sequence = null } = body;
+  let { call_id = null } = body;
   if (!tool) return fail("bad_request", "tool is required", 400);
   if (!org_id) return fail("bad_request", "org_id is required", 400);
 
   const started = Date.now();
+  let callVariables: Record<string, unknown> = {};
+
+  // The bridge knows the carrier's ucid and not the calls row id — migration
+  // 0020 calls the ucid "the one identifier that outlives the socket", and the
+  // flow runner never handles anything else. Resolving it here keeps that
+  // asymmetry out of the caller. A miss is not an error: the invocation still
+  // runs, it is only untraceable.
+  if (!call_id && ucid) {
+    try {
+      const found = await rest(
+        "calls",
+        `provider_call_id=eq.${encodeURIComponent(ucid)}&org_id=eq.${encodeURIComponent(org_id)}&select=id,variables&limit=1`,
+      );
+      const call = found[0] as { id?: string; variables?: Record<string, unknown> } | undefined;
+      call_id = call?.id ?? null;
+      // Shared state lives on the call, so the call is where arguments come
+      // from. The flow's `var` nodes fill `variables`; this spends them.
+      // Anything the node stated explicitly wins, so a node can override one
+      // argument without restating the rest.
+      callVariables = call?.variables ?? {};
+    } catch (error) {
+      console.error("[tools] could not resolve ucid", error);
+    }
+  }
 
   // The organisation is checked against the row rather than taken on the
   // caller's word: this endpoint holds the service key, so it is the only thing
@@ -129,7 +156,8 @@ Deno.serve(async (req) => {
     | undefined;
   if (!row) return fail("unknown_tool", `no tool named ${tool} in this organisation`);
 
-  const invalid = validate(row.schema ?? {}, args);
+  const effectiveArgs = { ...callVariables, ...args };
+  const invalid = validate(row.schema ?? {}, effectiveArgs);
   if (invalid) return fail("invalid_arguments", invalid);
 
   if (row.kind !== "http" || !row.endpoint_url) {
@@ -146,7 +174,7 @@ Deno.serve(async (req) => {
   const inflight = fetch(row.endpoint_url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ args, call_id, org_id }),
+    body: JSON.stringify({ args: effectiveArgs, call_id, org_id }),
   })
     .then(async (upstream) => ({
       ok: upstream.ok,
@@ -177,7 +205,7 @@ Deno.serve(async (req) => {
           p_outcome: late.ok ? "ok_late" : "failed_late",
           p_duration_ms: Date.now() - started,
           p_trigger: invocation === "live" ? "call.answered" : "call.ended",
-          p_detail: { args, result: late.payload, invocation, overdue_after_ms: budget },
+          p_detail: { args: effectiveArgs, result: late.payload, invocation, overdue_after_ms: budget },
         });
       }),
     );
@@ -206,7 +234,7 @@ Deno.serve(async (req) => {
       p_outcome: ok ? "ok" : (error ?? "failed"),
       p_duration_ms: duration,
       p_trigger: invocation === "live" ? "call.answered" : "call.ended",
-      p_detail: { args, result: payload, invocation },
+      p_detail: { args: effectiveArgs, result: payload, invocation },
     });
   }
 

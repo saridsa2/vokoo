@@ -222,6 +222,35 @@ impl<'a> FlowRunner<'a> {
                 "__end__".into()
             }
 
+            // The first node that can act on anything outside the call. It
+            // names a tool rather than a URL: the dispatcher validates the
+            // arguments against that tool's schema, and a node carrying its own
+            // endpoint would be validated against nothing.
+            "tool.call" => {
+                let Some(tool) = node.config_str("tool").filter(|t| !t.is_empty()) else {
+                    log::warn!("[flow] tool node names no tool");
+                    return "failed".into();
+                };
+                let tool = tool.to_string();
+                let ctx = self.control.service();
+                let args = node
+                    .config
+                    .get("args")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                super::tools::call(
+                    ctx.supabase_url,
+                    ctx.service_key,
+                    ctx.org_id,
+                    ctx.ucid,
+                    &tool,
+                    args,
+                    self.steps,
+                )
+                .await
+                .outcome
+            }
+
             // `condition`, `loop` and `code` all need an expression language,
             // and what an expression *is* has not been decided. Rather than
             // invent one under a caller, the node fails and the flow routes on
