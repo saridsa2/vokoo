@@ -99,3 +99,52 @@ pub async fn call(
     log::info!("[tool] {tool} -> {outcome}");
     ToolReply { outcome: outcome.into(), detail: body }
 }
+
+/// Run a tool the model asked for, mid-conversation.
+///
+/// Returns what goes back to the model, and only that: the caller is waiting on
+/// a sentence, so a failure is phrased as a result the model can speak around
+/// rather than an error it never sees. The dispatcher has already recorded what
+/// happened, so nothing is lost by keeping this shape small.
+pub async fn call_live(
+    supabase_url: &str,
+    service_key: &str,
+    org_id: &str,
+    ucid: &str,
+    tool: &str,
+    args: Value,
+) -> Value {
+    let client = match reqwest::Client::builder()
+        // Above the dispatcher's 2s live budget, so the answer comes from the
+        // dispatcher — which knows whether the work is still running — rather
+        // than from us giving up first.
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return json!({ "ok": false, "error": "client", "message": e.to_string() }),
+    };
+
+    let response = client
+        .post(format!("{supabase_url}/functions/v1/tools"))
+        .header("Authorization", format!("Bearer {service_key}"))
+        .json(&json!({
+            "tool": tool,
+            "args": args,
+            "org_id": org_id,
+            "ucid": ucid,
+            "invocation": "live",
+        }))
+        .send()
+        .await;
+
+    match response {
+        Ok(r) => r.json().await.unwrap_or_else(|e| {
+            json!({ "ok": false, "error": "unreadable", "message": e.to_string() })
+        }),
+        Err(e) => {
+            log::warn!("[tool] {tool} could not be reached: {e}");
+            json!({ "ok": false, "error": "unreachable", "message": e.to_string() })
+        }
+    }
+}

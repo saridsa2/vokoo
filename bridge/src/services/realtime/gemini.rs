@@ -10,7 +10,8 @@ use async_trait::async_trait;
 // crate root. SetupConfig lives under client_message, not config — the two are
 // easy to confuse.
 use gemini_live::{
-    Auth, Content, FunctionDeclaration, GenerationConfig, Modality, Part, PrebuiltVoiceConfig,
+    Auth, Content, FunctionDeclaration, FunctionResponse, GenerationConfig, Modality, Part,
+    PrebuiltVoiceConfig,
     ReconnectPolicy, ServerEvent, Session, SessionConfig, SetupConfig, SpeechConfig, Tool,
     TransportConfig, VoiceConfig,
 };
@@ -63,6 +64,7 @@ impl Default for GeminiLiveConfig {
 pub struct GeminiLiveSession {
     audio_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     text_tx: tokio::sync::mpsc::Sender<String>,
+    tool_tx: tokio::sync::mpsc::Sender<FunctionResponse>,
     events: Option<tokio::sync::mpsc::Receiver<RealtimeEvent>>,
 }
 
@@ -117,6 +119,11 @@ impl GeminiLiveSession {
 
         let (text_tx, mut text_rx) = tokio::sync::mpsc::channel::<String>(8);
         let (audio_tx, mut audio_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+        // Tool answers go through the task that owns the session, like audio
+        // and text. Sending from the caller's thread would need the session
+        // shared across both, and the whole point of this task is that it does
+        // not have to be.
+        let (tool_tx, mut tool_rx) = tokio::sync::mpsc::channel::<FunctionResponse>(8);
         let (event_tx, events) = tokio::sync::mpsc::channel::<RealtimeEvent>(256);
 
         // One task owns the session and services both directions with select!,
@@ -127,6 +134,12 @@ impl GeminiLiveSession {
                     text = text_rx.recv() => {
                         let Some(text) = text else { break };
                         if let Err(e) = session.send_text(&text).await {
+                            let _ = event_tx.send(RealtimeEvent::Error(e.to_string())).await;
+                        }
+                    }
+                    reply = tool_rx.recv() => {
+                        let Some(reply) = reply else { break };
+                        if let Err(e) = session.send_tool_response(vec![reply]).await {
                             let _ = event_tx.send(RealtimeEvent::Error(e.to_string())).await;
                         }
                     }
@@ -193,7 +206,7 @@ impl GeminiLiveSession {
             log::debug!("gemini live session task exited");
         });
 
-        Ok(Self { audio_tx, text_tx, events: Some(events) })
+        Ok(Self { audio_tx, text_tx, tool_tx, events: Some(events) })
     }
 }
 
@@ -217,6 +230,24 @@ impl RealtimeSession for GeminiLiveSession {
     async fn send_text(&mut self, text: &str) -> Result<(), String> {
         self.text_tx
             .send(text.to_string())
+            .await
+            .map_err(|_| "gemini live session closed".to_string())
+    }
+
+    async fn send_tool_response(
+        &mut self,
+        id: &str,
+        name: &str,
+        result: serde_json::Value,
+    ) -> Result<(), String> {
+        self.tool_tx
+            .send(FunctionResponse {
+                // The id is the model's own correlation key. Answering with a
+                // different one attaches the result to a different question.
+                id: id.to_string(),
+                name: name.to_string(),
+                response: result,
+            })
             .await
             .map_err(|_| "gemini live session closed".to_string())
     }

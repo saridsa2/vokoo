@@ -67,6 +67,18 @@ pub enum RealtimeEvent {
     Closed(String),
 }
 
+/// Enough to call the tool dispatcher for this call.
+#[derive(Clone)]
+pub struct ToolDispatch {
+    pub supabase_url: String,
+    pub service_key: String,
+    pub org_id: String,
+    pub ucid: String,
+    /// The function the flow declared for reporting an outcome. It is answered
+    /// by the flow, not by a tool, so it must not be dispatched.
+    pub outcome_function: String,
+}
+
 /// One bidirectional audio session with a speech-to-speech provider.
 #[async_trait]
 pub trait RealtimeSession: Send {
@@ -78,6 +90,29 @@ pub trait RealtimeSession: Send {
 
     /// Send caller audio. PCM16 LE at [`input_rate`](Self::input_rate).
     async fn send_audio(&mut self, pcm: &[u8]) -> Result<(), String>;
+
+    /// Answer a function the model called.
+    ///
+    /// `finish_call` needed nothing back: the agent reports how it finished and
+    /// the flow decides what that means. A tool is the other case — the model
+    /// asked a question and cannot continue the sentence until it hears the
+    /// answer, so a session that can only receive a tool call leaves the caller
+    /// in silence.
+    ///
+    /// `id` is the one from the [`RealtimeEvent::ToolCall`] being answered.
+    /// Providers correlate on it, and a response carrying the wrong id is
+    /// attached to the wrong question.
+    ///
+    /// Default: refuse. A provider that cannot answer should say so once here
+    /// rather than have every caller test for it.
+    async fn send_tool_response(
+        &mut self,
+        _id: &str,
+        _name: &str,
+        _result: serde_json::Value,
+    ) -> Result<(), String> {
+        Err("this provider cannot answer a tool call".into())
+    }
 
     /// Send a text turn. Used to make the agent speak first — a realtime
     /// provider stays silent until something arrives, so without this the
@@ -139,6 +174,7 @@ pub struct RealtimeProcessor {
     greeting: Option<String>,
     /// Where a flow waits to hear how the agent node finished.
     outcomes: Option<tokio::sync::mpsc::Sender<(String, serde_json::Value)>>,
+    tools: Option<ToolDispatch>,
     /// Listening rather than talking.
     ///
     /// Set after a transfer: the caller is speaking to a person now, and the
@@ -163,6 +199,7 @@ impl RealtimeProcessor {
             started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             greeting: None,
             outcomes: None,
+            tools: None,
             listening: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             tap: Arc::new(Mutex::new(None)),
         }
@@ -179,6 +216,17 @@ impl RealtimeProcessor {
             listening: self.listening.clone(),
             tap: self.tap.clone(),
         }
+    }
+
+    /// Where a tool call goes, and who it belongs to.
+    ///
+    /// This module handles audio and knows nothing about VoKoo's tables, so the
+    /// dispatcher is described to it rather than reached for. Absent, a tool
+    /// call other than the flow's own function is refused to the model — which
+    /// is the truth, and better than silence while a caller waits.
+    pub fn with_tools(mut self, tools: ToolDispatch) -> Self {
+        self.tools = Some(tools);
+        self
     }
 
     /// Where to report a function call, when a flow is waiting on one.
@@ -204,6 +252,8 @@ impl RealtimeProcessor {
     async fn spawn_event_pump(&self, processor: FrameProcessor) {
         let pipeline_rate = self.pipeline_rate;
         let outcomes = self.outcomes.clone();
+        let tools = self.tools.clone();
+        let session = self.session.clone();
         let listening = self.listening.clone();
         let (out_rate, events) = {
             let mut s = self.session.lock().await;
@@ -289,11 +339,43 @@ impl RealtimeProcessor {
                     RealtimeEvent::TurnComplete => continue,
                     // Reported, not acted on here: the flow owns what an
                     // outcome means, and this processor owns only audio.
-                    RealtimeEvent::ToolCall { name, args, .. } => {
+                    RealtimeEvent::ToolCall { id, name, args } => {
                         log::info!("[realtime] agent called {name}({args})");
-                        if let Some(tx) = outcomes.as_ref() {
-                            let _ = tx.send((name, args)).await;
+
+                        // The flow's own function is a report, not a request:
+                        // the agent says how it finished and the flow decides
+                        // what that means. Nothing goes back to the model, and
+                        // dispatching it would look for a tool by that name.
+                        let is_outcome = tools
+                            .as_ref()
+                            .map(|t| t.outcome_function == name)
+                            .unwrap_or(true);
+                        if is_outcome {
+                            if let Some(tx) = outcomes.as_ref() {
+                                let _ = tx.send((name, args)).await;
+                            }
+                            continue;
                         }
+
+                        // A tool the model is waiting on. Answered on the same
+                        // task that reads events, because the caller is mid
+                        // sentence and the dispatcher's own budget is what
+                        // bounds the wait.
+                        let dispatch = tools.clone().expect("checked above");
+                        let reply = crate::vokoo::tools::call_live(
+                            &dispatch.supabase_url,
+                            &dispatch.service_key,
+                            &dispatch.org_id,
+                            &dispatch.ucid,
+                            &name,
+                            args,
+                        )
+                        .await;
+                        let mut guard = session.lock().await;
+                        if let Err(e) = guard.send_tool_response(&id, &name, reply).await {
+                            log::warn!("[realtime] could not answer {name}: {e}");
+                        }
+                        drop(guard);
                         continue;
                     }
                     RealtimeEvent::Error(e) => {
