@@ -1995,6 +1995,13 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                         // Only a call that reached a flow has an outcome to
                         // report, and only then is `finish_call` declared.
                         declare_outcome: flow.is_some(),
+                        // Let the caller choose. Safe here and nowhere else:
+                        // one realtime session hears and speaks, so a language
+                        // change is an instruction rather than a reconnect.
+                        // A WhatsApp call has no other way to be asked — the
+                        // media socket is open from the dialplan's first line,
+                        // so `<collectdtmf>` never gets a chance.
+                        offer_language: true,
                         language_codes: cfg.transcript_languages.clone(),
                         fallback_key: Some(fallback),
                         probe: false,

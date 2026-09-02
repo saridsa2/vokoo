@@ -544,16 +544,74 @@ pub fn outcome_schema(outcomes: &[String]) -> FunctionSchema {
     }
 }
 
+/// The caller choosing which language to be answered in.
+///
+/// **Realtime only, and the reason is not a preference.** A cascading relay
+/// takes its language when the sockets open — `SarvamSttConfig.language` and
+/// `SarvamTtsConfig.language` are read at connect — so a tool firing mid-call
+/// would leave the ear and the mouth in the old language while the model wrote
+/// in the new one. That is why a keypad menu exists on the phone line: it
+/// chooses *before* the agent node, and each branch opens its own sockets.
+///
+/// A realtime model has no such seam. One session hears and speaks, so the
+/// language is a matter of instruction rather than of configuration, and this
+/// is a tool rather than a menu — which matters on WhatsApp, where the media
+/// socket is open from the first line of the dialplan and a menu cannot be
+/// asked at all.
+pub fn language_schema() -> FunctionSchema {
+    FunctionSchema {
+        name: "set_language".into(),
+        description: Some(
+            "Call this as soon as you know which language the caller wants, then continue              the conversation in that language and do not change again unless they ask.              If the caller has already spoken in a language, use it and do not ask."
+                .into(),
+        ),
+        parameters: Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "language": {
+                    "type": "string",
+                    "description": "The language to speak from now on, in English,                                     e.g. 'Hindi', 'English', 'Telugu'.",
+                },
+            },
+            "required": ["language"],
+        })),
+        strict: None,
+    }
+}
+
 /// Everything the model may call, wired to what actually runs it.
 ///
 /// `finish_call` is answered here rather than dispatched: it is the flow's
-/// function, not a tool, and looking it up would find nothing.
+/// function, not a tool, and looking it up would find nothing. `set_language`
+/// is answered here for the same reason — it changes how this call is
+/// conducted, and there is nothing on the other side of the dispatcher that
+/// knows what a call is.
 pub fn registry(
     dispatch: ToolRoute,
     outcome_tx: tokio::sync::mpsc::Sender<(String, Value)>,
     tools: Vec<String>,
 ) -> crate::services::FunctionRegistry {
     let mut registry = crate::services::FunctionRegistry::new();
+
+    registry.register("set_language", move |args: String| async move {
+        let parsed: Value = serde_json::from_str(&args).unwrap_or_else(|_| serde_json::json!({}));
+        let language = parsed
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("English")
+            .to_string();
+        log::info!("[tools] set_language — {language}");
+        // The answer is the instruction. There is no socket to reconfigure on
+        // a realtime engine, so confirming the choice back to the model is
+        // what makes it stick — and saying it in the second person is what
+        // stops the model treating it as data to read out.
+        serde_json::json!({
+            "ok": true,
+            "language": language,
+            "instruction": format!("Speak only {language} from now on."),
+        })
+        .to_string()
+    });
 
     registry.register("finish_call", move |args: String| {
         let tx = outcome_tx.clone();
@@ -848,6 +906,43 @@ pub fn openai_realtime_outcome(outcomes: &[String]) -> Value {
     })
 }
 
+/// `set_language` in Gemini's shape.
+///
+/// Built directly, the way [`gemini_outcome`] is, rather than routed through
+/// [`gemini_declaration`]. That function reads a **VoKoo tool row**, whose
+/// JSON Schema lives under `schema`; handing it `parameters` returned `None`,
+/// and the `.expect` on the other side of it panicked a tokio worker on a live
+/// call. The carrier ends a call whose socket errors, so the caller heard the
+/// line go dead — which is the worst possible shape for a mistake in a
+/// declaration nobody had exercised yet.
+///
+/// Constructing the struct removes the `Option`, so there is nothing left to
+/// unwrap and no shape to get wrong.
+pub fn gemini_language() -> gemini_live::FunctionDeclaration {
+    let schema = language_schema();
+    gemini_live::FunctionDeclaration {
+        name: schema.name,
+        description: schema.description.unwrap_or_default(),
+        parameters: schema.parameters.unwrap_or(serde_json::json!({ "type": "object" })),
+        scheduling: None,
+        behavior: None,
+    }
+}
+
+/// `set_language` in OpenAI Realtime's flat shape.
+///
+/// Written out rather than passed through [`openai_realtime_declaration`], for
+/// the same reason: that one reads a tool row, and this is not one.
+pub fn openai_realtime_language() -> Value {
+    let schema = language_schema();
+    serde_json::json!({
+        "type": "function",
+        "name": schema.name,
+        "description": schema.description.unwrap_or_default(),
+        "parameters": schema.parameters.unwrap_or(serde_json::json!({"type": "object"})),
+    })
+}
+
 /// What a realtime session needs that the engine row does not carry.
 ///
 /// The engine says which provider, model and voice. Everything here belongs to
@@ -864,6 +959,12 @@ pub struct RealtimeRequest<'a> {
     /// outcome; false for a call that never reached one and has nothing to
     /// report back to.
     pub declare_outcome: bool,
+    /// Whether to declare `set_language`, letting the caller choose.
+    ///
+    /// Only ever true for a realtime engine. A relay fixes its language when
+    /// its sockets open, so offering the choice there would be offering
+    /// something that cannot be honoured — see [`language_schema`].
+    pub offer_language: bool,
     pub language_codes: Vec<String>,
     /// Used when the organisation has not connected a key for this vendor.
     /// Kept because a call that never reached a flow has no organisation to
@@ -880,6 +981,7 @@ impl Default for RealtimeRequest<'_> {
             instructions: "",
             functions: Vec::new(),
             declare_outcome: false,
+            offer_language: false,
             language_codes: vec!["en-IN".to_string()],
             fallback_key: None,
             probe: false,
@@ -950,6 +1052,9 @@ pub async fn build_realtime(
                     // exists whether or not the agent has any tools of its own.
                     let mut declared =
                         if request.declare_outcome { vec![gemini_outcome()] } else { Vec::new() };
+                    if request.offer_language {
+                        declared.push(gemini_language());
+                    }
                     declared.extend(request.functions.iter().filter_map(gemini_declaration));
                     declared
                 },
@@ -1002,6 +1107,9 @@ pub async fn build_realtime(
                         } else {
                             Vec::new()
                         };
+                        if request.offer_language {
+                            declared.push(openai_realtime_language());
+                        }
                         declared.extend(
                             request.functions.iter().filter_map(openai_realtime_declaration),
                         );

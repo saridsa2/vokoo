@@ -69,19 +69,26 @@ fn silence(wire_rate: u32) -> Vec<u8> {
     AudioSocketFrame::audio(pcm).encode()
 }
 
-/// The most audio allowed to wait — two seconds.
+/// A memory guard, not a latency policy — sixty seconds of audio.
 ///
-/// **A deep queue is never answered by writing faster.** An earlier version
-/// wrote a second frame whenever the queue passed a threshold, to "catch up";
-/// on a wire clocked at 50 frames a second that plays the call at double speed,
-/// which sounds like interference rather than like a fault. The caller hears
-/// noise and every diagnostic looks healthy.
+/// **A deep queue is never answered by writing faster, and rarely by dropping.**
+/// Two earlier versions got this wrong in opposite directions. The first wrote
+/// a second frame whenever the queue passed a threshold, to "catch up"; on a
+/// wire clocked at 50 frames a second that plays the call at double speed,
+/// which sounds like interference rather than like a fault. The second bounded
+/// the queue at two seconds and dropped the oldest frames past it — and a
+/// realtime model streams a whole utterance far faster than real time, so the
+/// bound was reached mid-sentence on ordinary speech and the caller heard the
+/// voice skip.
 ///
-/// So the clock is fixed at real time and the queue is bounded instead. Past
-/// the bound the oldest frames go: audio that is more than two seconds late has
-/// been overtaken by the conversation, and dropping it is what lets the rest
-/// arrive on time.
-const MAX_QUEUE_FRAMES: usize = 100;
+/// A queue is not latency here: it is an utterance that has been produced and
+/// not yet spoken, and its depth is simply how long the sentence is. It drains
+/// at real time because that is the only speed audio can be played at, and
+/// barge-in clears it — which is what makes an interrupted sentence stop.
+///
+/// So the bound is generous enough that speech never reaches it, and exists
+/// only so a runaway producer cannot grow the queue without limit.
+const MAX_QUEUE_FRAMES: usize = 3000;
 
 const AUDIO_OUT_CHANNEL_CAP: usize = 150;
 
@@ -387,6 +394,14 @@ impl AudioSocketTransport {
                                 while outbound.len() > MAX_QUEUE_FRAMES {
                                     outbound.pop_front();
                                     dropped += 1;
+                                }
+                                if dropped > 0 && dropped % 50 == 0 {
+                                    log::warn!(
+                                        "AudioSocketTransport: queue past {}s, dropping — \
+                                         the pipeline is producing faster than a call can \
+                                         play it for longer than any utterance lasts",
+                                        MAX_QUEUE_FRAMES / 50,
+                                    );
                                 }
                             }
                         }
