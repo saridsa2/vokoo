@@ -87,13 +87,15 @@ const _: () = assert!(
      serializer buffers half of every chunk and outbound audio falls behind"
 );
 
-/// AudioSocket's pairing of the same two constants, with the same failure if
-/// they drift: 2 chunks = 20 ms = 160 samples at 8 kHz = one AudioSocket frame.
+/// AudioSocket's pairing of the same two constants: 2 chunks = 20 ms, and the
+/// serializer's frame is 20 ms at whatever rate the wire runs at, so one
+/// pipeline chunk is exactly one frame however wide the channel is.
 const AUDIOSOCKET_OUT_10MS_CHUNKS: u32 = 2;
 
 const _: () = assert!(
-    rustvani::serializers::AUDIOSOCKET_FRAME_SAMPLES == 80 * AUDIOSOCKET_OUT_10MS_CHUNKS as usize,
-    "AUDIOSOCKET_FRAME_SAMPLES must equal 80 * AUDIOSOCKET_OUT_10MS_CHUNKS, or the \
+    AUDIOSOCKET_OUT_10MS_CHUNKS as usize * 10
+        == 1000 / rustvani::serializers::audiosocket::FRAMES_PER_SECOND as usize,
+    "a pipeline chunk and an AudioSocket frame must cover the same span, or the \
      serializer buffers part of every chunk and outbound audio falls behind"
 );
 
@@ -1748,11 +1750,24 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             CallWire::Kookoo { transport, socket }
         }
         Wire::Asterisk { stream, handshake } => {
+            // Opus makes the channel wideband, so the wire is 16 kHz — the
+            // pipeline's own rate, which means a WhatsApp call resamples
+            // nowhere. Overridable for a narrowband channel, which is the only
+            // reason it is not simply a constant.
+            let wire_rate: u32 = env_or(
+                "AUDIOSOCKET_WIRE_RATE",
+                &rustvani::serializers::AUDIOSOCKET_SAMPLE_RATE.to_string(),
+            )
+            .parse()
+            .unwrap_or(rustvani::serializers::AUDIOSOCKET_SAMPLE_RATE);
             let transport = AudioSocketTransport::new(
                 &format!("AudioSocketTransport-{call}"),
-                AudioSocketParams { transport: audio_params(AUDIOSOCKET_OUT_10MS_CHUNKS) },
+                AudioSocketParams {
+                    transport: audio_params(AUDIOSOCKET_OUT_10MS_CHUNKS),
+                    wire_rate,
+                },
             );
-            transport.set_serializer(Box::new(AudioSocketFrameSerializer::new()));
+            transport.set_serializer(Box::new(AudioSocketFrameSerializer::at(wire_rate)));
             CallWire::Asterisk { transport, stream, handshake }
         }
     };

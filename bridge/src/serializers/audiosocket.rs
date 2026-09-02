@@ -2,12 +2,14 @@
 //!
 //! WhatsApp Business calls terminate on Asterisk. Asterisk's `chan_audiosocket`
 //! then connects **out to us** as a TCP client — `AudioSocket/<host>:<port>/<uuid>`
-//! — and carries the call as 8 kHz signed-linear PCM, mono.
+//! — and carries the call as signed-linear PCM, mono.
 //!
-//! That rate is the reason this is cheap: it is the same 8 kHz KooKoo already
-//! delivers, so the audio path is a re-frame and a resample to the pipeline's
-//! 16 kHz — no codec, no transcode. `serializers/kookoo.rs` does exactly that
-//! job for the WebSocket side and this mirrors it for the socket side.
+//! **At the channel's rate, not a fixed one.** A WhatsApp call is Opus, so the
+//! channel is wideband and the wire carries 16 kHz — the same rate the pipeline
+//! runs at, so such a call resamples nowhere at all. A narrowband channel
+//! carries 8 kHz and this resamples, the way `serializers/kookoo.rs` does for
+//! the WebSocket side. See [`AUDIOSOCKET_WIDEBAND`] for how that was measured
+//! and why the frame size cannot tell you which you have.
 //!
 //! The wire format is four kinds of frame and nothing else:
 //!
@@ -16,7 +18,7 @@
 //!
 //! 0x00  terminate   the call is over
 //! 0x01  uuid        16 raw bytes, sent once, first — the call's identity
-//! 0x10  audio       signed linear 16-bit, 8 kHz, mono, little-endian samples
+//! 0x10  audio       signed linear 16-bit, mono, little-endian, channel rate
 //! 0xff  error       Asterisk reporting a problem with the stream
 //! ```
 //!
@@ -169,20 +171,56 @@ impl FrameReader {
 // AudioSocketFrameSerializer
 // ---------------------------------------------------------------------------
 
-/// Samples per outbound audio frame — 160 = 20 ms at 8 kHz, which is what
-/// Asterisk's own channel driver reads and writes.
+/// How long one outbound frame covers. 20 ms, so `audio_out_10ms_chunks = 2`
+/// hands over exactly one frame's worth per pipeline chunk.
 ///
 /// Same lockstep rule as [`KOOKOO_FRAME_SAMPLES`](super::KOOKOO_FRAME_SAMPLES):
-/// `serialize()` emits at most one frame per call, so the transport must be
-/// built with `audio_out_10ms_chunks = 2`. Hand it more samples than fit and
-/// the remainder is buffered until the next chunk — outbound throughput halves
-/// and the backlog grows for the whole call.
-pub const AUDIOSOCKET_FRAME_SAMPLES: usize = 160;
+/// `serialize()` emits at most one frame per call, so more samples than fit
+/// leave the remainder buffered and outbound throughput drops for the whole
+/// call.
+pub const FRAMES_PER_SECOND: u32 = 50;
 
-/// The rate AudioSocket carries. Not configurable: `chan_audiosocket` is
-/// specified as 8 kHz signed linear, and a different value here would not
-/// change what arrives — it would only mislabel it.
-pub const AUDIOSOCKET_SAMPLE_RATE: u32 = 8000;
+/// What `app_audiosocket` carries on a narrowband channel.
+pub const AUDIOSOCKET_NARROWBAND: u32 = 8000;
+
+/// What it carries on a wideband one — which is every WhatsApp call, because
+/// Meta offers only Opus.
+///
+/// **This is the rate, not 8 kHz, and getting it wrong sounds like noise rather
+/// than like an error.** `core show application AudioSocket` documents 8 kHz
+/// and then says "other codecs available via the channel driver interface";
+/// the channel wins. Measured off a real WhatsApp call:
+///
+/// ```text
+/// Asterisk → bridge: ~100 frames/sec × 160 samples = 16 000 samples/sec
+/// ```
+///
+/// The frame *size* is identical to the 8 kHz case — 160 samples, 320 bytes —
+/// so only the arrival *rate* distinguishes them. Counting bytes per frame says
+/// 8 kHz and is wrong; counting frames per second says 16 kHz and is right.
+pub const AUDIOSOCKET_WIDEBAND: u32 = 16000;
+
+/// The default.
+///
+/// **8 kHz, even for WhatsApp.** Asterisk transcodes on the channel, not on the
+/// socket, and says so itself on a live WhatsApp call:
+///
+/// ```text
+/// NativeFormats: (opus)
+///    ReadFormat: slin
+/// ReadTranscode: Yes (opus@48000)->(slin@8000)
+/// ```
+///
+/// Opus at 48 kHz is what Meta sends; `slin@8000` is what reaches this. The
+/// rate was briefly changed to 16 kHz on the strength of a packet-per-second
+/// count, which is not a frame-per-second count — `core show channel` is the
+/// authority and should have been asked first.
+pub const AUDIOSOCKET_SAMPLE_RATE: u32 = AUDIOSOCKET_NARROWBAND;
+
+/// Samples in one outbound frame at a given wire rate.
+pub const fn frame_samples(wire_rate: u32) -> usize {
+    (wire_rate / FRAMES_PER_SECOND) as usize
+}
 
 /// Audio in and out of an AudioSocket connection, at the pipeline's rate.
 ///
@@ -198,6 +236,9 @@ pub const AUDIOSOCKET_SAMPLE_RATE: u32 = 8000;
 /// them says "stop playing". Barge-in is therefore whatever we can do locally —
 /// drop what has not been written yet — and nothing more.
 pub struct AudioSocketFrameSerializer {
+    /// What the wire carries. 16 kHz for an Opus channel, 8 kHz for a
+    /// narrowband one — see [`AUDIOSOCKET_WIDEBAND`].
+    wire_rate: u32,
     /// The pipeline's rate, learned in `setup`.
     sample_rate: u32,
     /// 8 kHz → pipeline. `None` when the pipeline already runs at 8 kHz.
@@ -209,6 +250,12 @@ pub struct AudioSocketFrameSerializer {
     /// Terminate is sent once. A second one after the socket is closing is at
     /// best ignored and at worst an error in the Asterisk log.
     terminate_sent: bool,
+    /// Samples handed to the outbound path, and samples it produced. Their
+    /// ratio must equal `wire_rate / pipeline_rate` or the wire is being fed
+    /// at the wrong rate.
+    took_total: u64,
+    gave_total: u64,
+    reports: u64,
 }
 
 impl Default for AudioSocketFrameSerializer {
@@ -218,25 +265,43 @@ impl Default for AudioSocketFrameSerializer {
 }
 
 impl AudioSocketFrameSerializer {
+    /// A serializer for a wideband (Opus) channel — every WhatsApp call.
     pub fn new() -> Self {
+        Self::at(AUDIOSOCKET_SAMPLE_RATE)
+    }
+
+    /// A serializer for a wire carrying `wire_rate`.
+    pub fn at(wire_rate: u32) -> Self {
         Self {
-            sample_rate: AUDIOSOCKET_SAMPLE_RATE,
+            wire_rate,
+            sample_rate: wire_rate,
             input_resampler: None,
             output_resampler: None,
             out_pending: Vec::new(),
             terminate_sent: false,
+            took_total: 0,
+            gave_total: 0,
+            reports: 0,
         }
     }
 
-    /// Resample an outbound chunk to 8 kHz and append it to `out_pending`.
+    /// Samples in one outbound frame on this wire.
+    pub fn frame_samples(&self) -> usize {
+        frame_samples(self.wire_rate)
+    }
+
+    /// Resample an outbound chunk to the wire rate and append it to
+    /// `out_pending`.
     fn push_output_audio(&mut self, pcm: &[u8], from_rate: u32) {
         let f32_in = super::kookoo::pcm_bytes_to_f32(pcm);
         if f32_in.is_empty() {
             return;
         }
+        let before = self.out_pending.len();
 
-        if from_rate == AUDIOSOCKET_SAMPLE_RATE {
+        if from_rate == self.wire_rate {
             self.out_pending.extend(super::kookoo::f32_to_i16(&f32_in));
+            self.report(from_rate, f32_in.len(), self.out_pending.len() - before, "passthrough");
             return;
         }
 
@@ -246,7 +311,7 @@ impl AudioSocketFrameSerializer {
                 from_rate,
                 crate::audio_process::resamplers::StreamResampler::new(
                     from_rate,
-                    AUDIOSOCKET_SAMPLE_RATE,
+                    self.wire_rate,
                     RESAMPLER_QUALITY,
                 ),
             ));
@@ -254,6 +319,37 @@ impl AudioSocketFrameSerializer {
         if let Some((_, resampler)) = self.output_resampler.as_mut() {
             let resampled = resampler.process(&f32_in);
             self.out_pending.extend(super::kookoo::f32_to_i16(&resampled));
+        }
+        self.report(from_rate, f32_in.len(), self.out_pending.len() - before, "resampled");
+    }
+
+    /// Say once what the outbound path is doing to the audio.
+    ///
+    /// `in` and `out` must be in the ratio `from_rate : wire_rate`. Anything
+    /// else means the samples reaching the wire are not at the rate the wire
+    /// plays them at, which is heard as the wrong pitch rather than as an
+    /// error — and fills `out_pending` faster than the clock can drain it.
+    fn report(&mut self, from_rate: u32, took: usize, gave: usize, how: &str) {
+        self.took_total += took as u64;
+        self.gave_total += gave as u64;
+        self.reports += 1;
+        // Every five seconds of pipeline audio. Cumulative, because the first
+        // chunk is always 0 out — a stream resampler primes before it produces
+        // anything, and reading the ratio off that one call says the resampler
+        // is broken when it is merely starting.
+        if self.reports % 250 == 0 {
+            let expected = self.took_total * self.wire_rate as u64 / from_rate as u64;
+            log::info!(
+                "AudioSocket out: {how} {from_rate}->{} Hz, {} in, {} out, expected {} \
+                 (ratio {:.3}, want {:.3}), pending {}",
+                self.wire_rate,
+                self.took_total,
+                self.gave_total,
+                expected,
+                self.gave_total as f64 / self.took_total.max(1) as f64,
+                self.wire_rate as f64 / from_rate as f64,
+                self.out_pending.len(),
+            );
         }
     }
 
@@ -263,12 +359,13 @@ impl AudioSocketFrameSerializer {
     /// given, so padding stretches every utterance by the size of whatever was
     /// left over.
     fn take_frame(&mut self) -> Option<Vec<u8>> {
-        if self.out_pending.len() < AUDIOSOCKET_FRAME_SAMPLES {
+        if self.out_pending.len() < self.frame_samples() {
             return None;
         }
+        let n = self.frame_samples();
         Some(
             self.out_pending
-                .drain(..AUDIOSOCKET_FRAME_SAMPLES)
+                .drain(..n)
                 .flat_map(|s| s.to_le_bytes())
                 .collect(),
         )
@@ -279,15 +376,22 @@ impl AudioSocketFrameSerializer {
 impl FrameSerializer for AudioSocketFrameSerializer {
     async fn setup(&mut self, audio_in_sample_rate: u32, _audio_out_sample_rate: u32) {
         self.sample_rate = audio_in_sample_rate;
-        self.input_resampler = if self.sample_rate == AUDIOSOCKET_SAMPLE_RATE {
+        // Nothing to do when the wire already runs at the pipeline's rate,
+        // which is the normal WhatsApp case: Opus gives 16 kHz and the
+        // pipeline is 16 kHz, so a call resamples nowhere at all.
+        self.input_resampler = if self.sample_rate == self.wire_rate {
             None
         } else {
             Some(crate::audio_process::resamplers::StreamResampler::new(
-                AUDIOSOCKET_SAMPLE_RATE,
+                self.wire_rate,
                 self.sample_rate,
                 RESAMPLER_QUALITY,
             ))
         };
+        log::info!(
+            "AudioSocket: wire {} Hz, pipeline {} Hz, {} samples/frame",
+            self.wire_rate, self.sample_rate, self.frame_samples(),
+        );
     }
 
     async fn serialize(&mut self, frame: &Frame) -> Option<SerializedOutput> {
@@ -417,7 +521,7 @@ mod tests {
         let frames = reader.feed(&bytes);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].kind, FrameKind::Audio);
-        assert_eq!(frames[0].payload.len(), AUDIOSOCKET_FRAME_SAMPLES * 2);
+        assert_eq!(frames[0].payload.len(), s.frame_samples() * 2);
     }
 
     #[tokio::test]

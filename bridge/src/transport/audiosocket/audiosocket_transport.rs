@@ -60,17 +60,33 @@ const READ_BUFFER: usize = 4096;
 const FRAME_INTERVAL: Duration = Duration::from_millis(20);
 
 /// One frame of silence, for a tick with nothing queued.
-const SILENCE: [u8; 320] = [0u8; 320];
-
-/// Queue depth at which a tick writes two frames instead of one.
 ///
-/// The pipeline paces its own output at 20 ms and so does this clock; two
-/// nominally equal clocks drift, and a producer that is faster by a fraction of
-/// a percent adds latency for the whole call. Catching up costs nothing and
-/// never drops audio, which dropping the oldest frame would — mid-word.
-const CATCHUP_DEPTH: usize = 25;
+/// Sized to the wire, not to a constant: 320 bytes at 8 kHz, 640 at 16 kHz.
+/// A fixed 320 on a wideband channel is half a frame every 20 ms, which
+/// Asterisk plays as audio running at half speed — noise, not silence.
+fn silence(wire_rate: u32) -> Vec<u8> {
+    let pcm = vec![0u8; crate::serializers::audiosocket::frame_samples(wire_rate) * 2];
+    AudioSocketFrame::audio(pcm).encode()
+}
+
+/// The most audio allowed to wait — two seconds.
+///
+/// **A deep queue is never answered by writing faster.** An earlier version
+/// wrote a second frame whenever the queue passed a threshold, to "catch up";
+/// on a wire clocked at 50 frames a second that plays the call at double speed,
+/// which sounds like interference rather than like a fault. The caller hears
+/// noise and every diagnostic looks healthy.
+///
+/// So the clock is fixed at real time and the queue is bounded instead. Past
+/// the bound the oldest frames go: audio that is more than two seconds late has
+/// been overtaken by the conversation, and dropping it is what lets the rest
+/// arrive on time.
+const MAX_QUEUE_FRAMES: usize = 100;
 
 const AUDIO_OUT_CHANNEL_CAP: usize = 150;
+
+/// One second of frames, the threshold worth mentioning in the log.
+const FRAMES_PER_SECOND_USIZE: usize = 50;
 
 // ---------------------------------------------------------------------------
 // AudioSocketParams
@@ -79,6 +95,8 @@ const AUDIO_OUT_CHANNEL_CAP: usize = 150;
 #[derive(Debug, Clone)]
 pub struct AudioSocketParams {
     pub transport: TransportParams,
+    /// What the wire carries. Must match the serializer's.
+    pub wire_rate: u32,
 }
 
 impl Default for AudioSocketParams {
@@ -97,6 +115,7 @@ impl Default for AudioSocketParams {
                 audio_out_10ms_chunks: 2,
                 ..TransportParams::default()
             },
+            wire_rate: crate::serializers::AUDIOSOCKET_SAMPLE_RATE,
         }
     }
 }
@@ -177,6 +196,7 @@ pub struct AudioSocketTransport {
     serializer: std::sync::Mutex<Option<Box<dyn FrameSerializer>>>,
     audio_in_sample_rate: u32,
     audio_out_sample_rate: u32,
+    wire_rate: u32,
 }
 
 impl AudioSocketTransport {
@@ -196,6 +216,7 @@ impl AudioSocketTransport {
             serializer: std::sync::Mutex::new(None),
             audio_in_sample_rate,
             audio_out_sample_rate,
+            wire_rate: params.wire_rate,
         }
     }
 
@@ -255,12 +276,54 @@ impl AudioSocketTransport {
         // Frames waiting for their tick. The pipeline decides *what* goes out;
         // the clock below decides *when*.
         let mut outbound: std::collections::VecDeque<Vec<u8>> = std::collections::VecDeque::new();
+        let quiet = silence(self.wire_rate);
+        // `AUDIOSOCKET_TONE=440` replaces everything the pipeline says with a
+        // sine wave. It separates the two halves of "the caller hears noise":
+        // a clean tone means the framing, the clock and the wire are right and
+        // the fault is in what the pipeline produced; a noisy tone means the
+        // fault is here and no amount of looking at the audio will show it.
+        let tone_hz: Option<f64> = std::env::var("AUDIOSOCKET_TONE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|hz| *hz > 0.0);
+        let mut tone_phase = 0f64;
+        let tone_frame = |phase: &mut f64, hz: f64, rate: u32, samples: usize| -> Vec<u8> {
+            let step = std::f64::consts::TAU * hz / rate as f64;
+            let mut out = Vec::with_capacity(samples * 2);
+            for _ in 0..samples {
+                let v = (phase.sin() * 8000.0) as i16;
+                *phase += step;
+                if *phase > std::f64::consts::TAU {
+                    *phase -= std::f64::consts::TAU;
+                }
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            AudioSocketFrame::audio(out).encode()
+        };
         let mut clock = tokio::time::interval(FRAME_INTERVAL);
         // A tick that arrives late must not cause a burst of catch-up ticks —
         // that would write a second of audio in a few milliseconds and Asterisk
         // would play it as a squeak.
         clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut deepest = 0usize;
+        let mut dropped = 0usize;
+
+        // Instrumentation. A wire clocked at 50 frames a second is either
+        // running at that rate or it is not, and every theory about why a call
+        // sounds wrong is guesswork until this is on the record.
+        let mut frames_in = 0u64;
+        let mut frames_out = 0u64;
+        let started = std::time::Instant::now();
+        let mut last_report = started;
+        // `AUDIOSOCKET_DUMP=/tmp` writes the raw PCM of both directions, so the
+        // audio itself can be examined rather than reasoned about.
+        let dump_dir = std::env::var("AUDIOSOCKET_DUMP").ok();
+        let mut dump_in = dump_dir.as_ref().and_then(|d| {
+            std::fs::File::create(format!("{d}/as-in.raw")).ok()
+        });
+        let mut dump_out = dump_dir.as_ref().and_then(|d| {
+            std::fs::File::create(format!("{d}/as-out.raw")).ok()
+        });
 
         // Whatever came in with the uuid, through the same handler the loop
         // uses. A second copy of this dispatch is how the two would drift.
@@ -292,6 +355,13 @@ impl AudioSocketTransport {
 
                     let mut ended = false;
                     for frame in reader.feed(&buffer[..n]) {
+                        if frame.kind == FrameKind::Audio {
+                            frames_in += 1;
+                            if let Some(f) = dump_in.as_mut() {
+                                use std::io::Write;
+                                let _ = f.write_all(&frame.payload);
+                            }
+                        }
                         if !Self::handle_incoming(frame, &mut serializer, &base, &push_tx).await {
                             ended = true;
                             break;
@@ -314,6 +384,10 @@ impl AudioSocketTransport {
                             {
                                 outbound.push_back(out);
                                 deepest = deepest.max(outbound.len());
+                                while outbound.len() > MAX_QUEUE_FRAMES {
+                                    outbound.pop_front();
+                                    dropped += 1;
+                                }
                             }
                         }
 
@@ -351,37 +425,57 @@ impl AudioSocketTransport {
                     // Silence when there is nothing to say. Not an idle state:
                     // it is what holds the call up between the caller's
                     // question and the agent's answer.
-                    let frame = outbound.pop_front().unwrap_or_else(|| SILENCE.to_vec());
-                    if tx_half
-                        .write_all(&AudioSocketFrame::audio(frame).encode())
-                        .await
-                        .is_err()
-                    {
+                    let frame = match tone_hz {
+                        Some(hz) => tone_frame(
+                            &mut tone_phase,
+                            hz,
+                            self.wire_rate,
+                            crate::serializers::audiosocket::frame_samples(self.wire_rate),
+                        ),
+                        None => outbound.pop_front().unwrap_or_else(|| quiet.clone()),
+                    };
+                    frames_out += 1;
+                    if let Some(f) = dump_out.as_mut() {
+                        use std::io::Write;
+                        let _ = f.write_all(&frame);
+                    }
+                    // Written verbatim. Everything in this queue is ALREADY a
+                    // complete frame — the serializer encodes, and so do the
+                    // silence and tone builders above.
+                    //
+                    // Wrapping it again here is what made the agent's voice
+                    // arrive as noise while silence and a test tone came
+                    // through perfectly: only pipeline audio passes the
+                    // serializer, so only pipeline audio was double-encoded
+                    // into a 326-byte frame whose first three payload bytes
+                    // were an inner header, misaligning every sample after it.
+                    if tx_half.write_all(&frame).await.is_err() {
                         log::warn!("AudioSocketTransport: failed to send audio");
                         break;
                     }
 
-                    // Drifted behind. One extra frame per tick closes the gap
-                    // in half a second without ever discarding speech.
-                    if outbound.len() > CATCHUP_DEPTH {
-                        if let Some(extra) = outbound.pop_front() {
-                            if tx_half
-                                .write_all(&AudioSocketFrame::audio(extra).encode())
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
+                    // Every five seconds, the two numbers that decide whether
+                    // the wire is being fed correctly. Both should read 50.
+                    if last_report.elapsed() >= Duration::from_secs(5) {
+                        let secs = started.elapsed().as_secs_f64();
+                        log::info!(
+                            "AudioSocket rates: out {:.1}/s, in {:.1}/s, queue {} (target 50/s each)",
+                            frames_out as f64 / secs,
+                            frames_in as f64 / secs,
+                            outbound.len(),
+                        );
+                        last_report = std::time::Instant::now();
                     }
+
                 }
             }
         }
 
-        if deepest > CATCHUP_DEPTH {
-            // Worth knowing: it means the pipeline produced audio faster than
-            // 50 frames a second for a while, and the caller heard it late.
-            log::info!("AudioSocketTransport: outbound queue reached {deepest} frames");
+        if deepest > FRAMES_PER_SECOND_USIZE {
+            log::info!(
+                "AudioSocketTransport: outbound queue reached {deepest} frames ({} ms), {dropped} dropped",
+                deepest * 20,
+            );
         }
 
         // Best-effort teardown: tell Asterisk the call is over so it returns to
@@ -568,6 +662,67 @@ mod tests {
             frames.iter().all(|f| f.payload.len() == 320 && f.payload.iter().all(|&b| b == 0)),
             "an idle tick is 20ms of silence",
         );
+    }
+
+    #[tokio::test]
+    async fn pipeline_audio_reaches_the_wire_as_one_frame() {
+        // The bug this exists for: the serializer returns an already-encoded
+        // frame, and the clock used to wrap it again. Silence and a test tone
+        // are built raw and so were wrapped once and sounded perfect — only
+        // the agent's voice went through the serializer, so only the voice
+        // arrived as noise. Anything queued must parse as exactly ONE frame
+        // carrying exactly one frame's worth of samples.
+        let (server, mut asterisk) = pair().await;
+
+        let transport = AudioSocketTransport::new("test", AudioSocketParams::default());
+        transport.set_serializer(Box::new(
+            crate::serializers::AudioSocketFrameSerializer::new(),
+        ));
+        let input = transport.output();
+        let (push_tx, _push_rx) = mpsc::channel(8);
+        let handshake = AudioSocketHandshake {
+            uuid: "test".into(),
+            pending: Vec::new(),
+            reader: FrameReader::new(),
+        };
+        tokio::spawn(async move {
+            transport.run_socket(server, handshake, push_tx).await;
+        });
+        drop(input);
+
+        let mut reader = FrameReader::new();
+        let mut frames = Vec::new();
+        let mut buf = [0u8; 8192];
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(120);
+        while tokio::time::Instant::now() < deadline {
+            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await
+            else {
+                break;
+            };
+            if n == 0 {
+                break;
+            }
+            frames.extend(reader.feed(&buf[..n]));
+        }
+
+        assert!(!frames.is_empty(), "the clock should be writing");
+        let expected = crate::serializers::audiosocket::frame_samples(
+            crate::serializers::AUDIOSOCKET_SAMPLE_RATE,
+        ) * 2;
+        for f in &frames {
+            assert_eq!(f.kind, FrameKind::Audio);
+            assert_eq!(
+                f.payload.len(),
+                expected,
+                "a frame carrying {} bytes is a frame wrapped twice",
+                f.payload.len(),
+            );
+            // A double-wrapped frame's payload starts with its inner header.
+            assert_ne!(
+                f.payload[0], 0x10,
+                "payload begins with an audio frame header — this is double-encoded",
+            );
+        }
     }
 
     #[tokio::test]

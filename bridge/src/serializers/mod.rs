@@ -15,7 +15,7 @@ pub mod kookoo;
 pub mod twilio;
 
 pub use audiosocket::{
-    AUDIOSOCKET_FRAME_SAMPLES, AUDIOSOCKET_SAMPLE_RATE, AudioSocketFrame,
+    AUDIOSOCKET_NARROWBAND, AUDIOSOCKET_SAMPLE_RATE, AUDIOSOCKET_WIDEBAND, AudioSocketFrame,
     AudioSocketFrameSerializer, FrameKind, FrameReader,
 };
 pub use kookoo::{CallCapture, KOOKOO_FRAME_SAMPLES, KooKooFrameSerializer, KooKooInputParams, KooKooStart};
