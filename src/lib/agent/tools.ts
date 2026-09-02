@@ -1,4 +1,4 @@
-import { CONFIG_SCHEMAS, defaultConfigForType, Diagram, NODE_TYPES, NodeType, outcomeForType } from "@/lib/architecture-model"
+import { CONFIG_SCHEMAS, defaultConfigForType, Diagram, NODE_TYPES, NodeType, outcomeForNode, outcomesForNode } from "@/lib/architecture-model"
 
 // ─── Public types ──────────────────────────────────────────────────────────────
 
@@ -285,7 +285,7 @@ export function validateToolCall(
     }
 
     const source = diagram.graph.nodes.find((node) => node.id === sourceNodeId)
-    const declaredOutcome = source && typeof outcome === "string" ? outcomeForType(source.type, outcome) : undefined
+    const declaredOutcome = source && typeof outcome === "string" ? outcomeForNode(source, outcome) : undefined
     if (!declaredOutcome) {
       const valid = source ? NODE_TYPES[source.type].outcomes.map((candidate) => candidate.id) : []
       return { ok: false, error: `add_flow requires a source outcome (${valid.join(", ") || "none"})` }

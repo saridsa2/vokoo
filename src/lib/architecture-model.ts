@@ -1,6 +1,14 @@
 import catalogue from "../../docs/flow-node-catalogue.json"
 
 const NODE_VISUALS = {
+  // Triggers read as the board's entry point rather than as work: a warm
+  // neutral that does not compete with the coloured node it points at.
+  "trigger.call_answered": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerAnswered" },
+  "trigger.call_ended": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerEnded" },
+  // A trigger, so it keeps the family's warm neutral — but the stroke is the
+  // one warning colour on the board, because a reader glancing at a flow list
+  // should be able to tell the escalation path from the ordinary one.
+  "trigger.call_failed": { color: "#fdf4f0", stroke: "#b5623c", icon: "triggerFailed" },
   condition: { color: "#f5f3ff", stroke: "#7c6ee6", icon: "condition" },
   loop: { color: "#eef7ff", stroke: "#2376a6", icon: "loop" },
   var: { color: "#effaf6", stroke: "#1d8f68", icon: "variable" },
@@ -13,12 +21,67 @@ const NODE_VISUALS = {
   "kookoo.hangup": { color: "#fff0f0", stroke: "#c85b5b", icon: "hangup" },
   "kookoo.release": { color: "#eef2ff", stroke: "#5b6fd6", icon: "release" },
   "agent.monitor": { color: "#f0f9ff", stroke: "#217ca3", icon: "monitor" },
+  "tool.call": { color: "#f3f4ff", stroke: "#5a5fd6", icon: "tool" },
+  "kookoo.pause_recording": { color: "#fff7ed", stroke: "#c87524", icon: "hold" },
+
+  // After the call. A family of their own, because a reader glancing at a board
+  // should be able to tell "this runs while somebody is listening" from "this
+  // runs when nobody is".
+  intelligence: { color: "#f2f7ff", stroke: "#2f6fb8", icon: "intelligence" },
+  "http.request": { color: "#f2f7ff", stroke: "#2f6fb8", icon: "webhook" },
+  // The one node whose branches the author writes rather than the type
+  // declaring them, so it gets a hue of its own rather than joining a family.
+  "kookoo.collect_digits": { color: "#fdf2fb", stroke: "#a3468f", icon: "keypad" },
+
+  // Engine steps. They never appear on a flow board — `is_addable: false` keeps
+  // them out of the palette, and the engine screen is the only thing that
+  // builds a diagram containing them. One family, one hue, so a reader can see
+  // at a glance that this board is not a flow.
+  "engine.realtime": { color: "#eef4ff", stroke: "#3d6bb3", icon: "engineRealtime" },
+  "engine.listening": { color: "#eef4ff", stroke: "#3d6bb3", icon: "engineListening" },
+  "engine.thinking": { color: "#eef4ff", stroke: "#3d6bb3", icon: "engineThinking" },
+  "engine.speaking": { color: "#eef4ff", stroke: "#3d6bb3", icon: "engineSpeaking" },
 } as const
 
 export type NodeType = keyof typeof NODE_VISUALS
 export type HandleSide = "top" | "right" | "bottom" | "left"
 
 export type NodeOutcome = { id: string; label: string }
+
+export type NodeOutput = "none" | "call" | "schema" | "assignments" | "opaque"
+
+/** What a board is for. Derived from its trigger, never stored on the flow. */
+export type NodeFamily = "call" | "post_call" | "engine"
+
+/**
+ * Which canvas a board is, as the screen mounting it knows.
+ *
+ * Not sniffed from the graph. `familyOf` tried that and its `engine` branch
+ * could never fire — it looked for a *trigger* node whose type began `engine.`,
+ * and an engine board has no trigger at all, so every engine board reported
+ * itself as a call board. The screen opening the canvas knows which one it is;
+ * asking the graph is guessing at something already known.
+ *
+ * The config pane switches on this. What a field may hold is not a property of
+ * the field — `language` is a string on an engine step and a string on a flow
+ * node — it is a property of whether anything precedes it.
+ */
+export type BoardContext = "engine" | "call" | "integration" | "tool"
+
+/**
+ * Whether a field on this board may hold an expression.
+ *
+ * Only where something actually resolves one at runtime. An expression offered
+ * on a board whose runner carries no scope saves, publishes and resolves to
+ * empty on a real call — the same fault as offering a path that does not exist,
+ * and it looks like it worked.
+ *
+ * `call` is false because `runner.rs` builds no `Scope` and records no node
+ * output. It becomes true the day it does, and this is the one line to change.
+ */
+export function boardTakesExpressions(context: BoardContext): boolean {
+  return context === "integration"
+}
 
 export type CatalogueField = {
   field: string
@@ -29,6 +92,13 @@ export type CatalogueField = {
   hint?: string
   help?: string
   default?: unknown
+  /**
+   * The answers a `select` field accepts. Carried through from the catalogue
+   * because a fixed set of answers typed into a text box is a typo nothing
+   * catches: `webhook.rs` matches PUT and PATCH and falls through to POST, so
+   * a method of "post " sends a POST and a method of "GET" also sends a POST.
+   */
+  options?: NodeOutcome[]
 }
 
 export type ConfigSchema = { title: string; fields: CatalogueField[] }
@@ -41,9 +111,43 @@ export type NodeTypeMetadata = {
   description: string
   provider_action: string | null
   outcomes: NodeOutcome[]
+  /**
+   * The config field holding branches the author writes, for a node whose
+   * outcomes are not knowable from its type.
+   *
+   * A digit menu is the case that forced this: "press 1 for English, 2 for
+   * Hindi" has three branches in one flow and five in the next, so the
+   * catalogue cannot name them. n8n's Switch node solves it the same way — add
+   * a rule, get an output — which is what settled the design.
+   *
+   * `null` on every node whose branches its type already knows, which is all of
+   * them but the menus. Those keep taking their outcomes from the catalogue,
+   * unchanged.
+   */
+  outcomesFrom: string | null
+  /**
+   * Which kind of flow this node may appear on.
+   *
+   * A post-call board must not offer `kookoo.transfer` — there is no caller
+   * left to transfer — and a call board must not offer `http.request`, because
+   * a blocking request mid-conversation is what tools are for. An array
+   * because the generic ones belong to both.
+   */
+  families: NodeFamily[]
   fields: CatalogueField[]
   suspends: boolean
   default_timeout_seconds: number | null
+  /** Whether the palette offers it. Triggers arrive with the flow instead. */
+  isAddable: boolean
+  /**
+   * Where this node's output fields come from, for the expression picker.
+   *
+   * `none` produces nothing; `call` the call's facts; `schema` the schema it
+   * names; `assignments` the rows it declares; `opaque` something whose shape
+   * is not knowable until it runs. Declared here so the picker walks the graph
+   * and asks, instead of the console knowing which node types matter.
+   */
+  output: NodeOutput
   color: string
   stroke: string
   icon: (typeof NODE_VISUALS)[NodeType]["icon"]
@@ -71,6 +175,15 @@ function catalogueFields(value: unknown): CatalogueField[] {
       ...(typeof field.hint === "string" ? { hint: field.hint } : {}),
       ...(typeof field.help === "string" ? { help: field.help } : {}),
       ...(Object.prototype.hasOwnProperty.call(field, "default") ? { default: field.default } : {}),
+      ...(Array.isArray(field.options)
+        ? {
+            options: field.options.flatMap((option) =>
+              option && typeof option === "object" && typeof (option as NodeOutcome).id === "string"
+                ? [{ id: (option as NodeOutcome).id, label: String((option as NodeOutcome).label ?? (option as NodeOutcome).id) }]
+                : [],
+            ),
+          }
+        : {}),
     }]
   })
 }
@@ -85,9 +198,27 @@ const catalogueEntries = catalogue.flatMap((entry): NodeTypeMetadata[] => {
     description: entry.description,
     provider_action: entry.provider_action,
     outcomes: entry.outcomes.map((outcome) => ({ id: outcome.id, label: outcome.label })),
+    // Absent on every row today, and absent reads as "the type knows its own
+    // branches" — which is the behaviour every existing node has.
+    outcomesFrom: (entry as { outcomes_from?: string | null }).outcomes_from ?? null,
+    // Absent reads as `call`, which is what every node was before post-call
+    // boards existed.
+    families: ((entry as { families?: string[] }).families ?? ["call"]) as NodeFamily[],
     fields,
     suspends: entry.suspends,
     default_timeout_seconds: entry.default_timeout_seconds,
+    // Absent on a catalogue dumped before the column existed, and the safe
+    // reading of absent is the behaviour every row had then: addable.
+    // Two separate facts, and conflating them is why a withdrawn node was still
+    // in the palette. `is_addable` is "the palette never offers this" — a
+    // trigger, an engine stage. `is_active` is "this is withdrawn": it stays in
+    // the vocabulary so a flow already drawn with it still renders, and stops
+    // being offered.
+    isAddable: (entry as { is_addable?: boolean }).is_addable !== false
+      && (entry as { is_active?: boolean }).is_active !== false,
+    // Absent reads as producing nothing, which is what every node was before
+    // the picker needed to know.
+    output: ((entry as { output?: string }).output ?? "none") as NodeOutput,
     ...NODE_VISUALS[entry.id],
   }]
 })
@@ -99,7 +230,57 @@ if (catalogueEntries.length !== Object.keys(NODE_VISUALS).length) {
 }
 
 export const NODE_TYPES = Object.fromEntries(catalogueEntries.map((entry) => [entry.id, entry])) as Record<NodeType, NodeTypeMetadata>
-export const ADDABLE_NODE_TYPES = catalogueEntries.map((entry) => entry.id)
+export const ADDABLE_NODE_TYPES = catalogueEntries.filter((entry) => entry.isAddable).map((entry) => entry.id)
+
+/**
+ * What the palette offers on a board of this kind.
+ *
+ * The filter is the point of the family: without it a post-call board offers to
+ * transfer a caller who has already gone, and the author finds out when the
+ * flow runs and does nothing.
+ */
+export function addableFor(family: NodeFamily): NodeType[] {
+  return catalogueEntries
+    .filter((entry) => entry.isAddable && entry.families.includes(family))
+    .map((entry) => entry.id)
+}
+
+/**
+ * Which kind of board this is, read from the trigger it opens with.
+ *
+ * Derived rather than stored: `flows.trigger_event` is already the authority on
+ * when a flow runs, and a second field saying the same thing is a second field
+ * that can disagree.
+ */
+export function familyOf(diagram: Pick<Diagram, "graph">): NodeFamily {
+  // Engine boards first, and by their own nodes rather than by a trigger. This
+  // read `trigger?.type.startsWith("engine.")`, which could never be true: an
+  // engine board has no trigger node at all, so every one of them reported
+  // itself as a call board.
+  if (diagram.graph.nodes.some((node) => node.type.startsWith("engine."))) return "engine"
+  const trigger = diagram.graph.nodes.find((node) => isTriggerType(node.type))
+  if (trigger?.type === "trigger.call_ended") return "post_call"
+  return "call"
+}
+
+/**
+ * The trigger a flow handling this event opens with.
+ *
+ * The flow row's `trigger_event` stays the authority — `number_flows` and the
+ * bridge's `resolve_for_event` both query it, and neither can read into graph
+ * JSON. The node mirrors it so the board can show what started the flow and
+ * branch on which cause fired.
+ */
+export const TRIGGER_NODE_FOR_EVENT: Record<string, NodeType> = {
+  "call.answered": "trigger.call_answered",
+  "call.ended": "trigger.call_ended",
+  "call.failed": "trigger.call_failed",
+}
+
+/** A node the flow is entered at, rather than one it runs. */
+export function isTriggerType(type: NodeType): boolean {
+  return NODE_TYPES[type]?.node_type === "trigger"
+}
 export const NODE_SIZES = Object.fromEntries(catalogueEntries.map((entry) => [
   entry.id,
   // 130 = 18px top padding + ~90px of header (icon, name, type, chips) + a
@@ -125,8 +306,64 @@ export function defaultConfigForType(type: NodeType): Record<string, unknown> {
   return { ...(DEFAULT_CONFIG[type] ?? {}) }
 }
 
-export function outcomeForType(type: NodeType, outcomeId: string | undefined): NodeOutcome | undefined {
-  return outcomeId ? NODE_TYPES[type].outcomes.find((outcome) => outcome.id === outcomeId) : undefined
+/**
+ * Every branch this node can leave by.
+ *
+ * The one place outcomes are decided. `NODE_TYPES[type].outcomes` is no longer
+ * the answer on its own, because a menu's branches live in the node the author
+ * configured rather than in its type — so reading the type directly would show
+ * a digit menu no digits, and quietly drop every edge leaving it.
+ *
+ * Author-written branches come first and the type's own follow, which puts a
+ * catalogue outcome like `timeout` after the digits in the same order the board
+ * draws them: the fallbacks below the choices.
+ */
+export function outcomesForNode(node: Pick<DiagramNode, "type" | "config">): NodeOutcome[] {
+  const meta = NODE_TYPES[node.type]
+  if (!meta) return []
+  if (!meta.outcomesFrom) return meta.outcomes
+
+  const written = node.config?.[node.type]?.[meta.outcomesFrom]
+  if (!Array.isArray(written)) return meta.outcomes
+
+  const branches = written.flatMap((candidate): NodeOutcome[] => {
+    if (!candidate || typeof candidate !== "object") return []
+    const { id, label } = candidate as { id?: unknown; label?: unknown }
+    // An unnamed branch cannot be drawn or connected to, and a half-written row
+    // is the normal state of a node somebody is still filling in.
+    if (typeof id !== "string" || !id.trim()) return []
+    return [{ id, label: typeof label === "string" && label.trim() ? label : id }]
+  })
+
+  // A duplicate id would give two ports the same address, and an edge leaving
+  // one would be indistinguishable from an edge leaving the other.
+  const seen = new Set<string>()
+  const unique = branches.filter((branch) => seen.size !== seen.add(branch.id).size)
+
+  return [...unique, ...meta.outcomes]
+}
+
+export function outcomeForNode(
+  node: Pick<DiagramNode, "type" | "config"> | undefined,
+  outcomeId: string | undefined,
+): NodeOutcome | undefined {
+  if (!node || !outcomeId) return undefined
+  return outcomesForNode(node).find((outcome) => outcome.id === outcomeId)
+}
+
+/**
+ * How tall this node is drawn, which depends on how many branches it has.
+ *
+ * Edge endpoints are computed from this rather than measured from the DOM, so a
+ * node whose outcome count comes from its config needs its size to come from
+ * there too — otherwise the arrows leaving a five-digit menu are drawn for a
+ * two-outcome box.
+ */
+export function sizeForNode(node: Pick<DiagramNode, "type" | "config">): { width: number; height: number } {
+  const base = NODE_SIZES[node.type] ?? { width: 292, height: 164 }
+  const meta = NODE_TYPES[node.type]
+  if (!meta?.outcomesFrom) return base
+  return { width: base.width, height: Math.max(164, 130 + outcomesForNode(node).length * 30) }
 }
 
 export type DiagramNode = {
@@ -196,7 +433,7 @@ export function projectToSummary(diagram: Pick<Diagram, "name" | "description" |
     nodeCount: diagram.graph.nodes.length,
     flowCount: diagram.graph.edges.length,
     unconfigured: diagram.graph.nodes.filter((node) => !isNodeConfigured(node)).length,
-    terminalNodes: diagram.graph.nodes.filter((node) => NODE_TYPES[node.type].outcomes.length === 0).length,
+    terminalNodes: diagram.graph.nodes.filter((node) => outcomesForNode(node).length === 0).length,
     suspendingNodes: diagram.graph.nodes.filter((node) => NODE_TYPES[node.type].suspends).length,
   }
 }
@@ -270,7 +507,7 @@ function normalizeCanonical(value: Record<string, unknown>): Diagram {
     const targetNodeId = typeof edge.targetNodeId === "string" ? edge.targetNodeId : ""
     const source = nodeById.get(sourceNodeId)
     if (!source || !nodeById.has(targetNodeId)) return []
-    const outcome = outcomeForType(source.type, typeof edge.outcome === "string" ? edge.outcome : undefined)
+    const outcome = outcomeForNode(source, typeof edge.outcome === "string" ? edge.outcome : undefined)
     if (!outcome) return []
     const style = EDGE_STYLES.includes(edge.style as (typeof EDGE_STYLES)[number]) ? edge.style as DiagramEdge["style"] : "muted"
     return [{

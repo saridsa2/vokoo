@@ -6,7 +6,8 @@ import {
   DiagramNode,
   NODE_SIZES,
   NODE_TYPES,
-  outcomeForType,
+  outcomeForNode,
+  sizeForNode,
 } from "@/lib/architecture-model"
 
 // ─── Pure operation → diagram reducer ─────────────────────────────────────────
@@ -19,7 +20,7 @@ export function applyAgentOperation(diagram: Diagram, op: AgentOperation): Diagr
   switch (op.type) {
     case "add_flow": {
       const source = diagram.graph.nodes.find((node) => node.id === op.sourceNodeId)
-      const outcome = source ? outcomeForType(source.type, op.outcome) : undefined
+      const outcome = source ? outcomeForNode(source, op.outcome) : undefined
       if (!outcome) return diagram
       const newEdge: DiagramEdge = {
         id: `edge-${crypto.randomUUID()}`,
@@ -102,7 +103,7 @@ function positionNearAnchor(
 
   if (anchor) {
     // Place to the right of anchor
-    const candidate = { x: anchor.position.x + (NODE_SIZES[anchor.type]?.width ?? 240) + GAP, y: anchor.position.y }
+    const candidate = { x: anchor.position.x + (sizeForNode(anchor)?.width ?? 240) + GAP, y: anchor.position.y }
     return candidate
   }
 
@@ -111,7 +112,7 @@ function positionNearAnchor(
     return { x: 100, y: 100 }
   }
 
-  const maxY = Math.max(...diagram.graph.nodes.map((n) => n.position.y + (NODE_SIZES[n.type]?.height ?? 100)))
+  const maxY = Math.max(...diagram.graph.nodes.map((n) => n.position.y + (sizeForNode(n)?.height ?? 100)))
   // Centered horizontally among existing nodes
   const avgX = diagram.graph.nodes.reduce((s, n) => s + n.position.x, 0) / diagram.graph.nodes.length
   return { x: Math.round(avgX - size.width / 2), y: maxY + GAP }

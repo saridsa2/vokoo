@@ -1,14 +1,20 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import type * as React from "react"
 import type { PointerEvent as ReactPointerEvent } from "react"
 import {
+  AlertCircle,
+  IconGauge,
     ArrowRotateRight,
     ArrowRotateLeft,
     ArrowLeft,
   Check,
   CheckCircle as Save,
+  ChevronDown,
+  ChevronRight,
+  Spinner,
   ChevronUp,
   Code02,
   Container as Box,
@@ -19,6 +25,7 @@ import {
   IconBroadcast as Zap,
   IconCallLogs,
   IconDocument,
+  IconLanguage,
   IconFiles as Folder,
   IconGauge as Cpu,
   IconLock as Lock,
@@ -27,6 +34,8 @@ import {
   IconSliders,
   IconSquads,
   IconStopwatch,
+  IconTools,
+  IconVoiceLibrary,
   LayersTwo01 as Layers,
   Menu02 as Menu,
   Minus,
@@ -41,7 +50,13 @@ import {
 } from "@/components/icons"
 import { AnimatedComposer } from "@/components/animated-composer"
 import {
-  ADDABLE_NODE_TYPES,
+  addableFor,
+  familyOf,
+  type BoardContext,
+  boardTakesExpressions,
+  type NodeFamily,
+  type NodeOutcome,
+  isTriggerType,
   CONFIG_SCHEMAS,
   ConfigField,
   Diagram,
@@ -55,7 +70,9 @@ import {
   cloneInitialWorkspace,
   defaultConfigForType,
   migrateDiagram,
-  outcomeForType,
+  outcomeForNode,
+  outcomesForNode,
+  sizeForNode,
 } from "@/lib/architecture-model"
 import { applyAgentOperation } from "@/lib/agent/apply"
 import type { CodingRunDescriptor, CodingRunsByNodeId } from "@/lib/agent/coding-runs-core"
@@ -129,12 +146,352 @@ type StarterKind = "reception" | "handoff" | "afterHours" | "monitoredTransfer"
  * converted outside this component, so it knows nothing about the API or about
  * transitions.
  */
+/** One record a config field can point at, from outside this editor. */
+export type Referenceable = {
+  id: string
+  name: string
+  /**
+   * The names a schema declares.
+   *
+   * A webhook body could always say `{{ $json.patient_name }}` — the bridge has
+   * substituted paths since the resolver was written — but nothing told the
+   * author that a reading lands in `$json`, or what is in it. Carrying the
+   * names is what lets the board offer them.
+   */
+  fields?: string[]
+}
+
+/**
+ * A real call, so the panel can show values and not only names.
+ *
+ * A name tells you a field exists. A value tells you whether it is the one you
+ * meant — which is the difference between an expression that works and one that
+ * silently resolves to empty.
+ */
+export type SampleCall = {
+  call: Record<string, unknown>
+  analysis?: Record<string, unknown>
+  /** The carrier's id, which is what a dry run is run against. */
+  ucid?: string
+  /** For the header: which call the panes are showing. */
+  label?: string
+}
+
+/** One node, as a dry run saw it. Mirrors `Step` in `postcall.rs`. */
+export type DryRunStep = {
+  node_id: string
+  name: string
+  implementation: string
+  input: unknown
+  output: unknown
+  outcome: string
+  ms: number
+}
+
+/**
+ * What an engine step can be set to.
+ *
+ * The board has no idea which providers rustvani compiles in, and must not
+ * guess: a step naming a provider the binary lacks saves, publishes, and fails
+ * when the call connects. The caller passes the catalogue in, exactly as it
+ * passes the agents a flow node may name.
+ */
+export type EngineOption = {
+    /** The node type this belongs to, e.g. `engine.listening`. */
+    stage: string
+    id: string
+    label: string
+    /** Two or three words for the option row. Never a sentence. */
+    tagline?: string
+    /** Models this provider offers, when the field is a model. */
+    models?: { id: string; label: string }[]
+    /** Likewise voices. */
+    voices?: { id: string; label: string }[]
+    /**
+     * Whether a model on this provider can be given the agent's tools.
+     *
+     * Carried for the record rather than for a warning: a provider that cannot
+     * is withdrawn from the catalogue, so this is true for everything the board
+     * ever sees.
+     */
+    supportsTools?: boolean
+    /** The vendor to bill, and therefore the key to connect. Null runs locally. */
+    vendorId?: string | null
+}
+
+/**
+ * Records a node's config can name — today, the agents an `agent` node picks
+ * from. The editor knows nothing about the API, so these are handed in and read
+ * through a context rather than drilled through every component between.
+ */
+export type ExpressionPath = { path: string; label: string; sample?: string }
+export type ExpressionGroup = { root: string; paths: ExpressionPath[] }
+
+/**
+ * What a flow actually sees in `$call`, and where each part comes from.
+ *
+ * `postcall.rs` does not hand the flow a row from `calls` — it assembles this,
+ * renaming as it goes. A panel that listed the table's columns would offer
+ * `$call.to_number` and `$call.duration_seconds`, neither of which exists at
+ * runtime: the expression would save, publish, and resolve to empty on a real
+ * call. Worse than offering nothing, because it looks like it worked.
+ *
+ * So this is the contract, written once: the left side is the name a flow uses,
+ * the right side the column it is built from. It is a second copy of something
+ * `postcall.rs` owns, which is the drift this project keeps finding — kept
+ * honest by being one table rather than a list of names in one place and a
+ * translation in another.
+ */
+const CALL_FACTS: Record<string, string> = {
+  caller: "from_number",
+  did: "to_number",
+  started_at: "started_at",
+  duration_secs: "duration_seconds",
+  ended_reason: "ended_reason",
+  transcript: "transcript",
+  recording_url: "recording_url",
+  call_id: "id",
+  ucid: "provider_call_id",
+}
+
+/** A `calls` row, as the flow will see it. */
+export function callFactsFrom(row: Record<string, unknown>): Record<string, unknown> {
+  const facts: Record<string, unknown> = {}
+  for (const [name, column] of Object.entries(CALL_FACTS)) facts[name] = row[column]
+  // Derived rather than stored, so it has no column to come from.
+  facts.ended_by = row.ended_reason === "user_disconnected" ? "caller_hung_up" : "we_ended"
+  return facts
+}
+
+/** A value, short enough to sit beside the path it came from. */
+function sampleOf(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined
+  const text = typeof value === "string" ? value : JSON.stringify(value)
+  if (!text) return undefined
+  return text.length > 32 ? `${text.slice(0, 31)}…` : text
+}
+
+/**
+ * Everything the node being edited can refer to.
+ *
+ * Walked backwards from that node, not filtered from the board. The first
+ * version filtered for `intelligence` nodes, which got three things wrong at
+ * once: a Set node produced the payload and was invisible; nodes on an
+ * unrelated branch were offered as if they had run; and the single producing
+ * node appeared twice, once as `$json` and once under its own name, because
+ * nothing knew they were the same node.
+ *
+ * The immediate predecessor is `$json`. Everything further back is named. What
+ * each one contributes comes from `meta.output`, so a node type added to the
+ * catalogue appears here without the console being touched.
+ */
+function expressionPathsFor(
+  diagram: Diagram | undefined,
+  selectedId: string | null,
+  shapes: Referenceable[],
+  sample?: SampleCall,
+): ExpressionGroup[] {
+  const nodes = diagram?.graph.nodes ?? []
+  const edges = diagram?.graph.edges ?? []
+  if (!selectedId) return []
+
+  // Backwards, breadth first, nearest first — and `seen` is what stops a loop
+  // in the graph from walking forever.
+  const upstream: DiagramNode[] = []
+  const seen = new Set<string>([selectedId])
+  let frontier = [selectedId]
+  while (frontier.length > 0) {
+    const next: string[] = []
+    for (const id of frontier) {
+      for (const edge of edges) {
+        if (edge.targetNodeId !== id || seen.has(edge.sourceNodeId)) continue
+        seen.add(edge.sourceNodeId)
+        const node = nodes.find((candidate) => candidate.id === edge.sourceNodeId)
+        if (node) {
+          upstream.push(node)
+          next.push(node.id)
+        }
+      }
+    }
+    frontier = next
+  }
+
+  /** What one node offers, by name. */
+  const fieldsOf = (node: DiagramNode): string[] => {
+    const meta = NODE_TYPES[node.type]
+    const config = nodeConfig(node, node.type)
+    switch (meta?.output) {
+      case "schema": {
+        const shape = shapes.find((candidate) => candidate.id === config.shape_id)
+        return shape?.fields ?? []
+      }
+      case "assignments":
+        return Array.isArray(config.assignments)
+          ? config.assignments
+              .map((row: unknown) => (row && typeof row === "object" ? (row as { name?: unknown }).name : undefined))
+              .filter((name: unknown): name is string => typeof name === "string" && name.length > 0)
+          : []
+      case "call":
+        return [...Object.keys(CALL_FACTS), "ended_by"]
+      // Produces something whose shape only exists once it has run. Offering a
+      // guessed list would be offering paths that resolve to empty.
+      case "opaque":
+      default:
+        return []
+    }
+  }
+
+  const groups: ExpressionGroup[] = []
+  const sampleFor = (node: DiagramNode, name: string): string | undefined => {
+    const meta = NODE_TYPES[node.type]
+    if (meta?.output === "call") return sampleOf(sample?.call?.[name])
+    if (meta?.output === "schema") return sampleOf(sample?.analysis?.[name])
+    return undefined
+  }
+
+  // The step immediately before this one. Named `$json` and not repeated under
+  // its own name below.
+  const previous = upstream[0]
+  if (previous) {
+    const fields = fieldsOf(previous)
+    if (fields.length > 0) {
+      groups.push({
+        root: "$json",
+        paths: fields.map((name) => ({
+          path: `$json.${name}`,
+          label: name,
+          sample: sampleFor(previous, name),
+        })),
+      })
+    }
+  }
+
+  for (const node of upstream.slice(1)) {
+    // A trigger emits the call, and `$call` is below with exactly these
+    // fields. Listing it under its name as well would be the same ten paths
+    // twice, which is the duplication this walk was written to remove.
+    if (NODE_TYPES[node.type]?.output === "call") continue
+    const fields = fieldsOf(node)
+    if (fields.length === 0) continue
+    groups.push({
+      root: `$('${node.name}')`,
+      paths: fields.map((name) => ({
+        path: `$('${node.name}').${name}`,
+        label: name,
+        sample: sampleFor(node, name),
+      })),
+    })
+  }
+
+  // The call is always in scope, whatever ran before. Last, because it is the
+  // background rather than what the previous step just produced.
+  groups.push({
+    root: "$call",
+    paths: [...Object.keys(CALL_FACTS), "ended_by"].map((name) => ({
+      path: `$call.${name}`,
+      label: name,
+      sample: sampleOf(sample?.call?.[name]),
+    })),
+  })
+
+  return groups.filter((group) => group.paths.length > 0)
+}
+
+/**
+ * Where a value clicked in the Input pane goes.
+ *
+ * In n8n the Input pane *is* the picker — you take a field from the data on the
+ * left and put it into a parameter in the middle. There is no second list under
+ * the field, which is what this had: two pickers offering the same paths, one
+ * of them pushing the parameters off screen.
+ *
+ * A mutable ref rather than state: the last field to take focus wins, and a
+ * re-render on every focus change would fight the caret.
+ */
+const InsertTarget = createContext<{ current: ((path: string) => void) | null }>({ current: null })
+
+const ReferenceData = createContext<{ agents: Referenceable[]; shapes: Referenceable[]; engineOptions: EngineOption[]; connectedVendors: string[]; shapeIsFixed: boolean; family: NodeFamily; board: BoardContext; expressionPaths: ExpressionGroup[] }>({ agents: [], shapes: [], engineOptions: [], connectedVendors: [], shapeIsFixed: false, family: "call", board: "call", expressionPaths: [] })
+
 export function RecoveredEditorHost({
   diagram: providedDiagram,
   onSave,
+  onPublish,
+  agents = [],
+  shapes = [],
+  shapeIsFixed = false,
+  backHref = "/composer",
+  notice,
+  publishedMessage = "Published. New calls will use this flow.",
+  toolbarSlot,
+  engineOptions = [],
+  connectedVendors = [],
+  sampleCall,
+  board = "call",
+  onDryRun,
 }: {
   diagram?: Diagram
   onSave?: (diagram: Diagram) => Promise<boolean>
+  /**
+   * Release the flow. Separate from saving because they mean different things:
+   * saving keeps a draft, publishing is what lets a call reach it —
+   * `resolve_for_did` only ever loads a published flow.
+   */
+  onPublish?: (diagram: Diagram) => Promise<string | null>
+  agents?: Referenceable[]
+  /** Named JSON schemas an intelligence node can fill in. */
+  shapes?: Referenceable[]
+  /** A finished call, for the expression panel to show real values from. */
+  sampleCall?: SampleCall
+  /**
+   * Which canvas this is. The config pane switches on it — an engine step has
+   * nothing before it to reference, and the live-call runner carries no scope,
+   * so neither board may offer an expression.
+   */
+  board?: BoardContext
+  /**
+   * Walk the flow against a finished call and report each step.
+   *
+   * What the node view's Input and Output panes show. Supplied by the screen
+   * because the flow id and the call belong to it; the editor only knows it has
+   * a way to ask.
+   */
+  onDryRun?: () => Promise<DryRunStep[]>
+  /**
+   * The graph cannot be authored — only its nodes configured.
+   *
+   * An engine is the case: one step, or exactly three in a fixed order, decided
+   * by the engine's shape rather than by drawing. Offering a palette, a delete
+   * and edge handles would be offering edits that cannot be saved, so the three
+   * are switched off together rather than left to fail quietly.
+   */
+  shapeIsFixed?: boolean
+  /** Where the first control goes. This canvas is always entered from a list. */
+  backHref?: string
+  /**
+   * Something the owner wants said, shown in the board's own toast.
+   *
+   * A caller that rendered its own banner would put it outside the canvas,
+   * which fills the window — there is nowhere outside for it to go.
+   */
+  notice?: string
+  /**
+   * What the toast says after a successful publish.
+   *
+   * The default names a flow, which is wrong on any other board: an engine is
+   * not a flow, and telling somebody their new flows will use it describes
+   * something that did not happen.
+   */
+  publishedMessage?: string
+  /**
+   * A control only this board has.
+   *
+   * An engine's shape decides how many nodes there are, so it cannot live on
+   * the board — there is nothing to click before it has been chosen. It sits in
+   * the toolbar beside the name, and the host stays ignorant of what it is.
+   */
+  toolbarSlot?: React.ReactNode
+  engineOptions?: EngineOption[]
+  connectedVendors?: string[]
 } = {}) {
   const initialDiagrams = useMemo(
     () => (providedDiagram ? [providedDiagram] : loadInitialDiagrams()),
@@ -153,6 +510,19 @@ export function RecoveredEditorHost({
     if (typeof window === "undefined") return initialDiagrams[0]?.id ?? ""
     return routeDiagramId ?? initialDiagrams[0]?.id ?? ""
   })
+  // One dry run per board, not one per dialog.
+  //
+  // Opening a node view fires it so the panes are populated the moment they
+  // appear — which is most of what makes n8n's node view feel the way it does.
+  // Held here rather than in the dialog because a walk reads a transcript with
+  // a model: doing it again for every node opened would be several seconds and
+  // a bill each time, for the same answer.
+  const [dryRun, setDryRun] = useState<{ steps: DryRunStep[] | null; running: boolean; problem: string | null }>({
+    steps: null,
+    running: false,
+    problem: null,
+  })
+
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [inspectorNodeId, setInspectorNodeId] = useState<string | null>(null)
   const [inspectorDraft, setInspectorDraft] = useState<InspectorDraft | null>(null)
@@ -241,6 +611,25 @@ export function RecoveredEditorHost({
     if (exact) return exact
     return routeDiagramId ? null : diagrams[0] ?? null
   }, [activeId, diagrams, routeDiagramId])
+
+  const runDryRun = useCallback(async () => {
+    if (!onDryRun) return
+    setDryRun((held) => ({ ...held, running: true, problem: null }))
+    try {
+      setDryRun({ steps: await onDryRun(), running: false, problem: null })
+    } catch (cause) {
+      setDryRun({ steps: null, running: false, problem: cause instanceof Error ? cause.message : String(cause) })
+    }
+  }, [onDryRun])
+
+  // Recomputed as the board changes, because what an expression may refer to
+  // changes with it: adding an intelligence node adds its schema's fields.
+  const expressionPaths = useMemo(
+    // Scoped to the node whose inspector is open, because what may be
+    // referenced is a question about that node's position in the graph.
+    () => expressionPathsFor(diagram ?? undefined, inspectorNodeId, shapes, sampleCall),
+    [diagram, inspectorNodeId, shapes, sampleCall],
+  )
 
   // --- realtime multiplayer (Yjs) ------------------------------------------
   const cursorTickRef = useRef(0)
@@ -475,8 +864,18 @@ export function RecoveredEditorHost({
   }
 
   function deleteSelectedNode() {
+    if (shapeIsFixed) return
     const nodeId = inspectorNodeId ?? selectedNodeId
     if (!nodeId) return
+    // The trigger is how the flow is entered. Deleting it would leave a graph
+    // the runner starts nowhere in, and there is no way to draw a replacement
+    // — the palette does not offer triggers, because a flow gets exactly the
+    // one its event calls for.
+    const target = diagram?.graph.nodes.find((node) => node.id === nodeId)
+    if (target && isTriggerType(target.type)) {
+      setToast("The trigger is where this flow starts, so it stays.")
+      return
+    }
     updateActive((draft) => {
       draft.graph.nodes = draft.graph.nodes.filter((node) => node.id !== nodeId)
       draft.graph.edges = draft.graph.edges.filter((edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId)
@@ -486,6 +885,7 @@ export function RecoveredEditorHost({
   }
 
   function openPalette(clientX = 24, clientY = 96) {
+    if (shapeIsFixed) return
     setPalette({ x: clientX, y: clientY, world: screenToWorld(clientX, clientY, viewport) })
   }
 
@@ -600,6 +1000,15 @@ export function RecoveredEditorHost({
     writeJSON(STORAGE_KEY, diagrams)
     const synced = await syncBackendFromRecoveredDiagram(diagram)
     setToast(synced ? "Saved to backend." : "Saved locally. Backend sync failed.")
+  }
+
+  async function publishActiveDiagram() {
+    if (!diagram || !onPublish) return
+    setToast("Publishing…")
+    // The message comes back from the caller: publishing validates the flow in
+    // the database, and a refusal names the node that caused it.
+    const problem = await onPublish(diagram)
+    setToast(problem ?? publishedMessage)
   }
 
   function openInspector(nodeId = selectedNodeId) {
@@ -800,8 +1209,19 @@ export function RecoveredEditorHost({
   }
 
   function startEdge(nodeId: string, outcome: string, handle: HandleSide = "right") {
+    if (shapeIsFixed) return
     const source = diagram?.graph.nodes.find((node) => node.id === nodeId)
-    if (!source || !outcomeForType(source.type, outcome)) return
+    if (!source || !outcomeForNode(source, outcome)) return
+
+    // `__end__` is the flow finishing, not an outcome with somewhere to go.
+    // `runner.rs` returns `Finished` on it *before* it consults the
+    // transitions, so a line drawn from here would sit in the graph looking
+    // like a route the call never takes — the same silent dead edge the
+    // published flow already carries once.
+    if (outcome === "__end__") {
+      setToast("This is where the flow finishes, so nothing follows it.")
+      return
+    }
 
     // An outcome leads to one node. If it already does, there is nothing to
     // draw, and offering to draw it costs two clicks to reach a refusal:
@@ -824,6 +1244,7 @@ export function RecoveredEditorHost({
   }
 
   function finishEdge(targetNodeId: string, targetHandle: HandleSide = "left") {
+    if (shapeIsFixed) return
     if (!edgeSource || !diagram) return
     if (edgeSource.nodeId === targetNodeId) {
       setToast("A node cannot connect to itself.")
@@ -836,7 +1257,7 @@ export function RecoveredEditorHost({
       return
     }
     const source = diagram.graph.nodes.find((node) => node.id === edgeSource.nodeId)
-    const outcome = source ? outcomeForType(source.type, edgeSource.outcome) : undefined
+    const outcome = source ? outcomeForNode(source, edgeSource.outcome) : undefined
     if (!outcome) {
       clearEdgeMode()
       return
@@ -901,7 +1322,11 @@ export function RecoveredEditorHost({
   }
 
   function handleBoardPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || (event.target as HTMLElement).closest("[data-board-node], button, input, textarea")) return
+    // `dialog` matters as much as the rest: the inspector renders inside the
+    // board, so without it every click on the panel's own padding closed the
+    // panel. Harmless while the panel was small and mostly inputs; a
+    // full-screen node view is almost all padding, and was unusable.
+    if (event.button !== 0 || (event.target as HTMLElement).closest("[data-board-node], button, input, textarea, select, dialog")) return
     panRef.current = { x: event.clientX, y: event.clientY, viewport }
     setSelectedNodeId(null)
     setSelectedEdgeId(null)
@@ -971,9 +1396,19 @@ export function RecoveredEditorHost({
     setViewport((current) => ({ ...current, zoom: clamp(current.zoom + delta, BOARD_MIN_ZOOM, BOARD_MAX_ZOOM) }))
   }
 
+  // The owner's message, shown when it changes. Not on every render: the toast
+  // dismisses itself, and re-raising it would make it unclosable.
+  useEffect(() => {
+    if (notice) setToast(notice)
+  }, [notice])
+
   function fit() {
     setViewport({ x: 0, y: 0, zoom: 0.78 })
   }
+
+  useEffect(() => {
+    if (shapeIsFixed) setViewport({ x: 0, y: 0, zoom: 0.78 })
+  }, [shapeIsFixed, providedDiagram?.id])
 
   function cleanupLayout() {
     updateActive((draft) => {
@@ -1028,9 +1463,27 @@ export function RecoveredEditorHost({
     return <main className="app"><p className="empty">{routeDiagramId && !backendLoaded ? "Loading diagram..." : "No diagram found."}</p></main>
   }
 
-  const canDelete = Boolean(selectedNodeId || inspectorNodeId)
+  const deleteTarget = diagram?.graph.nodes.find((node) => node.id === (inspectorNodeId ?? selectedNodeId))
+  const canDelete = Boolean(deleteTarget && !isTriggerType(deleteTarget.type))
+
+  // Which outcomes have somewhere to go. An outcome without one is not an
+  // unfinished drawing — it is an exit: `runner.rs` logs "nothing wired to
+  // from/outcome" and ends the call there. The board has to say so, because
+  // otherwise a flow looks complete while three of its six ways out are
+  // decisions nobody made.
+  const wiredOutcomes = useMemo(() => {
+    const byNode = new Map<string, Set<string>>()
+    for (const edge of diagram?.graph.edges ?? []) {
+      if (!edge.outcome) continue
+      const wired = byNode.get(edge.sourceNodeId) ?? new Set<string>()
+      wired.add(edge.outcome)
+      byNode.set(edge.sourceNodeId, wired)
+    }
+    return byNode
+  }, [diagram?.graph.edges])
 
   return (
+    <ReferenceData.Provider value={{ agents, shapes, engineOptions, connectedVendors, shapeIsFixed, family: familyOf(diagram), board, expressionPaths }}>
     <main className="app editor-shell">
       <section className="stage">
         <div
@@ -1086,6 +1539,7 @@ export function RecoveredEditorHost({
             <div className="node-layer">
               {diagram.graph.nodes.map((node) => (
                 <BoardNode
+                  wiredOutcomes={wiredOutcomes.get(node.id)}
                   edgeSource={edgeSource}
                   key={node.id}
                   node={node}
@@ -1113,34 +1567,58 @@ export function RecoveredEditorHost({
         <header className="canvas-toolbar">
           {/* Back to the flow list. This canvas is entered from there, so the
               first control is the way out of it. */}
-          <button className="round-button menu-button" aria-label="Back to the composer" title="Back to the composer" onClick={() => (window.location.href = "/composer")}><Icon name="back" /></button>
+          <button className="round-button menu-button" aria-label="Back" title="Back" onClick={() => (window.location.href = backHref)}><Icon name="back" /></button>
           <div className="title-pill">
-            <input className="diagram-name" value={diagram.name} aria-label="Flow name" onChange={(event) => renameDiagram(event.target.value)} />
+            <input className="diagram-name" value={diagram.name} aria-label="Name" onChange={(event) => renameDiagram(event.target.value)} />
           </div>
-          <div className="toolbar-divider" />
-          <button className="icon-button" aria-label="Add node" title="Add node" onClick={() => openPalette(window.innerWidth / 2, window.innerHeight / 2)}><Icon name="plus" /></button>
-          <button
-            className={`icon-button ${edgeSource ? "active" : ""}`}
-            aria-label={edgeSource ? "Cancel drawing" : "Draw edge"}
-            title={edgeSource ? "Cancel drawing (Esc)" : "Draw edge"}
-            onClick={() =>
-              edgeSource
-                ? clearEdgeMode()
-                : setToast("Click the dot beside an outcome to draw from it.")
-            }
-          >
-            <Icon name="route" />
-          </button>
-          <button className="icon-button" aria-label="Tidy layout" title="Tidy layout" onClick={cleanupLayout}><Icon name="layers" /></button>
+          {toolbarSlot ? (
+            <>
+              <div className="toolbar-divider" />
+              {toolbarSlot}
+            </>
+          ) : null}
+          {/* Adding, wiring and tidying all change the shape. On a board whose
+              shape is fixed they are three buttons that cannot do anything. */}
+          {shapeIsFixed ? null : (
+            <>
+              <div className="toolbar-divider" />
+              <button className="icon-button" aria-label="Add node" title="Add node" onClick={() => openPalette(window.innerWidth / 2, window.innerHeight / 2)}><Icon name="plus" /></button>
+              <button
+                className={`icon-button ${edgeSource ? "active" : ""}`}
+                aria-label={edgeSource ? "Cancel drawing" : "Draw edge"}
+                title={edgeSource ? "Cancel drawing (Esc)" : "Draw edge"}
+                onClick={() =>
+                  edgeSource
+                    ? clearEdgeMode()
+                    : setToast("Click the dot beside an outcome to draw from it.")
+                }
+              >
+                <Icon name="route" />
+              </button>
+              <button className="icon-button" aria-label="Tidy layout" title="Tidy layout" onClick={cleanupLayout}><Icon name="layers" /></button>
+            </>
+          )}
           <div className="toolbar-divider" />
           <button className="icon-button" aria-label="Undo" title="Undo" disabled={!canUndo} onClick={undo}><Icon name="undo" /></button>
           <button className="icon-button" aria-label="Redo" title="Redo" disabled={!canRedo} onClick={redo}><Icon name="redo" /></button>
           <div className="toolbar-divider" />
           <button className="icon-button" aria-label="Save" title="Save" onClick={() => void saveActiveDiagram()}><Icon name="save" /></button>
-          <button className="icon-button danger-icon" disabled={!canDelete} aria-label="Delete selected node" title="Delete selected node" onClick={deleteSelectedNode}><Icon name="trash" /></button>
+          {onPublish ? (
+            <button className="toolbar-publish" onClick={() => void publishActiveDiagram()}>Publish</button>
+          ) : null}
+          {shapeIsFixed ? null : (
+            <button className="icon-button danger-icon" disabled={!canDelete} aria-label="Delete selected node" title="Delete selected node" onClick={deleteSelectedNode}><Icon name="trash" /></button>
+          )}
         </header>
 
-        {palette ? <ComponentPalette palette={palette} onAdd={(type) => addNode(type, palette.world)} onClose={() => setPalette(null)} /> : null}
+        {palette ? (
+          <ComponentPalette
+            palette={palette}
+            family={familyOf(diagram)}
+            onAdd={(type) => addNode(type, palette.world)}
+            onClose={() => setPalette(null)}
+          />
+        ) : null}
         {starterMenu ? <StarterArchitectureMenu anchor={starterMenu} onApply={applyStarter} onClose={() => setStarterMenu(null)} /> : null}
         {agentOpen ? <AgentPanel key={diagram.id} diagram={diagram} supervisor={supervisorFeed} runs={codingRunsByNodeId} onApplyProposal={applyAgentProposal} onClose={() => setAgentOpen(false)} onRunTool={runAgentTool} /> : null}
 
@@ -1156,6 +1634,21 @@ export function RecoveredEditorHost({
 
         <div data-diagram-inspector-layer="true" className="diagram-inspector-layer">
           {inspectorNodeId && selectedNode && inspectorDraft ? (
+            board === "integration" ? (
+              // The node view, not the small panel. A step that transforms data
+              // cannot be configured blind — what came in and what went out are
+              // half the question, and the other boards have neither.
+              <NodeDetailView
+                draft={inspectorDraft}
+                node={selectedNode}
+                onCancel={closeInspector}
+                onChange={setInspectorDraft}
+                onSave={saveInspector}
+                dryRun={dryRun}
+                onRun={() => void runDryRun()}
+                sampleCall={sampleCall}
+              />
+            ) : (
             <NodeInspector
               draft={inspectorDraft}
               node={selectedNode}
@@ -1174,11 +1667,13 @@ export function RecoveredEditorHost({
               onSave={saveInspector}
               delivery={delivery}
             />
+            )
           ) : null}
         </div>
       </section>
       {toast ? <div className="toast">{toast}</div> : null}
     </main>
+    </ReferenceData.Provider>
   )
 }
 
@@ -1188,6 +1683,7 @@ function BoardNode({
   viewMode,
   edgeSource,
   pulseNodeIds,
+  wiredOutcomes,
   onDelete,
   onFinishEdge,
   onOpenInspector,
@@ -1200,6 +1696,8 @@ function BoardNode({
   viewMode: ViewMode
   edgeSource: { nodeId: string; handle: HandleSide; outcome: string } | null
   pulseNodeIds: Set<string>
+  /** Outcomes with a next node. The rest end the call where they are. */
+  wiredOutcomes: Set<string> | undefined
   onDelete: () => void
   onFinishEdge: (nodeId: string, handle?: HandleSide) => void
   onOpenInspector: () => void
@@ -1207,12 +1705,19 @@ function BoardNode({
   onSelect: () => void
   onStartEdge: (nodeId: string, outcome: string, handle?: HandleSide) => void
 }) {
+  const { shapeIsFixed, agents, shapes, family } = useContext(ReferenceData)
   const meta = NODE_TYPES[node.type]
   const size = getNodeSize(node, viewMode)
   const configured = isNodeConfigured(node)
-  const configSummary = nodeConfigSummary(node).slice(0, 3)
+  // A chip that reads "Schema to fill: 5a000000-0000-4000-8000-000000000001"
+  // names the row and tells the reader nothing. The card has the lists the
+  // inspector's dropdown uses, so it can say which one.
+  const configSummary = nodeConfigSummary(node, { agent: agents, structured_output: shapes }).slice(0, 3)
   const isBrushSource = edgeSource?.nodeId === node.id
   const isBrushConnected = pulseNodeIds.has(node.id)
+  // A flow is entered at its trigger and run from everything else. That is the
+  // whole difference, and it is why this one node has no delete control.
+  const isTrigger = isTriggerType(node.type)
 
   return (
     <article
@@ -1259,14 +1764,28 @@ function BoardNode({
         )}
       </div>
       <div className="node-outcomes" aria-label={`${meta.label} outcomes`}>
-        {meta.outcomes.map((outcome) => (
+        {outcomesForNode(node).map((outcome) => {
+          const wired = wiredOutcomes?.has(outcome.id) ?? false
+          return (
           <button
             type="button"
-            className="node-outcome"
+            className={`node-outcome ${wired ? "" : "node-outcome-open"}`}
             data-board-nodrag="true"
             data-outcome-id={outcome.id}
+            data-outcome-open={wired ? undefined : "true"}
             key={outcome.id}
-            aria-label={`Connect ${outcome.label} outcome`}
+            // The same sentence the row shows, rather than a different one. The
+            // visible text already said "to the caller" on a fixed shape while
+            // these two still said the call ends here — a claim about a flow,
+            // on a canvas that is not one.
+            aria-label={wired
+              ? `${outcome.label} outcome, connected`
+              : shapeIsFixed
+                ? `${outcome.label}, handed to the caller`
+                : `${outcome.label} outcome, nothing connected — the ${family === "post_call" ? "flow" : "call"} ends here`}
+            title={wired || shapeIsFixed
+              ? undefined
+              : `Nothing is wired to “${outcome.label}”, so the ${family === "post_call" ? "flow" : "call"} ends here.`}
             onClick={(event) => {
               event.stopPropagation()
               // Finishing an edge accepts the whole row: the target is the node,
@@ -1285,17 +1804,32 @@ function BoardNode({
               onSelect()
             }}
           >
-            <span className="node-outcome-point" aria-hidden />
+            {/* The dot is what says "you can draw from here". `startEdge`
+                refuses on a fixed shape, so on an engine board it was an
+                affordance for something that cannot happen — the canvas there
+                exists to configure a chain, not to author one. */}
+            {shapeIsFixed ? null : <span className="node-outcome-point" aria-hidden />}
             <b>{outcome.label}</b>
-            <small>{outcome.id}</small>
+            {/* An unwired outcome on a flow is where a call stops, and the
+                runner logs exactly that. On a fixed shape it is the end of the
+                chain — the last step hands audio back to the caller — so the
+                flow's wording would be a false claim about what happens. */}
+            {/* What an unwired outcome means depends on the board. On a
+                post-call flow the call is already over — saying "ends the
+                call" there describes something that happened before this node
+                ran. */}
+            <small>{wired ? outcome.id : shapeIsFixed ? "to the caller" : family === "post_call" ? "ends the flow" : "ends the call"}</small>
           </button>
-        ))}
+          )
+        })}
       </div>
       {selected ? (
         <>
           {node.description ? <div className="node-tooltip">{node.description}</div> : null}
           <div className="selection-ring" />
-          <button className="node-action node-action-delete" data-board-nodrag="true" aria-label="Delete node" onClick={(event) => { event.stopPropagation(); onDelete() }}><Icon name="trash" /></button>
+          {isTrigger ? null : (
+            <button className="node-action node-action-delete" data-board-nodrag="true" aria-label="Delete node" onClick={(event) => { event.stopPropagation(); onDelete() }}><Icon name="trash" /></button>
+          )}
         </>
       ) : null}
     </article>
@@ -1306,10 +1840,13 @@ function ComponentPalette({
   palette,
   onAdd,
   onClose,
+  family,
 }: {
   palette: { x: number; y: number; world: Point }
   onAdd: (type: NodeType) => void
   onClose: () => void
+  /** What this board is for. Decides what the palette may offer. */
+  family: NodeFamily
 }) {
   const left = clamp(palette.x, 12, typeof window === "undefined" ? palette.x : window.innerWidth - 270)
   const top = clamp(palette.y, 12, typeof window === "undefined" ? palette.y : window.innerHeight - 430)
@@ -1319,7 +1856,7 @@ function ComponentPalette({
       <aside className="context-menu" style={{ left, top }}>
         <div className="context-title">Add node</div>
         <div className="context-grid">
-          {ADDABLE_NODE_TYPES.map((type) => {
+          {addableFor(family).map((type) => {
             const meta = NODE_TYPES[type]
             return (
               <button type="button" key={type} onClick={() => onAdd(type)}>
@@ -1781,7 +2318,7 @@ function EdgeLayer({
           const source = nodeById.get(edge.sourceNodeId)
           const target = nodeById.get(edge.targetNodeId)
           if (!source || !target) return null
-          const outcome = outcomeForType(source.type, edge.outcome)
+          const outcome = outcomeForNode(source, edge.outcome)
           if (!outcome) return null
           const endpoints = edgeEndpoints(edge, source, target, viewMode)
           const rope = ropePath(endpoints.source, endpoints.target)
@@ -1820,6 +2357,7 @@ function EdgeControls({
   onDelete: () => void
   onSelect: () => void
 }) {
+  const { shapeIsFixed } = useContext(ReferenceData)
   const hasLabel = Boolean(edge.label?.trim())
   const edgeStyle = edge.style ?? "muted"
   const styleLabel = edgeStyle.charAt(0).toUpperCase() + edgeStyle.slice(1)
@@ -1830,7 +2368,12 @@ function EdgeControls({
       style={{ "--edge-label-x": `${Math.round(x)}px`, "--edge-label-y": `${Math.round(y)}px` } as React.CSSProperties}
       onClick={onSelect}
     >
-      {hasLabel ? (
+      {/* On a fixed shape the line cannot be restyled or removed, so the pill
+          carries only what it says. Showing the controls would offer two edits
+          that silently do nothing. */}
+      {shapeIsFixed ? (
+        hasLabel ? <div className="edge-label-pill"><span className="edge-label-text">{edge.label}</span></div> : null
+      ) : hasLabel ? (
         <div className="edge-label-pill">
           <button type="button" className={`edge-style-button ${edgeStyle}`} aria-label="Cycle edge style" title="Cycle edge style" onClick={onCycle}><Icon name={edgeStyle === "flowing" ? "route" : edgeStyle === "broken" ? "x" : "minus"} /><span>{styleLabel}</span></button>
           <span className="edge-label-text">{edge.label}</span>
@@ -1853,6 +2396,343 @@ function ConnectionPreview({ source, target }: { source: Point; target: Point })
       <path className="connection-preview-base" vectorEffect="non-scaling-stroke" markerEnd="url(#arrow-active)" d={rope.d} />
       <path className="connection-preview-flow" vectorEffect="non-scaling-stroke" markerEnd="url(#arrow-active)" d={rope.d} />
     </g>
+  )
+}
+
+/**
+ * The node view for an integration: what came in, what this node is set to, and
+ * what it produced.
+ *
+ * n8n's shape, and the reason for it: configuring a step that transforms data
+ * is impossible to do blind. The middle pane is the same `ConfigEditor` the
+ * small panel uses — the panes around it are what is new, not the fields.
+ *
+ * Both sides are filled by a dry run, which walks the flow against a finished
+ * call with the write to the call and the outgoing request withheld. Testing a
+ * flow must not POST a lead into somebody's CRM.
+ */
+function NodeDetailView({
+  draft,
+  node,
+  onCancel,
+  onChange,
+  onSave,
+  dryRun,
+  onRun,
+  sampleCall,
+}: {
+  draft: InspectorDraft
+  node: DiagramNode
+  onCancel: () => void
+  onChange: (draft: InspectorDraft) => void
+  onSave: (event: React.FormEvent) => void
+  dryRun: { steps: DryRunStep[] | null; running: boolean; problem: string | null }
+  onRun: () => void
+  sampleCall?: SampleCall
+}) {
+  const meta = NODE_TYPES[node.type]
+  const target = useRef<((path: string) => void) | null>(null)
+
+  // A trigger has no Input pane, because nothing precedes it. Two panes rather
+  // than three with one of them permanently empty — an empty pane reads as
+  // something that failed to load.
+  const isTrigger = node.type.startsWith("trigger.")
+
+  const { steps, running, problem } = dryRun
+  const mine = steps?.find((step) => step.node_id === node.id)
+  const index = mine && steps ? steps.indexOf(mine) : -1
+  const before = index > 0 ? steps![index - 1] : undefined
+
+  // Populated the moment the view opens, not on a button. Held on the board, so
+  // opening a second node reuses the same walk rather than reading the
+  // transcript with a model all over again.
+  useEffect(() => {
+    if (!steps && !running && !problem) onRun()
+  }, [steps, running, problem, onRun])
+
+  const insert = (path: string) => target.current?.(path)
+
+  const view = (
+    <InsertTarget.Provider value={target}>
+      <dialog open className="ndv" onPointerDown={(event) => event.stopPropagation()}>
+        {/* The node's own colour, set once on the frame: the header tints with
+            it and the whole dialog carries it down its left edge, so a Set
+            node's dialog does not look like a webhook's. */}
+        <div
+          className="ndv-frame"
+          style={{ "--node-color": meta.stroke, "--node-bg": meta.color } as React.CSSProperties}
+        >
+          <header className="ndv-header">
+            <div className="ndv-node-icon">
+              <NodeIcon icon={meta.icon} />
+            </div>
+            <div className="ndv-titles">
+              <div className="ndv-title-row">
+                <input
+                  className="ndv-name"
+                  value={draft.name}
+                  maxLength={50}
+                  aria-label="Node name"
+                  onChange={(event) => onChange({ ...draft, name: event.target.value })}
+                />
+                {/* The kind of node — and only when that adds something. A node
+                    left with its type's default name showed "Process call" as
+                    the name and "PROCESS CALL" beside it, which is the same
+                    word twice. */}
+                {meta.label.toLowerCase() === draft.name.trim().toLowerCase() ? null : (
+                  <span className="ndv-type">{meta.label}</span>
+                )}
+              </div>
+              {/* Borderless until touched, so the header reads as a title and
+                  not as a form. It was a field in Parameters, competing for the
+                  width the node's actual settings need. */}
+              <input
+                className="ndv-description"
+                value={draft.description}
+                maxLength={250}
+                placeholder="Add a note about this step"
+                aria-label="Description"
+                onChange={(event) => onChange({ ...draft, description: event.target.value })}
+              />
+            </div>
+            <button type="button" className="ndv-close" aria-label="Close" onClick={onCancel}><Icon name="x" /></button>
+          </header>
+
+          <form className="ndv-body" data-panes={isTrigger ? "2" : "3"} onSubmit={onSave}>
+            {isTrigger ? null : (
+              <section className="ndv-pane ndv-input">
+                <div className="ndv-pane-head">
+                  <b>Input</b>
+                  {before ? <span>{before.name}</span> : null}
+                </div>
+                <div className="ndv-pane-body">
+                  <DataBrowser
+                    running={running}
+                    value={before ? before.output : mine?.input}
+                    onPick={insert}
+                    root="$json"
+                    from={before?.name}
+                    waiting={
+                      sampleCall?.label
+                        ? `Reading the call from ${sampleCall.label}…`
+                        : "No finished call to test against yet."
+                    }
+                  />
+                  {/* Always in scope, whatever ran before — so it is offered
+                      whether or not the walk reached this node. */}
+                  <DataBrowser
+                    running={false}
+                    value={sampleCall?.call}
+                    onPick={insert}
+                    root="$call"
+                    from="The call"
+                    open={false}
+                    waiting="Nothing known about the call yet."
+                  />
+                </div>
+              </section>
+            )}
+
+            <section className="ndv-pane ndv-params">
+              <div className="ndv-pane-head"><b>Parameters</b></div>
+              <div className="ndv-params-body">
+                <ConfigEditor draft={draft} onChange={onChange} />
+              </div>
+            </section>
+
+            <section className="ndv-pane ndv-output">
+              <div className="ndv-pane-head">
+                <b>Output</b>
+                <button type="button" className="ndv-test" onClick={onRun} disabled={running}>
+                  {/* A walk reads the transcript with a model and takes eight
+                      seconds or more. A button that only greys out looks like a
+                      button that did not take the click. */}
+                  {/* `fa-spin` is Font Awesome's own, and since v6 every one of
+                      its animations honours `prefers-reduced-motion` — which is
+                      what the hand-written keyframes here were reimplementing,
+                      media query and all. */}
+                  {running ? <Icon name="spinner" className="fa-spin" /> : null}
+                  {running ? "Running" : steps ? "Run again" : "Test step"}
+                </button>
+              </div>
+              <div className="ndv-pane-body">
+                {problem ? <p className="ndv-problem">{problem}</p> : null}
+                {running ? (
+                  <p className="ndv-hint">Walking the flow. Nothing is sent — a test never leaves the machine.</p>
+                ) : mine ? (
+                  <>
+                    <div className="ndv-result">
+                      <span className={mine.outcome === "ok" ? "ok" : "not-ok"}>{mine.outcome}</span>
+                      <span>{mine.ms} ms</span>
+                    </div>
+                    <JsonTree value={mine.output} empty="This node produced nothing." />
+                  </>
+                ) : steps ? (
+                  // The walk ran and never arrived here — a branch above went
+                  // the other way. Saying so is more use than an empty pane.
+                  <p className="ndv-hint">The flow did not reach this node.</p>
+                ) : (
+                  <p className="ndv-hint">Nothing has run yet.</p>
+                )}
+              </div>
+            </section>
+          </form>
+
+          <footer className="ndv-footer">
+            <button type="button" onClick={onCancel}>Cancel</button>
+            <button type="button" className="primary" onClick={(event) => onSave(event)}>Done</button>
+          </footer>
+        </div>
+      </dialog>
+    </InsertTarget.Provider>
+  )
+
+  // Through a portal to `document.body`, not into the board.
+  //
+  // The board is pannable and zoomable, so `.board-world` carries a
+  // `transform` — and a transformed ancestor becomes the containing block for
+  // `position: fixed`. Rendered inside it the dialog looked centred while its
+  // hit area was somewhere else, so every click fell through to the board and
+  // closed the panel being clicked.
+  return typeof document === "undefined" ? view : createPortal(view, document.body)
+}
+
+/** What a dragged value carries, and how a field recognises one. */
+const DRAG_TYPE = "application/x-vokoo-path"
+
+function beginDrag(event: React.DragEvent, path: string) {
+  event.dataTransfer.setData(DRAG_TYPE, path)
+  // `text/plain` as well, so dropping into something that is not a parameter
+  // still produces the expression rather than nothing.
+  event.dataTransfer.setData("text/plain", `{{ ${path} }}`)
+  event.dataTransfer.effectAllowed = "copy"
+  // A field cannot know a drag is happening from its own props, and every
+  // field that could accept one should say so while it is in flight.
+  document.body.dataset.draggingValue = "true"
+}
+
+function endDrag() {
+  delete document.body.dataset.draggingValue
+}
+
+/** The path a drop is carrying, if it is carrying one. */
+function droppedPath(event: React.DragEvent): string | null {
+  const path = event.dataTransfer.getData(DRAG_TYPE)
+  return path || null
+}
+
+/**
+ * The data on the left, and the only place a value comes from.
+ *
+ * Clicking a row puts `{{ $json.name }}` into whichever parameter last had
+ * focus. That is n8n's arrangement, and the reason it needs no picker under the
+ * field: there is one list of what exists, and it is the same list you read to
+ * understand what arrived.
+ */
+function DataBrowser({
+  value,
+  onPick,
+  root,
+  from,
+  running,
+  waiting,
+  open,
+}: {
+  value: unknown
+  onPick: (path: string) => void
+  root: string
+  /** Which node produced this. n8n names the node on the data itself. */
+  from?: string
+  running: boolean
+  waiting: string
+  open?: boolean
+}) {
+  // Collapsible, because `$call` alone is ten rows and pushes the previous
+  // step's output — the thing actually being wired — off the top of the pane.
+  const [expanded, setExpanded] = useState(open !== false)
+
+  const entries =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.entries(value as Record<string, unknown>)
+      : []
+
+  if (running || entries.length === 0) return <p className="ndv-hint">{waiting}</p>
+
+  return (
+    <div className="ndv-browser">
+      <div className="ndv-browser-head">
+        <button
+          type="button"
+          className="ndv-browser-toggle"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((held) => !held)}
+        >
+          <span className="ndv-caret" aria-hidden><Icon name={expanded ? "chevronDown" : "chevronRight"} /></span>
+          {/* The node's name first, the root second: "Set lead" is what you
+              look for, `$json` is how you write it. */}
+          {from ? <b>{from}</b> : null}
+          <code>{root}</code>
+        </button>
+        {/* The root, taken whole. "Send everything the previous step produced"
+            is the common case — it is what a Set node is for — and a list of
+            only the leaves made it look impossible. */}
+        <button
+          type="button"
+          className="ndv-browser-root"
+          title={`Drag into a field, or click to insert {{ ${root} }}`}
+          draggable
+          onDragStart={(event) => beginDrag(event, root)}
+          onDragEnd={endDrag}
+          onClick={() => onPick(root)}
+        >
+          all {entries.length}
+        </button>
+      </div>
+
+      {expanded ? (
+        <dl>
+          {entries.map(([name, held]) => (
+            <div key={name}>
+              <button
+                type="button"
+                title={`Drag into a field, or click to insert {{ ${root}.${name} }}`}
+                draggable
+                onDragStart={(event) => beginDrag(event, `${root}.${name}`)}
+                onDragEnd={endDrag}
+                // No `preventDefault` on mousedown, however tempting: it holds
+                // the field's focus for a click, and it also cancels the
+                // browser's native drag before it starts. Clicking still works,
+                // because the target survives the blur.
+                onClick={() => onPick(`${root}.${name}`)}
+              >
+                {name}
+              </button>
+              <span>{held === null || held === undefined ? "\u2014" : typeof held === "string" ? held : JSON.stringify(held)}</span>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+    </div>
+  )
+}
+
+/** JSON, as names and values rather than a wall of braces. */
+function JsonTree({ value, empty }: { value: unknown; empty: string }) {
+  if (value === null || value === undefined) return <p className="ndv-hint">{empty}</p>
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return <pre className="ndv-json">{JSON.stringify(value, null, 2)}</pre>
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0) return <p className="ndv-hint">{empty}</p>
+  return (
+    <dl className="ndv-fields">
+      {entries.map(([name, held]) => (
+        <div key={name}>
+          <dt>{name}</dt>
+          <dd>{typeof held === "string" ? held : JSON.stringify(held)}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 
@@ -2157,6 +3037,11 @@ function DeliveryCard({ runs }: { runs: import("@/app/d/agent-actions").Componen
 function ConfigEditor({ draft, onChange }: { draft: InspectorDraft; onChange: (draft: InspectorDraft) => void }) {
   const schema = CONFIG_SCHEMAS[draft.type as keyof typeof CONFIG_SCHEMAS]
   if (!schema) return null
+  // A trigger takes no settings. A heading over nothing reads as a section that
+  // failed to load rather than one that has nothing in it.
+  if (schema.fields.length === 0) {
+    return <p className="config-help">This step has nothing to configure. It starts the flow and passes the call on.</p>
+  }
   const values = draft.config[draft.type] ?? {}
   function setValue(field: string, value: unknown) {
     onChange({
@@ -2173,10 +3058,19 @@ function ConfigEditor({ draft, onChange }: { draft: InspectorDraft; onChange: (d
   return (
     <div className="inspector-scroll">
       <section className="inspector-config-section">
-        <h3>{schema.title}</h3>
+        {/* No heading. It was `${label} details` — a third or fourth printing of
+            the node's own type, directly under the name and the type badge that
+            already say it. */}
         <div className="inspector-config-grid">
           {schema.fields.map((field) => (
-            <ConfigFieldEditor field={field} key={field.field} value={values[field.field]} onChange={(value) => setValue(field.field, value)} />
+            <ConfigFieldEditor
+              field={field}
+              key={field.field}
+              nodeType={draft.type}
+              siblings={values}
+              value={values[field.field]}
+              onChange={(value) => setValue(field.field, value)}
+            />
           ))}
         </div>
       </section>
@@ -2184,7 +3078,127 @@ function ConfigEditor({ draft, onChange }: { draft: InspectorDraft; onChange: (d
   )
 }
 
-function ConfigFieldEditor({ field, value, onChange }: { field: ConfigField; value: unknown; onChange: (value: unknown) => void }) {
+/**
+ * Whether this field can hold an expression instead of a literal.
+ *
+ * Most can. The exceptions are the fields whose value must be a real row for
+ * something else to work: an agent id, a schema id, an engine's provider or
+ * model are read by pre-flight and by the palette, and an expression there
+ * would be a reference that cannot be checked until a call reaches it. Branches
+ * are the node's ports, drawn on the canvas — not a value at all.
+ */
+function expressionCapable(field: ConfigField, board: BoardContext): boolean {
+  // First the board, then the field. A board whose runner resolves nothing must
+  // not offer an expression on any field, however ordinary the field looks.
+  if (!boardTakesExpressions(board)) return false
+  // Not a value at all: a list of rows, each of which carries its own switch.
+  if (field.valueType === "branches" || field.valueType === "assignments") return false
+  if (field.valueType === "agent" || field.valueType === "structured_output") return false
+  return !field.valueType?.startsWith("engine_")
+}
+
+/**
+ * A field, in whichever of its two modes it is in.
+ *
+ * n8n puts a fixed|expression switch on every parameter, and that switch is the
+ * whole of the encoding: an expression is a value beginning with `=`. Flipping
+ * to expression prepends it, flipping back strips it — so a field that was
+ * never touched is a literal by construction, and no config written before
+ * expressions existed changes meaning.
+ */
+function ConfigFieldEditor(props: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+  nodeType?: string
+  siblings?: Record<string, unknown>
+}) {
+  const { field, value, onChange } = props
+  const { board } = useContext(ReferenceData)
+  const raw = typeof value === "string" ? value : ""
+  const isExpression = raw.startsWith("=")
+
+  // An `=` already stored is still shown as an expression even where the board
+  // no longer offers them: hiding it would present a value as a literal that
+  // the runner will not read as one.
+  if (!expressionCapable(field, board) && !isExpression) return <ConfigFieldControl {...props} />
+
+  // A value dropped on a field that is still Fixed switches it to Expression
+  // and keeps what was typed. Requiring the switch first would make the drop
+  // fail for the reason least likely to be guessed.
+  const accept = (event: React.DragEvent) => {
+    const path = droppedPath(event)
+    if (!path) return
+    event.preventDefault()
+    event.stopPropagation()
+    endDrag()
+    const carried = isExpression ? raw.slice(1) : typeof value === "string" || typeof value === "number" ? String(value) : ""
+    onChange(`=${carried}{{ ${path} }}`)
+  }
+
+  return (
+    <div
+      className="config-field"
+      onDragOver={(event) => {
+        if (!droppedPath(event) && !event.dataTransfer.types.includes(DRAG_TYPE)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "copy"
+      }}
+      onDrop={accept}
+    >
+      <div className="config-field-mode">
+        <button
+          type="button"
+          className={isExpression ? "" : "selected"}
+          onClick={() => onChange(isExpression ? raw.slice(1) : value)}
+        >
+          Fixed
+        </button>
+        <button
+          type="button"
+          className={isExpression ? "selected" : ""}
+          onClick={() => {
+            if (isExpression) return
+            // What was typed becomes the start of the expression rather than
+            // being thrown away: somebody who wrote a URL and then wants a path
+            // segment in it should not have to retype the URL.
+            const carried = typeof value === "string" || typeof value === "number" ? String(value) : ""
+            onChange(`=${carried}`)
+          }}
+        >
+          Expression
+        </button>
+      </div>
+      {isExpression ? (
+        <ExpressionInput field={field} value={raw} onChange={onChange} />
+      ) : (
+        <ConfigFieldControl {...props} />
+      )}
+    </div>
+  )
+}
+
+function ConfigFieldControl({
+  field,
+  value,
+  onChange,
+  nodeType,
+  siblings = {},
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+  nodeType?: string
+  /** The other values on this node, so one field can scope another's list. */
+  siblings?: Record<string, unknown>
+}) {
+  // Engine steps choose from a catalogue rather than typing a name. Handled
+  // before the control switch because the control is "text" for all three —
+  // what makes them a list is the value type, not the widget.
+  if (field.valueType?.startsWith("engine_")) {
+    return <EngineSelect field={field} value={value} onChange={onChange} nodeType={nodeType} siblings={siblings} />
+  }
+
   if (field.control === "boolean") {
     return (
       <fieldset className="config-group">
@@ -2196,19 +3210,506 @@ function ConfigFieldEditor({ field, value, onChange }: { field: ConfigField; val
       </fieldset>
     )
   }
+  // A node that names an agent should offer the agents, not a box to paste a
+  // UUID into. Getting that wrong is invisible until a call reaches the node.
+  if (field.valueType === "agent") {
+    return <ReferenceSelect field={field} value={value} onChange={onChange} kind="agent" />
+  }
+
+  // The shape an intelligence node fills in. Same reasoning as the agent
+  // above: a UUID typed into a box is wrong in a way nothing notices until a
+  // call has already ended and the reading failed.
+  if (field.valueType === "structured_output") {
+    return <ReferenceSelect field={field} value={value} onChange={onChange} kind="shape" />
+  }
+
+  // The field that decides how many paths leave the node.
+  if (field.valueType === "branches") {
+    return <BranchListEditor field={field} value={value} onChange={onChange} />
+  }
+
+  // The rows a Set node holds. Like branches, how many there are is the
+  // author's decision, so the catalogue cannot name them.
+  if (field.valueType === "assignments") {
+    return <AssignmentListEditor field={field} value={value} onChange={onChange} />
+  }
+
+  // A fixed set of answers, named by the catalogue. A text box here is a place
+  // to make a typo that nothing catches: an HTTP method of "post " or "GET"
+  // both reach `webhook.rs`, which matches PUT and PATCH and falls through to
+  // POST — so the flow says one thing and the request does another.
+  if (field.valueType === "select") {
+    return <OptionSelect field={field} value={value} onChange={onChange} />
+  }
+
+  // Which connected provider's key to send. Never a key typed into a flow —
+  // the value is a vendor id and the bridge resolves it from the vault per
+  // call, so what belongs in this box is a name from a list.
+  if (field.valueType === "vendor") {
+    return <VendorSelect field={field} value={value} onChange={onChange} />
+  }
+
+  const multiline = field.valueType === "textarea"
+  // Shown under the field, or in it, never both — which is what happened when
+  // the placeholder fell back to `help` and `help` was also printed below.
+  const described = Boolean(field.help)
+  const placeholder = field.hint ?? (described ? undefined : field.help)
+
   return (
     <label className="config-input">
       <span>{field.label}{field.required ? " *" : ""}</span>
-      <input
-        type={field.control === "number" ? "number" : field.valueType === "time" ? "time" : field.valueType === "phone" ? "tel" : "text"}
-        placeholder={field.hint ?? field.help}
-        value={typeof value === "string" || typeof value === "number" ? value : ""}
-        onChange={(event) => onChange(field.control === "number" ? Number(event.target.value) : event.target.value)}
-      />
+      {multiline ? (
+        <textarea
+          rows={4}
+          placeholder={placeholder}
+          value={typeof value === "string" ? value : ""}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <input
+          type={field.control === "number" ? "number" : field.valueType === "time" ? "time" : field.valueType === "phone" ? "tel" : "text"}
+          placeholder={placeholder}
+          value={typeof value === "string" || typeof value === "number" ? value : ""}
+          onChange={(event) => onChange(field.control === "number" ? Number(event.target.value) : event.target.value)}
+        />
+      )}
+      {/* A placeholder disappears the moment anything is typed, which is when
+          a sentence explaining what to type is still worth reading. */}
+      {described ? <small className="config-help">{field.help}</small> : null}
     </label>
   )
 }
 
+/**
+ * An expression, and what there is to put in it.
+ *
+ * The panel is the point, not the box. n8n's is the reason its expressions are
+ * usable at all: a field that accepts `{{ … }}` and does not say what `…` may
+ * be is a field you write by reading source. Clicking a path inserts it at the
+ * cursor.
+ */
+function ExpressionInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField
+  value: string
+  onChange: (value: unknown) => void
+}) {
+  const target = useContext(InsertTarget)
+  const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const body = value.slice(1)
+
+  // Registered on focus so the Input pane knows where a clicked value goes, and
+  // deliberately *not* cleared on blur: clicking a value in the pane blurs this
+  // field, and a target cleared by that blur would be gone before the click
+  // landed.
+  const claim = () => {
+    target.current = (path: string) => {
+      const element = inputRef.current
+      if (!element) return
+      // Read at insert time, never captured. Closing over `body` from the
+      // render that registered this meant a field cleared afterwards still
+      // held its old text here — so deleting a value and picking another put
+      // the deleted text back, which looked like the insert duplicating.
+      const current = element.value
+      const segment = `{{ ${path} }}`
+      const at = element.selectionStart ?? current.length
+      const to = element.selectionEnd ?? at
+      onChange(`=${current.slice(0, at)}${segment}${current.slice(to)}`)
+      requestAnimationFrame(() => {
+        element.focus()
+        const caret = at + segment.length
+        element.setSelectionRange(caret, caret)
+      })
+    }
+  }
+
+  return (
+    <label className="config-input">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <textarea
+        ref={inputRef}
+        className="config-expression"
+        rows={field.valueType === "textarea" || field.valueType === "template" ? 5 : 2}
+        spellCheck={false}
+        placeholder="{{ $json.field }} — or click a value on the left"
+        value={body}
+        onFocus={claim}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(DRAG_TYPE)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = "copy"
+        }}
+        onDrop={(event) => {
+          const path = droppedPath(event)
+          if (!path) return
+          // Stopped here rather than left to the wrapper: a textarea knows
+          // where in the text the pointer was, and appending to the end of a
+          // JSON body somebody is halfway through writing is not what they
+          // meant by dropping it there.
+          event.preventDefault()
+          event.stopPropagation()
+          endDrag()
+          const element = event.currentTarget
+          const at = element.selectionStart ?? body.length
+          const to = element.selectionEnd ?? at
+          onChange(`=${body.slice(0, at)}{{ ${path} }}${body.slice(to)}`)
+        }}
+        onChange={(event) => { claim(); onChange(`=${event.target.value}`) }}
+      />
+      {field.help ? <small className="config-help">{field.help}</small> : null}
+    </label>
+  )
+}
+
+/** A field whose answers the catalogue names. */
+function OptionSelect({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
+  const options = field.options ?? []
+  const current = typeof value === "string" ? value : ""
+  const fallback = typeof field.default === "string" ? field.default : ""
+  const unknown = current && !options.some((option) => option.id === current)
+  // A default that is itself one of the answers needs no row of its own: the
+  // list offered "POST (default)" and "POST", which is the same answer twice
+  // and leaves the reader deciding whether they differ.
+  const needsEmpty = !field.required && !options.some((option) => option.id === fallback)
+
+  return (
+    <label className="config-input">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <select value={current || fallback} onChange={(event) => onChange(event.target.value)}>
+        {needsEmpty ? <option value="">Not set</option> : null}
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>{option.label}</option>
+        ))}
+        {/* Kept visible rather than silently reset: a value the catalogue no
+            longer offers is something the author chose, and swapping it for a
+            default would change what the flow does without saying so. */}
+        {unknown ? <option value={current}>{current} (no longer offered)</option> : null}
+      </select>
+      {field.help ? <small className="config-help">{field.help}</small> : null}
+    </label>
+  )
+}
+
+/** One of the organisation's connected providers, by id. */
+function VendorSelect({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
+  const { connectedVendors } = useContext(ReferenceData)
+  const current = typeof value === "string" ? value : ""
+  // The id is the value the bridge looks up, so the id is what is shown. A
+  // display name here would be a second vocabulary for the same thing.
+  const missing = current && !connectedVendors.includes(current)
+
+  return (
+    <label className="config-input">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <select value={current} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{connectedVendors.length === 0 ? "No providers connected" : "None — send unauthenticated"}</option>
+        {connectedVendors.map((vendor) => (
+          <option key={vendor} value={vendor}>{vendor}</option>
+        ))}
+        {/* A key that was connected when this flow was drawn and has since been
+            removed. The bridge sends nothing rather than sending it
+            unauthenticated, so this must not read as "None". */}
+        {missing ? <option value={current}>{current} (no key connected)</option> : null}
+      </select>
+      {field.help ? <small className="config-help">{field.help}</small> : null}
+    </label>
+  )
+}
+
+
+/** Keys a caller may press, and what each one means. */
+type Branch = { id: string; label: string }
+
+/**
+ * The branches a menu leaves by.
+ *
+ * Editing this field changes the node's shape: `outcomesForNode` reads it, so
+ * adding a row grows the card and gives it another port to draw an edge from.
+ * That is the point of it, and it is also why removing a row is destructive —
+ * an edge leaving a branch that no longer exists stops resolving and is dropped
+ * on the next load. The remove button says so rather than finding out later.
+ */
+/**
+ * The rows a Set node holds: a name, and where its value comes from.
+ *
+ * The name is the one whatever receives this expects — a reading calls it
+ * `patient_name` and a CRM calls it `contactName`, and this is where the two
+ * meet. The value reuses the ordinary field editor, so it gets the same
+ * Fixed | Expression switch and the same picker as every other field rather
+ * than a second, lesser version of both.
+ */
+function AssignmentListEditor({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
+  const rows: { name: string; value: unknown }[] = Array.isArray(value)
+    ? value.flatMap((row) => {
+        if (!row || typeof row !== "object") return []
+        const { name, value: held } = row as { name?: unknown; value?: unknown }
+        return [{ name: typeof name === "string" ? name : "", value: held }]
+      })
+    : []
+
+  const write = (next: { name: string; value: unknown }[]) => onChange(next)
+
+  return (
+    <fieldset className="config-group">
+      <legend>{field.label}{field.required ? " *" : ""}</legend>
+      {field.help ? <p className="config-help">{field.help}</p> : null}
+
+      <div className="assignment-rows">
+        {rows.map((row, index) => {
+          // Two rows with one name would mean the later silently wins, and the
+          // author would be looking at a payload missing a field they can see
+          // on screen.
+          const duplicate = rows.some((other, otherIndex) => otherIndex < index && other.name === row.name && row.name !== "")
+          return (
+            <div key={index} className={duplicate ? "assignment-row duplicate" : "assignment-row"}>
+              <div className="assignment-head">
+                <input
+                  aria-label="Name"
+                  placeholder="name"
+                  value={row.name}
+                  onChange={(event) =>
+                    write(rows.map((held, heldIndex) => (heldIndex === index ? { ...held, name: event.target.value } : held)))
+                  }
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove ${row.name || "row"}`}
+                  onClick={() => write(rows.filter((_, heldIndex) => heldIndex !== index))}
+                >
+                  Remove
+                </button>
+              </div>
+              <ConfigFieldEditor
+                field={{ field: `value-${index}`, control: "text", valueType: "text", label: "Value", required: false }}
+                value={row.value}
+                onChange={(next) =>
+                  write(rows.map((held, heldIndex) => (heldIndex === index ? { ...held, value: next } : held)))
+                }
+              />
+              {duplicate ? <small className="config-help">Another row already sets this name.</small> : null}
+            </div>
+          )
+        })}
+      </div>
+
+      <button type="button" className="config-add-row" onClick={() => write([...rows, { name: "", value: "" }])}>
+        Add value
+      </button>
+    </fieldset>
+  )
+}
+
+function BranchListEditor({
+  field,
+  value,
+  onChange,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
+  const branches: Branch[] = Array.isArray(value)
+    ? value.flatMap((row) => {
+        if (!row || typeof row !== "object") return []
+        const { id, label } = row as { id?: unknown; label?: unknown }
+        return [{ id: typeof id === "string" ? id : "", label: typeof label === "string" ? label : "" }]
+      })
+    : []
+
+  const write = (next: Branch[]) => onChange(next)
+
+  // The keypad has twelve keys and no more, so the choice is a fixed list
+  // rather than a text box that accepts "A" and fails on a live call.
+  const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*", "#"]
+  const taken = new Set(branches.map((branch) => branch.id))
+  const nextFree = KEYS.find((key) => !taken.has(key))
+
+  return (
+    <fieldset className="config-group">
+      <legend>{field.label}{field.required ? " *" : ""}</legend>
+      {field.help ? <p className="config-help">{field.help}</p> : null}
+
+      <div className="branch-rows">
+        {branches.map((branch, index) => {
+          // Two rows on the same key would give two ports one address, and an
+          // edge from either would be indistinguishable from the other.
+          const duplicate = branches.some((other, otherIndex) => otherIndex < index && other.id === branch.id)
+          return (
+            <div key={index} className={duplicate ? "branch-row duplicate" : "branch-row"}>
+              <select
+                aria-label="Key"
+                value={branch.id}
+                onChange={(event) => write(branches.map((row, rowIndex) =>
+                  rowIndex === index ? { ...row, id: event.target.value } : row))}
+              >
+                {/* A key already used elsewhere stays listed but unselectable,
+                    so the row shows why it cannot be chosen. */}
+                {KEYS.map((key) => (
+                  <option key={key} value={key} disabled={key !== branch.id && taken.has(key)}>{key}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                aria-label="What this key means"
+                placeholder="What this key means"
+                value={branch.label}
+                onChange={(event) => write(branches.map((row, rowIndex) =>
+                  rowIndex === index ? { ...row, label: event.target.value } : row))}
+              />
+              <button
+                type="button"
+                title="Remove this key. Any path leaving it is removed with it."
+                onClick={() => write(branches.filter((_, rowIndex) => rowIndex !== index))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      <button
+        type="button"
+        className="branch-add"
+        disabled={!nextFree}
+        onClick={() => nextFree && write([...branches, { id: nextFree, label: "" }])}
+      >
+        {nextFree ? "Add a key" : "Every key is used"}
+      </button>
+    </fieldset>
+  )
+}
+
+/**
+ * A field an engine step chooses from the catalogue.
+ *
+ * Three kinds, and the last two depend on the first: which models and voices
+ * exist is a property of the provider, so choosing a provider is what fills
+ * them. A step whose provider offers no models hides the field rather than
+ * showing an empty disabled box, because a transcriber that takes a language
+ * has no model to choose and an empty select reads as a failed load.
+ */
+function EngineSelect({
+  field,
+  value,
+  onChange,
+  nodeType,
+  siblings,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+  nodeType?: string
+  siblings: Record<string, unknown>
+}) {
+  const { engineOptions, connectedVendors } = useContext(ReferenceData)
+  const current = typeof value === "string" ? value : ""
+  const forStage = engineOptions.filter((option) => option.stage === nodeType)
+  const provider = forStage.find((option) => option.id === siblings.provider)
+
+  const choices: { id: string; label: string; note?: string }[] =
+    field.valueType === "engine_provider"
+      ? forStage.map((option) => ({
+          id: option.id,
+          label: option.label,
+          // The two things that decide whether this step will work at all,
+          // said in the list rather than after the call fails.
+          // Only what stops this step working. The tagline was here too and
+          // overflowed the trigger, hiding the provider's own name behind a
+          // description of it.
+          //
+          // Tool support is not among these: a provider that cannot call tools
+          // is withdrawn from the catalogue rather than offered with a warning,
+          // so nothing reaching this list can lack it.
+          note: option.vendorId && !connectedVendors.includes(option.vendorId) ? "no key" : "",
+        }))
+      : field.valueType === "engine_model"
+        ? (provider?.models ?? []).map((model) => ({ id: model.id, label: model.label }))
+        : (provider?.voices ?? []).map((voice) => ({ id: voice.id, label: voice.label }))
+
+  // Nothing to choose and nothing chosen: the step does not take this field.
+  if (choices.length === 0 && !current) return null
+
+  const missing = current && !choices.some((choice) => choice.id === current)
+
+  return (
+    <label className="config-input">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <select value={current} onChange={(event) => onChange(event.target.value)}>
+        <option value="">Choose</option>
+        {choices.map((choice) => (
+          <option key={choice.id} value={choice.id}>
+            {choice.note ? `${choice.label} — ${choice.note}` : choice.label}
+          </option>
+        ))}
+        {/* A value pointing at something gone must stay visible: silently
+            showing "Choose" would look like nothing was ever set. */}
+        {missing ? <option value={current}>{current} (not available)</option> : null}
+      </select>
+    </label>
+  )
+}
+
+function ReferenceSelect({
+  field,
+  value,
+  onChange,
+  kind,
+}: {
+  field: ConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+  /** Which list to offer. Both are rows chosen by name, not ids to paste. */
+  kind: "agent" | "shape"
+}) {
+  const { agents, shapes } = useContext(ReferenceData)
+  const options = kind === "agent" ? agents : shapes
+  const noun = kind === "agent" ? "agent" : "shape"
+  const current = typeof value === "string" ? value : ""
+  // A value pointing at something that is gone must stay visible: silently
+  // showing "Choose" would look like nothing was ever set.
+  const missing = current && !options.some((option) => option.id === current)
+
+  return (
+    <label className="config-input">
+      <span>{field.label}{field.required ? " *" : ""}</span>
+      <select value={current} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{options.length === 0 ? `No ${noun}s yet` : `Choose a ${noun}`}</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>{option.name}</option>
+        ))}
+        {missing ? <option value={current}>Unknown {noun} ({current.slice(0, 8)})</option> : null}
+      </select>
+    </label>
+  )
+}
 
 function HintItem({ button, action }: { button: "left" | "right"; action: { label: string; opacity: number } }) {
   return (
@@ -2315,7 +3816,16 @@ function starterGraphFromSeed(seed: StarterSeed): Diagram["graph"] {
     })),
     edges: seed.edges.map(([sourceIndex, targetIndex, outcomeId, style], index) => {
       const source = seed.nodes[sourceIndex]
-      const outcome = source ? outcomeForType(source.type, outcomeId) : undefined
+      // A seed holds its config flat and the node builder above nests it under
+      // the type. Outcomes are read from the nested shape, so the lookup has to
+      // see what the built node will have — otherwise a starter seeding a menu
+      // would resolve against no branches and throw on its own edges.
+      const outcome = source
+        ? outcomeForNode(
+            { type: source.type, config: source.config ? { [source.type]: source.config } : undefined },
+            outcomeId,
+          )
+        : undefined
       if (!source || !outcome) throw new Error(`Starter ${seed.id} uses an unknown catalogue outcome.`)
       return {
       id: `${seed.id}-edge-${index + 1}`,
@@ -2376,7 +3886,7 @@ function agentSuggestions(diagram: Diagram): AgentSuggestion[] {
   const nodes = diagram.graph.nodes
   const unconfigured = nodes.filter((node) => !isNodeConfigured(node))
   const connectedOutcomes = new Set(diagram.graph.edges.map((edge) => `${edge.sourceNodeId}:${edge.outcome}`))
-  const unconnected = nodes.flatMap((node) => NODE_TYPES[node.type].outcomes
+  const unconnected = nodes.flatMap((node) => outcomesForNode(node)
     .filter((outcome) => !connectedOutcomes.has(`${node.id}:${outcome.id}`))
     .map((outcome) => ({ node, outcome })))
   const suggestions: AgentSuggestion[] = []
@@ -2429,10 +3939,10 @@ function buildIssueReviewResponse(diagram: Diagram) {
   const nodes = diagram.graph.nodes
   const unconfigured = nodes.filter((node) => !isNodeConfigured(node))
   const connectedOutcomes = new Set(diagram.graph.edges.map((edge) => `${edge.sourceNodeId}:${edge.outcome}`))
-  const unconnected = nodes.flatMap((node) => NODE_TYPES[node.type].outcomes.filter((outcome) => !connectedOutcomes.has(`${node.id}:${outcome.id}`)))
+  const unconnected = nodes.flatMap((node) => outcomesForNode(node).filter((outcome) => !connectedOutcomes.has(`${node.id}:${outcome.id}`)))
   const invalidEdges = diagram.graph.edges.filter((edge) => {
     const source = nodes.find((node) => node.id === edge.sourceNodeId)
-    return !source || !outcomeForType(source.type, edge.outcome)
+    return !source || !outcomeForNode(source, edge.outcome)
   })
   const findings = [
     unconfigured.length ? `${unconfigured.length} nodes need required fields: ${unconfigured.slice(0, 4).map((node) => node.name).join(", ")}.` : "All required catalogue fields are populated.",
@@ -2502,7 +4012,7 @@ function edgeEndpoints(edge: DiagramEdge, source: DiagramNode, target: DiagramNo
 
 function outcomeHandlePoint(node: DiagramNode, outcomeId: string, viewMode: ViewMode) {
   const size = getNodeSize(node, viewMode)
-  const outcomes = NODE_TYPES[node.type].outcomes
+  const outcomes = outcomesForNode(node)
   const index = Math.max(0, outcomes.findIndex((outcome) => outcome.id === outcomeId))
   const outcomesTop = size.height - outcomes.length * 30 + 15
   return { x: node.position.x + size.width, y: node.position.y + outcomesTop + index * 30 }
@@ -2551,9 +4061,8 @@ function ropePath(source: Point, target: Point, sagScale = 1) {
 }
 
 function getNodeSize(nodeOrType: DiagramNode | NodeType, viewMode: ViewMode) {
-  const type = typeof nodeOrType === "string" ? nodeOrType : nodeOrType.type
   void viewMode
-  return NODE_SIZES[type]
+  return typeof nodeOrType === "string" ? NODE_SIZES[nodeOrType] : sizeForNode(nodeOrType)
 }
 
 function screenToWorld(clientX: number, clientY: number, viewport: Viewport) {
@@ -2641,13 +4150,41 @@ function nodeConfig(node: DiagramNode, kind = node.type) {
   }
 }
 
-function nodeConfigSummary(node: DiagramNode) {
+function nodeConfigSummary(
+  node: DiagramNode,
+  /** Named rows a field may point at, by the field's value type. */
+  named: Partial<Record<string, Referenceable[]>> = {},
+) {
   const schema = CONFIG_SCHEMAS[node.type as keyof typeof CONFIG_SCHEMAS]
   if (!schema) return []
   const config = nodeConfig(node, node.type)
   return schema.fields.flatMap((field) => {
     const value = config[field.field]
     if (!hasValue(value)) return []
+    // A reference is stored as an id and read as a name. Falling back to the
+    // id is deliberate for the case the row is gone: the chip then shows
+    // something wrong rather than showing nothing, which is the difference
+    // between noticing and not.
+    const rows = named[field.valueType]
+    if (rows) {
+      const match = rows.find((row) => row.id === value)
+      return [`${field.label}: ${match ? match.name : `unknown (${String(value).slice(0, 8)})`}`]
+    }
+    // Branches are drawn as the node's ports, immediately below these chips. A
+    // chip repeating them says the same thing twice — and said it as
+    // "[object Object]", because a branch is a row and not a word.
+    if (field.valueType === "branches") return []
+    // Assignments are rows too, and printed the same way for the same reason.
+    // Unlike branches they are not drawn anywhere else, and the names are the
+    // whole point of the node — what it is called is "Set lead", what it does
+    // is decided by these.
+    if (field.valueType === "assignments") {
+      if (!Array.isArray(value)) return []
+      const names = value
+        .map((row) => (row && typeof row === "object" ? (row as { name?: unknown }).name : undefined))
+        .filter((name): name is string => typeof name === "string" && name.length > 0)
+      return names.length === 0 ? [] : [names.join(", ")]
+    }
     if (field.control === "boolean") return value === true ? [getBooleanLabel(field, "checked") || field.label] : []
     if (Array.isArray(value)) return value.filter((item) => item !== "none" && hasValue(item)).map((item) => optionLabel(getFieldOptions(field), String(item)))
     if (field.control === "number") return [`${field.label}: ${value}`]
@@ -2753,15 +4290,21 @@ function defaultDescription(type: NodeType) {
   return NODE_TYPES[type]?.label ?? "General component"
 }
 
-function optionLabel(options: readonly (readonly [string, string])[], value: string) {
-  return options.find(([id]) => id === value)?.[1] ?? value
+function optionLabel(options: readonly NodeOutcome[], value: string) {
+  return options.find((option) => option.id === value)?.label ?? value
 }
 
-function getFieldOptions(field: ConfigField): [string, string][] {
-  if (!("options" in field) || !Array.isArray(field.options)) return []
-  return field.options
-    .filter((option): option is [string, string] => Array.isArray(option) && option.length >= 2)
-    .map(([id, label]) => [String(id), String(label)])
+/**
+ * The answers a `select` field offers.
+ *
+ * This read `[id, label]` pairs until 2 September and returned `[]` on every
+ * field in the catalogue, because no row has ever carried that shape — it was
+ * written against an imagined one. Options are `{ id, label }`, the same shape
+ * an outcome uses, so the chip on a card and the dropdown in the inspector
+ * agree about what a value is called.
+ */
+function getFieldOptions(field: ConfigField): NodeOutcome[] {
+  return field.options ?? []
 }
 
 function getBooleanLabel(field: ConfigField, kind: "checked" | "unchecked") {
@@ -2842,12 +4385,18 @@ function readRouteDiagramId() {
   return null
 }
 
-function Icon({ name }: { name: string }) {
-  const iconClass = "size-[1em]"
+function Icon({ name, className }: { name: string; className?: string }) {
+  // Passed through to the `<svg>`, because that is where Font Awesome's own
+  // animation classes have to land — `fa-spin` on a wrapper would rotate the
+  // wrapper.
+  const iconClass = className ? `size-[1em] ${className}` : "size-[1em]"
   const props = { className: iconClass, strokeWidth: 2.2 }
   const icons: Record<string, React.ReactNode> = {
     bolt: <Sparkles {...props} />,
     check: <Check {...props} />,
+    chevronDown: <ChevronDown {...props} />,
+    spinner: <Spinner {...props} />,
+    chevronRight: <ChevronRight {...props} />,
     chevronUp: <ChevronUp {...props} />,
     database: <IconDocument {...props} />,
     download: <Download {...props} />,
@@ -2897,6 +4446,10 @@ function NodeIcon({ icon }: { icon: string }) {
   const iconClass = "size-5"
   const props = { className: iconClass, strokeWidth: 2.1 }
   const icons: Record<string, React.ReactNode> = {
+    triggerAnswered: <IconPhoneNumbers {...props} />,
+    triggerEnded: <IconCallLogs {...props} />,
+    triggerFailed: <AlertCircle {...props} />,
+    tool: <IconTools {...props} />,
     condition: <IconSquads {...props} />,
     loop: <RotateCcw {...props} />,
     variable: <IconSliders {...props} />,
@@ -2909,6 +4462,14 @@ function NodeIcon({ icon }: { icon: string }) {
     hangup: <IconPhoneNumbers {...props} />,
     release: <IconDocument {...props} />,
     monitor: <Eye {...props} />,
+    keypad: <Keyboard {...props} />,
+    intelligence: <IconGauge {...props} />,
+    webhook: <IconTools {...props} />,
+    // Engine steps.
+    engineRealtime: <Zap {...props} />,
+    engineListening: <IconDocument {...props} />,
+    engineThinking: <IconLanguage {...props} />,
+    engineSpeaking: <IconVoiceLibrary {...props} />,
   }
   return <i aria-hidden="true">{icons[icon] ?? <Box {...props} />}</i>
 }

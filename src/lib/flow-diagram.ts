@@ -21,15 +21,64 @@
 //     a time. Flattening the wrong level silently produces a node the bridge
 //     reads as unconfigured.
 //
-//  3. A flow has a `start`. The canvas has no such notion yet — every node is
-//     equal on the board. Until the trigger anchor exists, `start` is preserved
-//     from the flow it came from and inferred only when there is nothing to
-//     preserve.
+//  3. A flow has a `start`. On the canvas that is the trigger node — the one
+//     node the flow is entered at rather than run. A flow drawn before triggers
+//     existed has none, so one is materialised from the row's `trigger_event`
+//     and wired to whatever `start` used to name. That is a real node from that
+//     point on, not a decoration: it is saved back into the graph, the bridge's
+//     registry knows it from `catalogue_node_types`, and `runner.rs` walks
+//     through it.
 
 import type { Diagram, DiagramEdge, DiagramNode, NodeType } from "@/lib/architecture-model";
-import { NODE_TYPES } from "@/lib/architecture-model";
+import { NODE_TYPES, TRIGGER_NODE_FOR_EVENT, isTriggerType, outcomeForNode } from "@/lib/architecture-model";
 import type { Flow, FlowGraph, FlowNode, FlowTransition } from "@/utils/flow-graph";
 import { EMPTY_GRAPH } from "@/utils/flow-graph";
+
+/** The trigger a flow handling this event opens with. */
+function triggerTypeFor(flow: Flow): NodeType {
+    return TRIGGER_NODE_FOR_EVENT[flow.trigger_event ?? "call.answered"] ?? "trigger.call_answered";
+}
+
+/**
+ * The trigger node a flow opens with, added if the stored graph predates them.
+ *
+ * The materialised node is wired to whatever `start` used to name, so the graph
+ * still runs the same nodes in the same order — the trigger is prepended, never
+ * substituted. Nothing is materialised for a graph that already has one, which
+ * is what makes this safe to run on every load.
+ */
+function withTrigger(graph: FlowGraph, flow: Flow): FlowGraph {
+    if (graph.nodes.some((node) => isTriggerType(node.implementation as NodeType))) return graph;
+
+    const type = triggerTypeFor(flow);
+    const meta = NODE_TYPES[type];
+    // A graph with no nodes gets its trigger and nothing to point at. That is
+    // the correct empty flow: an entry point with an unwired outcome.
+    const head = graph.nodes.find((node) => node.id === graph.start) ?? graph.nodes[0];
+
+    // Deterministic, so reopening the same flow twice does not produce two ids
+    // for the same node and make an edit look like a rewrite. Suffixed only if
+    // somebody's hand-written graph already took the name.
+    let id = "trigger";
+    while (graph.nodes.some((node) => node.id === id)) id = `${id}_1`;
+
+    const node: FlowNode = {
+        id,
+        type: "trigger",
+        implementation: type,
+        name: meta.label,
+        // Left of the node it leads to, at the same height, so the board reads
+        // in the direction the edges already flow.
+        position: head ? { x: head.position.x - 380, y: head.position.y } : { x: 0, y: 0 },
+        config: {},
+    };
+
+    const transitions = head
+        ? [{ id: `${id}-start`, from: id, outcome: meta.outcomes[0].id, to: head.id }, ...graph.transitions]
+        : graph.transitions;
+
+    return { ...graph, start: id, nodes: [node, ...graph.nodes], transitions };
+}
 
 /** The node a flow begins at, when the stored graph does not say. */
 function inferStart(nodes: FlowNode[], transitions: FlowTransition[]): string {
@@ -42,7 +91,7 @@ function inferStart(nodes: FlowNode[], transitions: FlowTransition[]): string {
 
 /** A stored flow, as the canvas draws it. */
 export function flowToDiagram(flow: Flow): Diagram {
-    const graph = flow.graph ?? EMPTY_GRAPH;
+    const graph = withTrigger(flow.graph ?? EMPTY_GRAPH, flow);
     const now = new Date().toISOString();
 
     const nodes: DiagramNode[] = graph.nodes.map((node) => ({
@@ -52,7 +101,12 @@ export function flowToDiagram(flow: Flow): Diagram {
         // silently removing it would lose work to a catalogue that moved on.
         type: node.implementation as NodeType,
         name: node.name,
-        description: NODE_TYPES[node.implementation as NodeType]?.label,
+        // The author's note, or nothing. This was the node type's label, so
+        // every node arrived carrying a description identical to the type
+        // already shown beside its name — the same words three times in one
+        // header. A stored graph has no description field to read yet; when it
+        // does, it belongs here.
+        description: "",
         position: node.position ?? { x: 0, y: 0 },
         // Nested under the kind, which is where the inspector reads it.
         config: { [node.implementation]: { ...(node.config ?? {}) } },
@@ -88,8 +142,24 @@ export function flowToDiagram(flow: Flow): Diagram {
 
 function outcomeLabel(graph: FlowGraph, transition: FlowTransition): string {
     const from = graph.nodes.find((n) => n.id === transition.from);
-    const meta = from ? NODE_TYPES[from.implementation as NodeType] : undefined;
-    return meta?.outcomes.find((o) => o.id === transition.outcome)?.label ?? transition.outcome;
+    if (!from) return transition.outcome;
+    // Through `outcomeForNode`, not `NODE_TYPES[...].outcomes`.
+    //
+    // A menu's branches live in the node the author configured, not in its
+    // type, so reading the type directly finds nothing for a digit and falls
+    // through to the raw outcome id — a flow whose edges read "1", "2", "#"
+    // where the author wrote "English", "Hindi". The canvas recomputes labels
+    // on every render and so hid this on screen, but the wrong label is what
+    // landed in the Diagram and went back out through `diagramToFlowGraph`.
+    //
+    // A stored graph keys config flat; a diagram node keys it by type. This is
+    // the seam between the two, so the shape is built here rather than giving
+    // `outcomesForNode` a second way to be called.
+    const outcome = outcomeForNode(
+        { type: from.implementation as NodeType, config: { [from.implementation]: from.config ?? {} } },
+        transition.outcome,
+    );
+    return outcome?.label ?? transition.outcome;
 }
 
 /** A drawn diagram, as the bridge runs it. */
@@ -120,7 +190,12 @@ export function diagramToFlowGraph(diagram: Diagram, previous?: FlowGraph | null
             to: edge.targetNodeId,
         }));
 
+    // The trigger is where the flow is entered, so it is `start` — the board
+    // says so directly rather than the answer being carried alongside it. The
+    // older reasoning stays underneath for a graph still without one.
+    const trigger = nodes.find((node) => isTriggerType(node.implementation as NodeType));
     const start =
+        trigger?.id ||
         (carried.start && nodes.some((n) => n.id === carried.start) ? carried.start : "") ||
         previous?.start ||
         inferStart(nodes, transitions);

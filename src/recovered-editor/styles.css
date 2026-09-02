@@ -97,7 +97,7 @@ button:disabled {
   width: 24px;
   height: 24px;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--purple-2);
   color: #fff;
   font-size: 13px;
@@ -106,7 +106,7 @@ button:disabled {
 .diagram-name {
   width: min(32rem, 100%);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   padding: 7px 9px;
   color: var(--ink);
@@ -126,7 +126,7 @@ button:disabled {
 
 .btn {
   min-height: 32px;
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--panel-2);
   color: var(--ink);
   padding: 7px 10px;
@@ -225,7 +225,7 @@ button:disabled {
 .field select {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 0;
   background: #fff;
   color: var(--ink);
   padding: 8px 9px;
@@ -247,7 +247,7 @@ button:disabled {
 .coverage-row,
 .comment {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: #fff;
 }
 
@@ -278,7 +278,7 @@ button:disabled {
   gap: 3px;
   margin: 0 2px 10px;
   border: 1px solid #dfe6f0;
-  border-radius: 8px;
+  border-radius: 0;
   background: #f8fafc;
   padding: 8px 10px;
   color: #667085;
@@ -378,7 +378,7 @@ button:disabled {
   display: flex;
   gap: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.92);
   padding: 8px;
   box-shadow: var(--shadow);
@@ -393,7 +393,7 @@ button:disabled {
 }
 
 .tab {
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   padding: 7px 5px;
   color: var(--muted);
@@ -424,7 +424,7 @@ button:disabled {
 }
 
 .bubble {
-  border-radius: 8px;
+  border-radius: 0;
   padding: 9px 10px;
   font-size: 13px;
   line-height: 1.45;
@@ -454,7 +454,7 @@ button:disabled {
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.9);
   color: #66748b;
   box-shadow: 0 8px 22px rgba(31, 40, 58, 0.08);
@@ -488,7 +488,7 @@ button:disabled {
   gap: 5px;
   max-width: 94%;
   border: 1px solid #e0e7f0;
-  border-radius: 12px;
+  border-radius: 0;
   background: #fff;
   padding: 10px 11px;
   box-shadow: 0 10px 22px rgba(31, 40, 58, 0.04);
@@ -548,7 +548,7 @@ button:disabled {
 
 .agent-markdown code {
   border: 1px solid #e0e7f0;
-  border-radius: 6px;
+  border-radius: 0;
   background: #f8fafc;
   padding: 0 4px;
   color: #3c0c4f;
@@ -608,7 +608,7 @@ button:disabled {
 .agent-message-actions button {
   min-height: 30px;
   border: 1px solid #d8c5ff;
-  border-radius: 999px;
+  border-radius: 0;
   background: #f7f2ff;
   color: #3c0c4f;
   padding: 0 10px;
@@ -629,7 +629,7 @@ button:disabled {
   margin: 2px 0 12px;
   padding: 12px 13px;
   border: 1px solid #e8e2dc;
-  border-radius: 14px;
+  border-radius: 0;
   background: #fbf9f6;
 }
 .mc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -643,7 +643,7 @@ button:disabled {
 .mc-headline { margin: 0; font-size: 13.5px; line-height: 1.45; color: #211a28; font-weight: 550; }
 
 .mc-decisions { display: flex; flex-direction: column; gap: 7px; }
-.mc-decision { display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px; border-radius: 10px; border: 1px solid #efe7d9; background: #fff; }
+.mc-decision { display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px; border-radius: 0; border: 1px solid #efe7d9; background: #fff; }
 .mc-decision.is-ask { border-color: #f3d6b0; background: #fdf6ea; }
 .mc-dot { width: 8px; height: 8px; border-radius: 999px; margin-top: 5px; flex: 0 0 auto; background: #c2740a; }
 .mc-decision.is-auto .mc-dot { animation: stackplane-agent-pulse 1.3s ease-in-out infinite; }
@@ -652,11 +652,11 @@ button:disabled {
 .mc-dec-line { display: flex; align-items: center; gap: 8px; }
 .mc-verb { font-size: 12px; font-weight: 500; color: #211a28; }
 .mc-decision.is-ask .mc-verb { color: #b42318; }
-.mc-node { font-size: 11px; font-weight: 500; color: #4c1d95; background: #f3eefb; border-radius: 6px; padding: 1px 7px; }
+.mc-node { font-size: 11px; font-weight: 500; color: #4c1d95; background: #f3eefb; border-radius: 0; padding: 1px 7px; }
 .mc-reason { font-size: 12px; line-height: 1.45; color: #6a6172; margin-top: 2px; }
 
 .mc-ladder { display: flex; flex-direction: column; gap: 4px; }
-.mc-rung { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; }
+.mc-rung { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 0; }
 .mc-rung:hover { background: #f4efe9; }
 .mc-pip { width: 8px; height: 8px; border-radius: 999px; flex: 0 0 auto; background: #cbd5e1; }
 .mc-rung.is-built .mc-pip { background: #22c55e; }
@@ -681,8 +681,8 @@ button:disabled {
 .agent-mode-chip {
   min-height: 26px;
   border: 1px solid #e2d6f5;
-  border-radius: 999px;
-  background: #faf7ff;
+  border-radius: 0;
+  background: var(--color-brand-50, #f5f3f1);
   color: #5a3c78;
   padding: 0 11px;
   font-size: 11px;
@@ -710,7 +710,7 @@ button:disabled {
 .agent-suggestion-chip {
   text-align: left;
   border: 1px solid #e2e8f2;
-  border-radius: 10px;
+  border-radius: 0;
   background: #f6f8fc;
   color: #2a3550;
   padding: 8px 11px;
@@ -735,7 +735,7 @@ button:disabled {
   display: grid;
   gap: 8px;
   border: 1px solid #d8c5ff;
-  border-radius: 14px;
+  border-radius: 0;
   background: linear-gradient(180deg, #fbf8ff 0%, #fff 100%);
   padding: 10px;
   box-shadow: 0 14px 30px rgba(60, 12, 79, 0.08);
@@ -791,7 +791,7 @@ button:disabled {
 
 .agent-proposal-card li code {
   border: 1px solid #d8c5ff;
-  border-radius: 999px;
+  border-radius: 0;
   background: #f7f2ff;
   padding: 1px 6px;
   color: #3c0c4f;
@@ -803,7 +803,7 @@ button:disabled {
   justify-self: start;
   min-height: 32px;
   border: 1px solid #3c0c4f;
-  border-radius: 999px;
+  border-radius: 0;
   background: #3c0c4f;
   color: #fff;
   padding: 0 12px;
@@ -852,7 +852,7 @@ button:disabled {
   display: grid;
   gap: 5px;
   border: 1px solid #e0e7f0;
-  border-radius: 10px;
+  border-radius: 0;
   background: #fbfcfe;
   padding: 10px;
 }
@@ -880,7 +880,7 @@ button:disabled {
 
 .agent-settings {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 0;
   background: #fff;
   padding: 10px;
 }
@@ -915,7 +915,7 @@ button:disabled {
 .bar {
   height: 6px;
   overflow: hidden;
-  border-radius: 99px;
+  border-radius: 0;
   background: #e5e9f1;
 }
 
@@ -939,7 +939,7 @@ button:disabled {
   width: min(760px, 100%);
   max-height: min(760px, 90vh);
   overflow: auto;
-  border-radius: 8px;
+  border-radius: 0;
   background: #fff;
   box-shadow: var(--shadow);
 }
@@ -982,7 +982,7 @@ button:disabled {
 .auth-error {
   margin: 0;
   border: 1px solid #f2b8b5;
-  border-radius: 6px;
+  border-radius: 0;
   background: #fff5f4;
   color: #a33a35;
   padding: 9px 10px;
@@ -1064,7 +1064,7 @@ button:disabled {
   align-items: center;
   gap: 8px;
   border: 1px solid #dbe3ef;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.72);
   color: #4b5870;
   padding: 0 12px;
@@ -1076,7 +1076,7 @@ button:disabled {
   display: grid;
   gap: 22px;
   border: 1px solid #dbe3ef;
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.96);
   padding: clamp(22px, 4vw, 34px);
   box-shadow: 0 24px 70px rgba(23, 32, 51, 0.12);
@@ -1110,14 +1110,14 @@ button:disabled {
   grid-template-columns: 1fr 1fr;
   gap: 4px;
   border: 1px solid #dbe3ef;
-  border-radius: 8px;
+  border-radius: 0;
   background: #f3f6fa;
   padding: 4px;
 }
 
 .auth-mode-tabs button {
   min-height: 36px;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: #69758a;
   font-size: 12px;
@@ -1142,7 +1142,7 @@ button:disabled {
   justify-content: center;
   gap: 10px;
   border: 1px solid #dbe3ef;
-  border-radius: 6px;
+  border-radius: 0;
   background: #ffffff;
   color: #202940;
   font-size: 13px;
@@ -1159,7 +1159,7 @@ button:disabled {
   width: 24px;
   height: 24px;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
   background: #eef2f7;
   color: #3c0c4f;
   font-size: 10px;
@@ -1216,7 +1216,7 @@ button:disabled {
   height: 64px;
   place-items: center;
   border: 1px solid #c8d7e8;
-  border-radius: 8px;
+  border-radius: 0;
   background: #eef7ff;
   color: #2376a6;
   font-size: 28px;
@@ -1233,7 +1233,7 @@ button:disabled {
   display: grid;
   gap: 6px;
   border: 1px solid #dbe3ef;
-  border-radius: 8px;
+  border-radius: 0;
   background: #f8fafc;
   padding: 12px;
 }
@@ -1306,7 +1306,7 @@ button:disabled {
   height: 24px;
   place-items: center;
   border: 1px solid #d8e0ec;
-  border-radius: 6px;
+  border-radius: 0;
   background: #f7f9fc;
   padding: 0 7px;
   color: #667085;
@@ -1322,7 +1322,7 @@ button:disabled {
   z-index: 30;
   max-width: 360px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: #fff;
   padding: 11px 12px;
   color: var(--ink);
@@ -1342,7 +1342,7 @@ button:disabled {
   left: 12px;
   z-index: 2;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.92);
   padding: 10px 12px;
 }
@@ -1501,7 +1501,7 @@ button:disabled {
   gap: 8px;
   min-height: 32px;
   border: 1px solid #dce4ef;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.96);
   color: #65728a;
   box-shadow: 0 12px 28px -20px rgba(15, 23, 42, 0.42);
@@ -1521,10 +1521,10 @@ button:disabled {
 }
 
 .edge-label-toolbar button:hover {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   color: #3c0c4f;
   box-shadow:
-    0 0 0 2px rgba(185, 151, 255, 0.14),
+    0 0 0 2px rgba(0, 0, 0, 0.07),
     0 12px 28px -20px rgba(15, 23, 42, 0.42);
 }
 
@@ -1551,7 +1551,7 @@ button:disabled {
   min-width: 28px;
   min-height: 26px;
   padding: 0 8px;
-  border-radius: 999px;
+  border-radius: 0;
   color: #7b8799;
 }
 
@@ -1594,7 +1594,7 @@ button:disabled {
   min-height: 26px;
   padding: 0;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
   color: #9aa7b9;
   line-height: 1;
 }
@@ -1620,9 +1620,9 @@ button:disabled {
 
 .edge-label-editor {
   padding: 0 8px;
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   box-shadow:
-    0 0 0 2px rgba(185, 151, 255, 0.16),
+    0 0 0 2px rgba(0, 0, 0, 0.08),
     0 12px 28px -20px rgba(15, 23, 42, 0.42);
 }
 
@@ -1754,8 +1754,14 @@ button:disabled {
   width: var(--node-w, 216px);
   min-height: var(--node-h, 88px);
   padding: 18px 20px 10px;
-  border: 1px solid #e7ebf2;
-  border-radius: 18px;
+  /* The node's own colour, and dashed until it is selected.
+   *
+   * The border was a flat grey on every card, so the only thing telling one
+   * kind of node from another was the icon. Taking `--node-color` — the icon's
+   * colour — means the card and its icon say the same thing, and the style says
+   * which one you are on: dashed is the resting state, solid is selected. */
+  border: 1px dashed var(--node-color, #e7ebf2);
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 42px rgba(31, 40, 58, 0.08);
   transform: translate(var(--node-x), var(--node-y));
@@ -1787,16 +1793,20 @@ button:disabled {
 }
 
 .board-node.selected {
-  border-color: #7c3aed;
+  border-style: solid;
+  border-color: var(--node-color, var(--color-brand-600, #000000));
   box-shadow:
-    0 0 0 4px rgba(124, 58, 237, 0.16),
+    /* The halo follows the node too, so a selected webhook does not glow the
+       same purple as a selected agent. `color-mix` is what the edge-brush rule
+       beside this already uses. */
+    0 0 0 4px color-mix(in srgb, var(--node-color, var(--color-brand-600, #000000)) 18%, transparent),
     0 24px 60px rgba(31, 40, 58, 0.14);
 }
 
 .board-node.is-implementation-locked {
-  border-color: #d9c9ff;
+  border-color: var(--color-brand-200, #d9d5d0);
   box-shadow:
-    0 0 0 3px rgba(124, 58, 237, 0.1),
+    0 0 0 3px rgba(0, 0, 0, 0.06),
     0 18px 42px rgba(31, 40, 58, 0.08);
 }
 
@@ -1809,8 +1819,8 @@ button:disabled {
   align-items: center;
   max-width: calc(100% - 24px);
   gap: 6px;
-  border: 1px solid #d9c9ff;
-  border-radius: 999px;
+  border: 1px solid var(--color-brand-200, #d9d5d0);
+  border-radius: 0;
   background: #f4efff;
   padding: 4px 7px;
   color: #4b1670;
@@ -1846,8 +1856,8 @@ button:disabled {
 .selection-ring {
   position: absolute;
   inset: -7px;
-  border: 3px solid #b997ff;
-  border-radius: 24px;
+  border: 3px solid var(--color-brand-300, #a59f97);
+  border-radius: 0;
   pointer-events: none;
 }
 
@@ -1859,7 +1869,7 @@ button:disabled {
   max-width: 420px;
   min-width: max-content;
   transform: translateX(-50%);
-  border-radius: 6px;
+  border-radius: 0;
   background: #0d1628;
   padding: 10px 15px;
   color: #fff;
@@ -1887,9 +1897,9 @@ button:disabled {
   appearance: none;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: #687286;
-  box-shadow: 0 0 0 3px rgba(185, 151, 255, 0.35);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.17);
   cursor: crosshair;
   pointer-events: auto;
   touch-action: none;
@@ -1904,7 +1914,7 @@ button:disabled {
 .board-side-handle[data-diagram-edge-brush-source-handle="true"] {
   background: #3d0b58;
   box-shadow:
-    0 0 0 3px rgba(185, 151, 255, 0.7),
+    0 0 0 3px rgba(0, 0, 0, 0.35),
     0 10px 22px rgba(61, 11, 88, 0.22);
 }
 
@@ -1941,9 +1951,9 @@ button:disabled {
 }
 
 .board-node[data-diagram-edge-brush-source="true"] {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   box-shadow:
-    0 0 0 4px rgba(185, 151, 255, 0.18),
+    0 0 0 4px rgba(0, 0, 0, 0.09),
     0 24px 60px rgba(31, 40, 58, 0.14);
 }
 
@@ -1969,7 +1979,7 @@ button:disabled {
   z-index: 3;
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
 }
 
 .node-action i {
@@ -2004,13 +2014,13 @@ button:disabled {
   align-self: start;
   width: 48px;
   height: 48px;
-  border-radius: 14px;
+  border-radius: 0;
 }
 
 .board-node.is-high-level .node-icon {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 /* These selectors matched `i` alone, which is what the original markup
@@ -2074,7 +2084,7 @@ button:disabled {
 .node-copy span {
   display: inline-flex;
   margin-top: 9px;
-  border-radius: 8px;
+  border-radius: 0;
   background: #edf1f7;
   padding: 3px 7px;
   color: #8a95aa;
@@ -2094,7 +2104,7 @@ button:disabled {
   max-width: 100%;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--node-color) 20%, transparent);
-  border-radius: 8px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--node-bg) 84%, white);
   padding: 2px 6px;
   color: color-mix(in srgb, var(--node-color) 78%, #172033);
@@ -2164,6 +2174,34 @@ button:disabled {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--node-color) 28%, transparent);
 }
 
+/* An outcome with nothing wired to it. Not an unfinished drawing — the runner
+   logs "nothing wired to from/outcome" and ends the call there, so this is an
+   exit. Drawn hollow, in the muted grey the row's `small` already uses, so a
+   filled dot means a line leaves and a hollow one means the call stops. */
+.node-outcome-open {
+  color: #7c8598;
+}
+
+.node-outcome-open .node-outcome-point {
+  border-color: #fff;
+  background: #fff;
+  box-shadow:
+    inset 0 0 0 2px #b6becd,
+    0 0 0 2px color-mix(in srgb, var(--node-color) 18%, transparent);
+}
+
+.node-outcome-open:hover .node-outcome-point {
+  box-shadow:
+    inset 0 0 0 2px var(--node-color),
+    0 0 0 4px color-mix(in srgb, var(--node-color) 28%, transparent);
+}
+
+.node-outcome-open small {
+  color: #b0b7c5;
+  font-family: var(--sans);
+  font-style: italic;
+}
+
 .canvas-toolbar,
 .bottom-controls,
 .zoom-controls,
@@ -2180,7 +2218,7 @@ button:disabled {
   align-items: center;
   gap: 9px;
   border: 1px solid #dfe5ef;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 18px 42px rgba(31, 40, 58, 0.09);
   backdrop-filter: blur(14px);
@@ -2201,7 +2239,7 @@ button:disabled {
   max-width: min(38vw, 420px);
   height: 42px;
   gap: 10px;
-  border-radius: 999px;
+  border-radius: 0;
   background: #f6f8fb;
   padding: 0 14px;
 }
@@ -2229,7 +2267,7 @@ button:disabled {
 .save-count span {
   width: 8px;
   height: 8px;
-  border-radius: 99px;
+  border-radius: 0;
   background: #f6a911;
 }
 
@@ -2246,7 +2284,7 @@ button:disabled {
   width: 38px;
   height: 38px;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: #202940;
   transition:
@@ -2293,7 +2331,7 @@ button:disabled {
 .sign-in-button {
   height: 52px;
   max-width: 240px;
-  border-radius: 999px;
+  border-radius: 0;
   padding: 0 24px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2318,7 +2356,7 @@ button:disabled {
 
 .mode-button {
   height: 38px;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   padding: 0 13px;
   color: #6a758a;
@@ -2331,7 +2369,7 @@ button:disabled {
 }
 
 .requirements-routing-status {
-  border-radius: 999px;
+  border-radius: 0;
   background: #edf7f1;
   padding: 6px 10px;
   color: #24724a;
@@ -2351,7 +2389,7 @@ button:disabled {
   display: grid;
   gap: 9px;
   border: 1px solid #dfe5ef;
-  border-radius: 999px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.94);
   padding: 9px 5px;
   box-shadow: 0 18px 42px rgba(31, 40, 58, 0.09);
@@ -2423,7 +2461,7 @@ button:disabled {
   height: 28px;
   place-items: center;
   border: 1px solid rgba(101, 116, 139, 0.3);
-  border-radius: 7px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.95);
   color: #718097;
   font-size: 11px;
@@ -2463,7 +2501,7 @@ button:disabled {
   max-height: calc(100vh - 130px);
   overflow: auto;
   border: 1px solid #dfe5ef;
-  border-radius: 18px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.96);
   padding: 12px;
   box-shadow: 0 24px 64px rgba(31, 40, 58, 0.14);
@@ -2479,7 +2517,7 @@ button:disabled {
   width: min(520px, calc(100vw - 44px));
   max-height: min(560px, calc(100vh - 136px));
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: 0;
   padding: 10px;
   z-index: 16;
 }
@@ -2496,7 +2534,7 @@ button:disabled {
   z-index: 19;
   width: 246px;
   border: 1px solid #dfe5ef;
-  border-radius: 16px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.98);
   padding: 8px;
   box-shadow: 0 24px 64px rgba(31, 40, 58, 0.18);
@@ -2517,7 +2555,7 @@ button:disabled {
   min-height: 38px;
   align-items: center;
   gap: 10px;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   padding: 7px 9px;
   color: #202940;
@@ -2567,7 +2605,7 @@ button:disabled {
   align-self: start;
   width: 38px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 .context-grid .mini-icon i {
@@ -2609,7 +2647,7 @@ button:disabled {
   height: 34px;
   place-items: center;
   border: 1px solid #dfe5ef;
-  border-radius: 10px;
+  border-radius: 0;
   background: #f6f8fc;
   color: #3c0c4f;
 }
@@ -2694,7 +2732,7 @@ button:disabled {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid #dce4ef;
-  border-radius: 22px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.96);
   box-shadow:
     0 24px 80px -42px rgba(15, 23, 42, 0.55),
@@ -2712,7 +2750,7 @@ button:disabled {
   width: 34px;
   height: 34px;
   place-items: center;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: #6b778d;
   transition: background-color 150ms ease, color 150ms ease;
@@ -2765,7 +2803,7 @@ button:disabled {
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid var(--node-color);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--node-bg);
   color: var(--node-color);
 }
@@ -2834,7 +2872,7 @@ button:disabled {
   width: 100%;
   height: 36px;
   border: 1px solid #dce4ef;
-  border-radius: 9px;
+  border-radius: 0;
   background: #fff;
   padding: 0 12px;
   color: #10182b;
@@ -2846,10 +2884,10 @@ button:disabled {
 }
 
 .inspector-field input:focus {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   box-shadow:
     0 5px 12px rgba(15, 23, 42, 0.06),
-    0 0 0 3px rgba(185, 151, 255, 0.16);
+    0 0 0 3px rgba(0, 0, 0, 0.08);
 }
 
 .inspector-config-section {
@@ -2889,6 +2927,10 @@ button:disabled {
   display: grid;
   min-width: 0;
   gap: 7px;
+  /* Without this the rows stretch to the tallest field in the row of the
+     panel's two-column grid, so a short dropdown beside a textarea had its
+     label at the top and its control at the bottom with a gap between. */
+  align-content: start;
 }
 
 .config-input.full {
@@ -2912,7 +2954,7 @@ button:disabled {
   width: 100%;
   height: 34px;
   border: 1px solid #dce4ef;
-  border-radius: 9px;
+  border-radius: 0;
   background: #fff;
   padding: 0 11px;
   color: #172033;
@@ -2926,12 +2968,248 @@ button:disabled {
 }
 
 .config-input input:focus {
-  border-color: #b997ff;
-  box-shadow: 0 0 0 3px rgba(185, 151, 255, 0.16);
+  border-color: var(--color-brand-300, #a59f97);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
 }
 
 .config-input input::placeholder {
   color: #a3adbd;
+}
+
+/* A dropdown had no rule of its own, so every list in the inspector — agent,
+   schema, engine provider, model, voice — rendered as a native select beside
+   inputs that were styled. Same box, so a field looks like a field whether its
+   answers are typed or chosen. */
+.config-input select {
+  width: 100%;
+  height: 34px;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 0 30px 0 11px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, #63718a 50%), linear-gradient(135deg, #63718a 50%, transparent 50%);
+  background-position: calc(100% - 15px) 15px, calc(100% - 11px) 15px;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.config-input select:focus {
+  border-color: var(--color-brand-300, #a59f97);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+}
+
+.config-input textarea {
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 9px 11px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.config-input textarea:focus {
+  border-color: var(--color-brand-300, #a59f97);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+}
+
+.config-input textarea::placeholder {
+  color: #a3adbd;
+}
+
+/* The rows a Set node holds. A name on top, the value below it, because a
+   value in expression mode brings a picker with it and would not fit beside. */
+.assignment-rows {
+  display: grid;
+  gap: 10px;
+}
+
+.assignment-row {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #e6ecf5;
+  border-radius: 0;
+  padding: 9px;
+  background: #fbfcfe;
+}
+
+.assignment-row.duplicate {
+  border-color: #f3c2c2;
+  background: #fffafa;
+}
+
+.assignment-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.assignment-head input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 0 9px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+}
+
+.assignment-head button,
+.config-add-row {
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 5px 10px;
+  color: #63718a;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.assignment-head button:hover,
+.config-add-row:hover {
+  border-color: var(--color-brand-300, #a59f97);
+  color: #172033;
+}
+
+.config-add-row {
+  justify-self: start;
+  margin-top: 8px;
+}
+
+/* Fixed | expression, on every field that can hold either. Small and above the
+   control rather than beside the label: it is a mode, and a mode belongs where
+   you can see which one you are in. */
+.config-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  align-content: start;
+}
+
+.config-field-mode {
+  display: flex;
+  gap: 2px;
+  justify-self: start;
+  padding: 2px;
+  border-radius: 0;
+  background: #eef2f8;
+}
+
+.config-field-mode button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 9px;
+  color: #63718a;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.config-field-mode button.selected {
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 1px 2px rgba(23, 32, 51, 0.08);
+}
+
+.config-input textarea.config-expression {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  min-height: 42px;
+}
+
+/* What there is to reference. Grouped by root because "what did the previous
+   step produce" is a different question from "what do I know about the call". */
+.expression-paths {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.expression-group > em {
+  display: block;
+  margin-bottom: 4px;
+  color: #8a95a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.expression-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.expression-group button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 3px 8px;
+  color: #172033;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.expression-group button:hover {
+  border-color: var(--color-brand-300, #a59f97);
+  background: var(--color-brand-50, #f5f3f1);
+}
+
+/* The value from a real call, beside the name it came from. */
+.expression-group button i {
+  overflow: hidden;
+  max-width: 130px;
+  color: #8a95a8;
+  font-style: normal;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The sentence explaining what to put in the field. It was carried on every
+   catalogue row and shown only as a placeholder, which disappears at the first
+   keystroke — exactly when it is still worth reading. */
+.config-help {
+  color: #8a95a8;
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .config-options {
@@ -2948,7 +3226,7 @@ button:disabled {
 .config-options button {
   min-height: 30px;
   border: 1px solid #dce4ef;
-  border-radius: 9px;
+  border-radius: 0;
   background: #fff;
   padding: 5px 9px;
   color: #65728a;
@@ -2976,7 +3254,7 @@ button:disabled {
   flex: 0 0 16px;
   place-items: center;
   border: 1px solid #cbd5e1;
-  border-radius: 5px;
+  border-radius: 0;
   background: #fff;
   color: #fff;
   transition:
@@ -2994,15 +3272,15 @@ button:disabled {
 }
 
 .config-options button:hover {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   color: #172033;
 }
 
 .config-options button.selected {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   background: #f4efff;
   color: #3c0c4f;
-  box-shadow: 0 0 0 2px rgba(185, 151, 255, 0.14);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.07);
 }
 
 .config-options button.selected .config-checkbox {
@@ -3025,7 +3303,7 @@ button:disabled {
 .inspector-done {
   min-width: 104px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 0 20px;
   font-size: 14px;
   font-weight: 500;
@@ -3058,7 +3336,7 @@ button:disabled {
 }
 
 .inspector-actions-trigger[aria-expanded="true"] {
-  border-color: #b997ff;
+  border-color: var(--color-brand-300, #a59f97);
   color: #172033;
 }
 
@@ -3078,7 +3356,7 @@ button:disabled {
   gap: 2px;
   min-width: 264px;
   border: 1px solid #dce4ef;
-  border-radius: 14px;
+  border-radius: 0;
   background: #fff;
   padding: 6px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
@@ -3091,7 +3369,7 @@ button:disabled {
   gap: 10px;
   width: 100%;
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: transparent;
   padding: 9px 10px;
   text-align: left;
@@ -3135,7 +3413,7 @@ button:disabled {
   align-items: center;
   gap: 4px;
   height: 28px;
-  border-radius: 999px;
+  border-radius: 0;
   padding: 0 11px;
   font-size: 11px;
   font-weight: 500;
@@ -3148,7 +3426,7 @@ button:disabled {
 .inspector-coding-status.queued,
 .inspector-coding-status.running {
   color: #4b1670;
-  border-color: #d9c9ff;
+  border-color: var(--color-brand-200, #d9d5d0);
   background: #f4efff;
 }
 .inspector-coding-status.succeeded {
@@ -3226,7 +3504,7 @@ button:disabled {
   grid-row: 1 / span 2;
   width: 38px;
   height: 38px;
-  border-radius: 12px;
+  border-radius: 0;
 }
 
 @media (max-width: 860px) {
@@ -3234,7 +3512,7 @@ button:disabled {
     right: 12px;
     max-width: none;
     flex-wrap: wrap;
-    border-radius: 24px;
+    border-radius: 0;
   }
 
   .title-pill {
@@ -3268,7 +3546,7 @@ button:disabled {
   font-weight: 500;
   color: #fff;
   padding: 2px 7px;
-  border-radius: 6px;
+  border-radius: 0;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
 }
 
@@ -3287,7 +3565,7 @@ button:disabled {
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(10px);
   border: 1px solid #dfe5ef;
-  border-radius: 999px;
+  border-radius: 0;
   box-shadow: 0 8px 24px rgba(31, 40, 58, 0.1);
   z-index: 12;
   font-size: 12px;
@@ -3332,7 +3610,7 @@ button:disabled {
   margin-left: 2px;
 }
 .collab-avatar-agent {
-  border-color: #ede9fe;
+  border-color: var(--color-brand-100, #ebe8e4);
 }
 .collab-avatar-agent svg {
   display: block;
@@ -3398,7 +3676,7 @@ button:disabled {
   height: 24px;
   min-width: 24px;
   padding: 0 8px;
-  border-radius: 999px;
+  border-radius: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3422,7 +3700,7 @@ button:disabled {
   align-items: center;
   gap: 6px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: 0;
   border: 1px solid #dce4ef;
   background: #fff;
   padding: 0 10px;
@@ -3448,7 +3726,7 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   height: 18px;
-  border-radius: 999px;
+  border-radius: 0;
   padding: 0 8px;
   background: #effaf3;
   border: 1px solid #bee7cf;
@@ -3545,7 +3823,7 @@ button:disabled {
 }
 .delivery-run {
   border: 1px solid #dce4ef;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 10px 12px;
   background: #fff;
 }
@@ -3583,4 +3861,715 @@ button:disabled {
   font-size: 13px;
   font-weight: 500;
   color: #172033;
+}
+
+/* The one action in this toolbar that changes what a caller reaches, so it is
+   the one that reads as a button rather than an icon. */
+.toolbar-publish {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 0;
+  background: #0f1115;
+  color: #fff;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 100ms linear;
+}
+
+.toolbar-publish:hover { opacity: 0.85; }
+.toolbar-publish:focus-visible { outline: 2px solid var(--node-color, #00cc8f); outline-offset: 2px; }
+
+/* --------------------------------------------------------------- Engine shape
+   Two mutually exclusive choices, in the toolbar beside the name.
+
+   A segmented pair rather than two loose buttons: they are alternatives, and a
+   reader should see which one is in force without reading both. Sized against
+   `.toolbar-publish` so the toolbar keeps one row height. */
+.engine-shape-switch {
+  display: inline-flex;
+  height: 32px;
+  padding: 3px;
+  /* The node's own colour, and dashed until it is selected.
+   *
+   * The border was a flat grey on every card, so the only thing telling one
+   * kind of node from another was the icon. Taking `--node-color` — the icon's
+   * colour — means the card and its icon say the same thing, and the style says
+   * which one you are on: dashed is the resting state, solid is selected. */
+  border: 1px dashed var(--node-color, #e7ebf2);
+  border-radius: 0;
+  background: #f4f6fa;
+}
+
+.engine-shape-switch button {
+  display: grid;
+  place-items: center;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #65728a;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 130ms ease,
+    color 130ms ease;
+}
+
+.engine-shape-switch button:hover {
+  color: #202940;
+}
+
+.engine-shape-switch button.selected {
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 1px 2px rgba(31, 40, 58, 0.12);
+}
+
+/* Armed to clear. Amber rather than red: nothing is destroyed until the second
+   press, and a red control invites a reader to avoid the button entirely. */
+.engine-shape-switch button.armed {
+  background: #fff5e6;
+  color: #b4690e;
+  box-shadow: inset 0 0 0 1px #f0d3a6;
+}
+
+/* Pre-flight. Quieter than Publish: it changes nothing, it only asks. */
+.toolbar-test {
+  height: 32px;
+  padding: 0 14px;
+  /* The node's own colour, and dashed until it is selected.
+   *
+   * The border was a flat grey on every card, so the only thing telling one
+   * kind of node from another was the icon. Taking `--node-color` — the icon's
+   * colour — means the card and its icon say the same thing, and the style says
+   * which one you are on: dashed is the resting state, solid is selected. */
+  border: 1px dashed var(--node-color, #e7ebf2);
+  border-radius: 0;
+  background: #fff;
+  color: #202940;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 130ms ease,
+    color 130ms ease;
+}
+
+.toolbar-test:hover:not(:disabled) {
+  border-color: #c9d3e2;
+}
+
+.toolbar-test:disabled {
+  color: #9aa3b5;
+  cursor: default;
+}
+
+/* Branch list — the keys a menu offers.
+   Editing these changes the node's shape on the board, so the rows are laid
+   out to read as a list of paths rather than as a form: the key first and
+   narrow, what it means beside it, and the remove control last. */
+.config-help {
+  margin: 0;
+  color: #7d879b;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.branch-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.branch-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
+}
+
+.branch-row select,
+.branch-row input {
+  height: 34px;
+  min-width: 0;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 0 9px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  outline: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.branch-row select {
+  /* Digits line up as a column when every row uses the same advance. */
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.branch-row select:focus,
+.branch-row input:focus {
+  border-color: var(--color-brand-300, #a59f97);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+}
+
+/* A key used twice would give two ports one address. Said in the row rather
+   than in a message somewhere else on the screen. */
+.branch-row.duplicate select {
+  border-color: #d98a8a;
+  box-shadow: 0 0 0 3px rgba(217, 138, 138, 0.14);
+}
+
+.branch-row button {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: #97a1b3;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.branch-row button:hover {
+  background: #fdf1f1;
+  color: #c05a5a;
+}
+
+.branch-add {
+  align-self: start;
+  min-height: 30px;
+  border: 1px dashed #cdd7e5;
+  border-radius: 0;
+  background: #fff;
+  padding: 5px 11px;
+  color: #65728a;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.branch-add:hover:not(:disabled) {
+  border-color: var(--color-brand-300, #a59f97);
+  color: #4b3a7a;
+}
+
+.branch-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ── The node view ──────────────────────────────────────────────────────────
+   Integrations only. A step that transforms data cannot be configured blind:
+   what reaches it and what it produced are half the question, and the small
+   panel has room for neither. */
+.ndv {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  background: rgba(23, 32, 51, 0.28);
+  padding: 24px;
+}
+
+.ndv-frame {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* The node's colour down the whole dialog, not just its header. It was a
+     `border-left` on the header, so it stopped where the panes began and read
+     as a decoration on the title rather than as the dialog belonging to a
+     node. Set from the header's own custom property, which the header still
+     carries. */
+  border-left: 4px solid var(--node-color, #dce4ef);
+  width: min(1180px, 100%);
+  height: min(720px, 100%);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(23, 32, 51, 0.22);
+  overflow: hidden;
+}
+
+/* The header.
+ *
+ * Square, like every control in this app — `vokoo-brand.css` sets
+ * `--radius-lg: 0` deliberately and notes that chasing wrappers by class "is
+ * how half a UI ends up square and half rounded". The recovered editor's
+ * stylesheet predates that decision and this block does not.
+ *
+ * The tint and the 2px rule are the node's own colour, so a Set node's dialog
+ * does not look like a webhook's. The left rule repeats it at full strength:
+ * a wash alone is easy to miss at a glance, an edge is not.
+ */
+.ndv-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  /* One pixel, not two. The left edge already carries the node's colour down
+     the whole dialog at full weight — a heavy rule under the title as well made
+     the header read as a separate panel rather than the top of this one. */
+  border-bottom: 1px solid var(--node-color, #dce4ef);
+  background: var(--node-bg, #f7f9fc);
+  /* Generous above the title and a little less below it, so the block sits
+     optically centred rather than pinned to the top edge. */
+  padding: 18px 18px 16px;
+}
+
+.ndv-titles {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ndv-name,
+.ndv-description {
+  min-width: 0;
+  width: 100%;
+  /* The border is always there and usually the background colour, so the field
+     does not jump by two pixels the first time it is hovered. */
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 2px 6px;
+  margin-left: -6px;
+  color: #172033;
+  font: inherit;
+  outline: none;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.ndv-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+
+/* Muted and borderless until touched, so the header reads as a title rather
+   than a form. */
+.ndv-description { color: #8a95a8; font-size: 12px; }
+.ndv-description::placeholder { color: #b6bfcc; }
+
+.ndv-name:hover,
+.ndv-description:hover { border-color: #e6ecf5; }
+
+.ndv-name:focus,
+.ndv-description:focus { border-color: var(--color-brand-300, #a59f97); background: #fff; color: #172033; }
+
+/* The kind of node, deliberately unlike the name above it and the description
+   below it: uppercase, small, on a tint. It was plain grey text at the
+   description's size and colour, on the far right — so the two read as the
+   same thing said twice. */
+/* A tag, not a lozenge: square, bordered, and clearly a label rather than
+   something to press. */
+.ndv-type {
+  flex: 0 0 auto;
+  align-self: center;
+  border: 1px solid var(--node-color, #dce4ef);
+  border-radius: 0;
+  background: transparent;
+  padding: 1px 7px;
+  color: var(--node-color, #63718a);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ndv-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Sized to what is typed, so the tag sits beside the name instead of being
+   pushed to the far edge by an input stretching the whole row. */
+.ndv-title-row .ndv-name {
+  flex: 0 1 auto;
+  width: auto;
+  field-sizing: content;
+  min-width: 6ch;
+  max-width: 34ch;
+}
+
+.ndv-close {
+  align-self: start;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px;
+  color: #63718a;
+  cursor: pointer;
+}
+
+.ndv-close:hover { background: #f2f5fa; color: #172033; }
+
+/* Three panes, the middle one wider: it is the one being edited. A trigger has
+   no Input — nothing precedes it — so it gets two. */
+.ndv-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.ndv-body[data-panes="2"] {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+}
+
+.ndv-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid #e6ecf5;
+}
+
+.ndv-pane:last-child { border-right: 0; }
+.ndv-input, .ndv-output { background: #fbfcfe; }
+
+/* A fixed height, not a minimum. The Output head carries a button and the other
+   two do not, so a minimum let one pane's divider sit five pixels below the
+   others — three rules that should read as one line across the dialog. */
+.ndv-pane-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  box-sizing: border-box;
+  height: 40px;
+  border-bottom: 1px solid #e6ecf5;
+  padding: 0 13px;
+}
+
+.ndv-pane-head b {
+  color: #63718a;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ndv-pane-head span {
+  color: #8a95a8;
+  font-size: 11px;
+}
+
+.ndv-test {
+  margin-left: auto;
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  line-height: 1.4;
+  padding: 3px 10px;
+  color: #172033;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ndv-test:hover:not(:disabled) { border-color: var(--color-brand-300, #a59f97); }
+.ndv-test:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* One body per pane. A pane is `head + body`, and a third child would land in
+   an implicit row that stretches — which pushed the Output pane's result badge
+   and its fields to opposite ends of the column. */
+.ndv-params-body,
+.ndv-pane-body {
+  overflow: auto;
+  padding: 13px;
+}
+
+.ndv-params { background: #fff; }
+.ndv-params-body { display: grid; gap: 12px; align-content: start; }
+
+/* The inspector's own grid is two columns because the panel is wide and short.
+   Here the pane is already one column of three, and two columns put a field's
+   label beside another field's control. */
+.ndv-params-body .inspector-config-grid { grid-template-columns: minmax(0, 1fr); }
+.ndv-params-body .inspector-scroll { overflow: visible; }
+
+.ndv-hint {
+  margin: 0;
+  color: #8a95a8;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ndv-problem {
+  margin: 0 0 8px;
+  border-radius: 0;
+  background: #fff3f3;
+  padding: 8px 10px;
+  color: #96323d;
+  font-size: 12px;
+}
+
+.ndv-result {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+
+.ndv-result span:first-child {
+  border-radius: 0;
+  padding: 2px 9px;
+  font-weight: 600;
+}
+
+.ndv-result .ok { background: #e8f7ee; color: #1f7a45; }
+.ndv-result .not-ok { background: #fdeceb; color: #96323d; }
+.ndv-result span:last-child { color: #8a95a8; }
+
+/* Names and values, not a wall of braces. */
+.ndv-fields { display: grid; gap: 1px; margin: 0; background: #e6ecf5; border-radius: 0; overflow: hidden; }
+.ndv-fields > div { display: grid; grid-template-columns: minmax(90px, 38%) minmax(0, 1fr); gap: 10px; background: #fff; padding: 7px 10px; }
+.ndv-fields dt { color: #63718a; font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.ndv-fields dd { margin: 0; color: #172033; font-size: 12px; overflow-wrap: anywhere; }
+
+/* The data on the left: what exists, and the only place a value comes from.
+   Clicking a name puts it into whichever parameter last had focus. */
+.ndv-browser { margin-bottom: 14px; }
+
+/* The group's header: which node produced this, and the root taken whole. */
+/* The group header: which node produced this data. Filled and bounded, because
+   a pane holding two or three of these needs each one to read as the start of a
+   group rather than as another row of the list under it. */
+.ndv-browser-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  border: 1px solid #dbe3f0;
+  border-radius: 0;
+  background: #eef2f8;
+  padding: 1px 3px 1px 1px;
+}
+
+.ndv-browser-toggle {
+  display: flex;
+  gap: 6px;
+  /* Centred, not baseline: an inline-flex icon on a baseline carries a descent,
+     and the caret span measured 31px around an 11px glyph. */
+  align-items: center;
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 3px 6px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ndv-browser-toggle:hover { background: rgba(255, 255, 255, 0.7); }
+
+/* Sized in `em` by the shim's wrapper, so the box sets the size. */
+/* Room for the glyph. A 12px box around an 11px icon clipped the chevron's
+   right arm, so the expanded state read as a tick rather than a caret — which
+   is a different symbol, not a smaller one. The shim sizes its icons in `em`,
+   so the box has to be larger than the font size, not equal to it. */
+.ndv-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  overflow: visible;
+  color: #8a95a8;
+  font-size: 11px;
+}
+
+/* The node's name is what you look for; the root is how you write it. */
+.ndv-browser-toggle b {
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ndv-browser-toggle code {
+  color: #8a95a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.ndv-browser-root {
+  flex: 0 0 auto;
+  border: 1px dashed #c2cee0;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.75);
+  line-height: 1.4;
+  padding: 2px 9px;
+  color: #63718a;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: grab;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.ndv-browser-root:active { cursor: grabbing; }
+.ndv-browser-root:hover { border-color: var(--color-brand-300, #a59f97); background: var(--color-brand-50, #f5f3f1); color: var(--color-brand-600, #000000); }
+
+.ndv-browser dl { display: grid; gap: 1px; margin: 0; background: #e6ecf5; border-radius: 0; overflow: hidden; }
+.ndv-browser dl > div { display: grid; grid-template-columns: minmax(80px, 40%) minmax(0, 1fr); gap: 8px; align-items: baseline; background: #fff; }
+
+/* `dl` scoped: this is the field rows. Unscoped it also matched the group's
+   own toggle button and overrode its padding, which is what made the header
+   taller than anything in it. */
+.ndv-browser dl button {
+  border: 0;
+  border-right: 1px solid #eef2f8;
+  background: transparent;
+  padding: 7px 9px;
+  color: #172033;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.ndv-browser dl button { cursor: grab; }
+.ndv-browser dl button:active { cursor: grabbing; }
+.ndv-browser dl button:hover { background: var(--color-brand-50, #f5f3f1); color: var(--color-brand-600, #000000); }
+
+.ndv-browser span {
+  padding: 7px 9px 7px 0;
+  color: #63718a;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ndv-json {
+  margin: 0;
+  border-radius: 0;
+  background: #f7f9fc;
+  padding: 10px;
+  color: #172033;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.ndv-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  border-top: 1px solid #e6ecf5;
+  padding: 11px 14px;
+}
+
+.ndv-footer button {
+  border: 1px solid #dce4ef;
+  border-radius: 0;
+  background: #fff;
+  padding: 7px 15px;
+  color: #172033;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ndv-footer button.primary { border-color: #2b1a55; background: #2b1a55; color: #fff; }
+
+@media (max-width: 900px) {
+  .ndv-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
+  .ndv-pane { border-right: 0; border-bottom: 1px solid #e6ecf5; }
+}
+
+
+/* While a value is in flight, every field that can take one says so. Without
+   this a drag has no target: the pointer is carrying something and nothing on
+   screen looks willing to receive it. */
+body[data-dragging-value] .config-field {
+  border-radius: 0;
+  outline: 1px dashed #c9b4f2;
+  outline-offset: 3px;
+}
+
+body[data-dragging-value] .config-field:hover {
+  outline: 2px solid var(--color-brand-300, #a59f97);
+  background: var(--color-brand-50, #f5f3f1);
+}
+
+.ndv-browser-root { cursor: grab; }
+.ndv-browser-root:active { cursor: grabbing; }
+
+
+/* No keyframes here.
+ *
+ * `fa-spin` is Font Awesome's, and every one of its animations has honoured
+ * `prefers-reduced-motion` since v6 — so a hand-written rotation plus its own
+ * media query was reimplementing the library, and would have drifted from it.
+ * The class goes on the `<svg>`; `--fa-animation-duration` tunes it if needed.
+ */
+.ndv-test {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Font Awesome's own knob rather than a re-declared `animation`. Its default is
+   two seconds, which reads as sluggish next to a button that says "Running". */
+.ndv-test svg {
+  --fa-animation-duration: 0.9s;
+}
+
+/* 2. The stray divider.
+ *
+ * `.inspector-scroll` carries a `border-top` so the small panel can separate
+ * its fixed header from its scrolling body. In the node view the pane head
+ * already does that, so it drew a second line a few pixels lower that lined up
+ * with nothing. Its `max-height` is for the panel too — here the pane is the
+ * thing that scrolls. */
+.ndv-params-body .inspector-scroll {
+  overflow: visible;
+  border-top: 0;
+  max-height: none;
+  gap: 0;
+}
+
+/* 3. A focus ring that belongs to this design rather than the browser's. */
+.ndv-browser-toggle:focus-visible,
+.ndv-browser-root:focus-visible,
+.ndv-browser dl button:focus-visible {
+  outline: 2px solid var(--color-brand-300, #a59f97);
+  outline-offset: 1px;
+  border-radius: 0;
 }
