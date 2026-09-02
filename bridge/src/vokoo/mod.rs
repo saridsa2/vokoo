@@ -15,6 +15,7 @@
 //! republished mid-call therefore does not change a call in progress: the
 //! caller finishes on the graph they started with.
 
+pub mod asterisk;
 pub mod billing;
 pub mod compare;
 pub mod control;
@@ -33,6 +34,7 @@ pub mod setvalues;
 pub mod webhook;
 pub mod tools;
 
+pub use asterisk::{PendingCall, PendingCalls};
 pub use billing::PostgrestBillingStorage;
 pub use control::{CallControl, CallHandle};
 pub use engine::{build_realtime, build_relay, Relay, RealtimeRequest, StageContext, ThinkingStage};

@@ -47,7 +47,9 @@ use rustvani::frames::{
 use rustvani::processors::{
     llm_assistant_aggregator::LLMAssistantAggregator, llm_user_aggregator::LLMUserAggregator,
 };
-use rustvani::serializers::{CallCapture, KooKooFrameSerializer, KooKooInputParams, KooKooStart};
+use rustvani::serializers::{
+    AudioSocketFrameSerializer, CallCapture, KooKooFrameSerializer, KooKooInputParams, KooKooStart,
+};
 use rustvani::services::{
     GeminiLiveConfig, GeminiLiveSession,
     RealtimeControls, RealtimeEvent, RealtimeProcessor, RealtimeSession,
@@ -55,6 +57,9 @@ use rustvani::services::{
     OpenAILLMHandler,
 };
 use rustvani::transport::TransportParams;
+use rustvani::transport::audiosocket::{
+    AudioSocketHandshake, AudioSocketParams, AudioSocketTransport, UUID_WAIT, await_uuid,
+};
 use rustvani::transport::websocket::{WebSocketParams, WebSocketTransport};
 use rustvani::{
     FrameKind, PipelineParams, PipelineTask, SileroVadNative, VadParams, shared_context,
@@ -82,6 +87,16 @@ const _: () = assert!(
      serializer buffers half of every chunk and outbound audio falls behind"
 );
 
+/// AudioSocket's pairing of the same two constants, with the same failure if
+/// they drift: 2 chunks = 20 ms = 160 samples at 8 kHz = one AudioSocket frame.
+const AUDIOSOCKET_OUT_10MS_CHUNKS: u32 = 2;
+
+const _: () = assert!(
+    rustvani::serializers::AUDIOSOCKET_FRAME_SAMPLES == 80 * AUDIOSOCKET_OUT_10MS_CHUNKS as usize,
+    "AUDIOSOCKET_FRAME_SAMPLES must equal 80 * AUDIOSOCKET_OUT_10MS_CHUNKS, or the \
+     serializer buffers part of every chunk and outbound audio falls behind"
+);
+
 const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 static CALL_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -100,6 +115,11 @@ struct AppState {
     /// it and the socket handler. A menu is asked on one HTTP request and
     /// answered on another, so the answer cannot live in either.
     keypresses: rustvani::vokoo::Keypresses,
+    /// Calls Asterisk has announced and is about to stream. Written by
+    /// `/asterisk/incoming`, read by the AudioSocket listener — the same
+    /// two-requests-one-fact shape as `keypresses`, because AudioSocket carries
+    /// a uuid and no call metadata at all.
+    pending: rustvani::vokoo::PendingCalls,
 }
 
 struct AgentConfig {
@@ -1091,8 +1111,182 @@ async fn kookoo_webhook(
     }
 }
 
+// ---------------------------------------------------------------------------
+// A call, whichever way it arrived
+// ---------------------------------------------------------------------------
+
+/// What is known about a call before a pipeline is built for it.
+///
+/// KooKoo says this in a `start` event on the WebSocket; Asterisk says it in an
+/// HTTP announcement before the AudioSocket connects. Everything downstream —
+/// flow resolution, the call record, billing, the summary — needs the same four
+/// facts and does not care which carrier supplied them.
+struct Arrival {
+    /// The call's identity: KooKoo's ucid, or the uuid the dialplan generated.
+    /// Used as the primary key of the call everywhere.
+    id: String,
+    /// The number that was called, which is what resolves a flow.
+    did: String,
+    caller: String,
+    /// How it arrived. Goes in the log line and the summary, because a silent
+    /// call is diagnosed very differently on the two paths.
+    channel: &'static str,
+    /// Whatever else the carrier said. Free-form because the two carriers say
+    /// entirely different things and neither set is worth a struct.
+    headers: serde_json::Value,
+}
+
+/// A socket a call has arrived on, before its handshake has been read.
+enum Incoming {
+    Kookoo(WebSocket),
+    Asterisk(tokio::net::TcpStream),
+}
+
+/// The transport and the socket it will run on, kept together.
+///
+/// The pipeline needs `input()` and `output()` while the call is being built
+/// and `run` once at the end, and those three are the *only* things that differ
+/// between a KooKoo call and a WhatsApp one. Making them an enum keeps the
+/// KooKoo path exactly as it was — same type, same calls — rather than making
+/// a thousand lines of working call handling generic over a wire.
+enum CallWire {
+    Kookoo { transport: WebSocketTransport, socket: WebSocket },
+    Asterisk {
+        transport: AudioSocketTransport,
+        stream: tokio::net::TcpStream,
+        handshake: AudioSocketHandshake,
+    },
+}
+
+impl CallWire {
+    fn input(&self) -> FrameProcessor {
+        match self {
+            Self::Kookoo { transport, .. } => transport.input(),
+            Self::Asterisk { transport, .. } => transport.input(),
+        }
+    }
+
+    fn output(&self) -> FrameProcessor {
+        match self {
+            Self::Kookoo { transport, .. } => transport.output(),
+            Self::Asterisk { transport, .. } => transport.output(),
+        }
+    }
+
+    async fn run(self, push_tx: tokio::sync::mpsc::Sender<(Frame, FrameDirection)>) {
+        match self {
+            Self::Kookoo { transport, socket } => transport.run_socket(socket, push_tx).await,
+            Self::Asterisk { transport, stream, handshake } => {
+                transport.run_socket(stream, handshake, push_tx).await
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Asterisk
+// ---------------------------------------------------------------------------
+
+/// The dialplan announcing a call it is about to stream.
+///
+/// Answers with the uuid on acceptance and an empty body on refusal, because
+/// the dialplan's only test is whether the body is empty — `GotoIf($["${TOLD}"
+/// = ""]?nobridge)`. A refused call is hung up with cause 38 rather than
+/// connected to a socket that would never be claimed.
+async fn asterisk_incoming(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Form(form): axum::extract::Form<AsteriskIncoming>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    // Same gate as pre-flight, and for a stronger reason: this one decides
+    // which flow a caller reaches. The bridge's HTTP port is public — /kookoo
+    // has to be — so "it is on loopback" is not a check.
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        log::warn!("[asterisk] refused an announcement with a bad token");
+        return (StatusCode::FORBIDDEN, String::new());
+    }
+
+    if form.uuid.is_empty() {
+        log::warn!("[asterisk] announcement with no uuid, refused");
+        return (StatusCode::BAD_REQUEST, String::new());
+    }
+
+    let call = rustvani::vokoo::PendingCall {
+        uuid: form.uuid.clone(),
+        did: form.to.clone(),
+        caller: form.from.clone(),
+        channel: if form.channel.is_empty() { "asterisk".into() } else { form.channel.clone() },
+        wacid: form.wacid.filter(|w| !w.is_empty()),
+    };
+
+    log::info!(
+        "[asterisk] {} call to {} from {} — uuid {}",
+        call.channel, call.did, call.caller, call.uuid,
+    );
+    state.pending.announce(call);
+
+    (StatusCode::OK, form.uuid)
+}
+
+#[derive(serde::Deserialize)]
+struct AsteriskIncoming {
+    uuid: String,
+    /// The number that was called. `to` rather than `did` because that is what
+    /// the dialplan calls it, and a name that has to be translated on the way
+    /// through is a name that will be translated wrongly one day.
+    #[serde(default)]
+    to: String,
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    channel: String,
+    #[serde(default)]
+    wacid: Option<String>,
+}
+
+/// Accept AudioSocket connections for the life of the process.
+///
+/// Asterisk is the TCP client here, so this is a listener rather than a dialler,
+/// and every connection is a call that has already been answered — the caller is
+/// on the line while this runs.
+async fn audiosocket_listener(bind: String, state: AppState) {
+    let listener = match tokio::net::TcpListener::bind(&bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            // Not fatal: KooKoo calls keep working. Loud, because every
+            // WhatsApp call will now reach a dialplan line that connects to
+            // nothing.
+            log::error!("[audiosocket] cannot bind {bind}: {e} — WhatsApp calls will not connect");
+            return;
+        }
+    };
+    log::info!("[audiosocket] listening on {bind}");
+
+    loop {
+        match listener.accept().await {
+            Ok((stream, peer)) => {
+                // Nagle would hold a 20 ms frame waiting for company. On a call
+                // that is added latency for no benefit.
+                let _ = stream.set_nodelay(true);
+                log::debug!("[audiosocket] connection from {peer}");
+                let state = state.clone();
+                tokio::spawn(async move {
+                    handle_call(Incoming::Asterisk(stream), state).await;
+                });
+            }
+            Err(e) => {
+                log::warn!("[audiosocket] accept failed: {e}");
+            }
+        }
+    }
+}
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_call(socket, state))
+    ws.on_upgrade(move |socket| handle_call(Incoming::Kookoo(socket), state))
 }
 
 async fn await_kookoo_start(socket: &mut WebSocket) -> Option<(KooKooStart, String)> {
@@ -1116,48 +1310,107 @@ async fn await_kookoo_start(socket: &mut WebSocket) -> Option<(KooKooStart, Stri
     }
 }
 
-async fn handle_call(mut socket: WebSocket, state: AppState) {
+/// The socket and its serializer, held from the handshake until the transport
+/// is built — which is several hundred lines later, after the flow has decided
+/// what kind of pipeline this call needs.
+enum Wire {
+    Kookoo { socket: WebSocket, serializer: KooKooFrameSerializer },
+    Asterisk { stream: tokio::net::TcpStream, handshake: AudioSocketHandshake },
+}
+
+async fn handle_call(incoming: Incoming, state: AppState) {
     let call = CALL_SEQ.fetch_add(1, Ordering::Relaxed);
     let cfg = state.cfg.clone();
 
-    let Some((start, start_raw)) = await_kookoo_start(&mut socket).await else {
-        log::warn!("[call={call}] no start event — dropping connection");
-        return;
+    // Each carrier's handshake, and nothing else that differs between them.
+    // Everything below this block is one call path.
+    let (arrival, mut wire, capture) = match incoming {
+        Incoming::Kookoo(mut socket) => {
+            let Some((start, start_raw)) = await_kookoo_start(&mut socket).await else {
+                log::warn!("[call={call}] no start event — dropping connection");
+                return;
+            };
+
+            let mut serializer =
+                KooKooFrameSerializer::from_start(&start, KooKooInputParams::default());
+
+            let capture_dir = env_or("CAPTURE_DIR", "/opt/vokoo/captures");
+            let capture = match std::fs::create_dir_all(&capture_dir)
+                .and_then(|_| CallCapture::create(format!("{capture_dir}/{}.jsonl", start.ucid)))
+            {
+                Ok(c) => {
+                    let c = Arc::new(c);
+                    c.note_raw(&start_raw);
+                    serializer.set_capture(c.clone());
+                    Some(c)
+                }
+                Err(e) => {
+                    log::warn!("[call={call}] capture disabled: {e}");
+                    None
+                }
+            };
+
+            let arrival = Arrival {
+                id: start.ucid.clone(),
+                did: start.did.clone().unwrap_or_default(),
+                caller: start.caller.clone().unwrap_or_default(),
+                channel: "kookoo",
+                headers: start.headers.clone(),
+            };
+            (arrival, Wire::Kookoo { socket, serializer }, capture)
+        }
+
+        Incoming::Asterisk(mut stream) => {
+            let Some(handshake) = await_uuid(&mut stream, UUID_WAIT).await else {
+                log::warn!("[call={call}] AudioSocket sent no uuid — dropping connection");
+                return;
+            };
+
+            // The uuid is the call's only credential, and one announcement
+            // serves one socket. An unannounced uuid is not a call this bridge
+            // knows about, so it gets nothing — building a pipeline for it
+            // would mean answering a call nobody told us about.
+            let Some(pending) = state.pending.claim(&handshake.uuid) else {
+                log::warn!(
+                    "[call={call}] AudioSocket uuid {} was never announced — dropping",
+                    handshake.uuid,
+                );
+                return;
+            };
+
+            let arrival = Arrival {
+                id: pending.uuid.clone(),
+                did: pending.did.clone(),
+                caller: pending.caller.clone(),
+                channel: "whatsapp",
+                headers: json!({
+                    "channel": pending.channel,
+                    "wacid":   pending.wacid,
+                }),
+            };
+            // No capture: `CallCapture` logs a JSON wire, and this one is PCM.
+            // A recording of a WhatsApp call is Asterisk's `MixMonitor` to
+            // start, not this.
+            (arrival, Wire::Asterisk { stream, handshake }, None)
+        }
     };
 
     log::info!(
-        "[call={call}] start ucid={} did={} caller={} operator={} circle={}",
-        start.ucid,
-        start.did.as_deref().unwrap_or("-"),
-        start.caller.as_deref().unwrap_or("-"),
-        start.headers.get("operator").and_then(|v| v.as_str()).unwrap_or("-"),
-        start.headers.get("circle").and_then(|v| v.as_str()).unwrap_or("-"),
+        "[call={call}] {} id={} did={} caller={} {}",
+        arrival.channel,
+        arrival.id,
+        if arrival.did.is_empty() { "-" } else { &arrival.did },
+        if arrival.caller.is_empty() { "-" } else { &arrival.caller },
+        arrival.headers,
     );
 
     let t0 = std::time::Instant::now();
-    let mut serializer = KooKooFrameSerializer::from_start(&start, KooKooInputParams::default());
-
-    let capture_dir = env_or("CAPTURE_DIR", "/opt/vokoo/captures");
-    let capture = match std::fs::create_dir_all(&capture_dir)
-        .and_then(|_| CallCapture::create(format!("{capture_dir}/{}.jsonl", start.ucid)))
-    {
-        Ok(c) => {
-            let c = Arc::new(c);
-            c.note_raw(&start_raw);
-            serializer.set_capture(c.clone());
-            Some(c)
-        }
-        Err(e) => {
-            log::warn!("[call={call}] capture disabled: {e}");
-            None
-        }
-    };
 
     // A number points at a flow. Resolved once, here, and not read again: a flow
     // republished mid-call must not change a call in progress, so the caller
     // finishes on the graph they started with.
-    let did = start.did.clone().unwrap_or_default();
-    let caller = start.caller.clone().unwrap_or_default();
+    let did = arrival.did.clone();
+    let caller = arrival.caller.clone();
     let flow =
         rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, &did).await;
 
@@ -1167,7 +1420,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     let record = Arc::new(rustvani::vokoo::CallRecord::open(
         &cfg.supabase_url,
         &cfg.service_key,
-        &start.ucid,
+        &arrival.id,
         &did,
         &caller,
         flow.as_ref().map(|f| f.id.as_str()),
@@ -1177,7 +1430,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     let control = flow.as_ref().map(|f| {
         rustvani::vokoo::CallControl::new(
             rustvani::vokoo::CallHandle {
-                ucid: start.ucid.clone(),
+                ucid: arrival.id.clone(),
                 did: did.clone(),
                 caller: caller.clone(),
                 org_id: f.org_id.clone(),
@@ -1196,7 +1449,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             log::info!("[call={call}] flow: {}", f.name);
             Some(
                 rustvani::vokoo::FlowRunner::new(f, c)
-                    .already_answered(state.keypresses.all(&start.ucid)),
+                    .already_answered(state.keypresses.all(&arrival.id)),
             )
         }
         _ => None,
@@ -1460,31 +1713,49 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         None
     };
 
-    let transport = WebSocketTransport::new(
-        &format!("KooKooTransport-{call}"),
-        WebSocketParams {
-            transport: TransportParams {
-                audio_in_enabled: true,
-                audio_in_sample_rate: Some(PIPELINE_SAMPLE_RATE),
-                audio_in_channels: 1,
-                audio_in_passthrough: true,
-                audio_in_stream_on_start: true,
-                audio_out_enabled: true,
-                audio_out_sample_rate: Some(PIPELINE_SAMPLE_RATE),
-                audio_out_10ms_chunks: AUDIO_OUT_10MS_CHUNKS,
-                vad_analyzer: vad,
-                vad_params: VadParams {
-                    // 8 kHz telephony is narrowband and quiet; gate on VAD
-                    // confidence rather than raw volume.
-                    confidence: 0.45,
-                    min_volume: 0.0,
-                    ..VadParams::default()
-                },
-                ..TransportParams::default()
-            },
+    // One set of audio parameters for both wires. Both carriers deliver 8 kHz
+    // narrowband and both serializers resample to the pipeline's rate, so the
+    // VAD sees the same signal either way — the only field that differs is the
+    // outbound chunk size, which is paired with each serializer's frame size by
+    // a compile-time assertion above.
+    let audio_params = |chunks: u32| TransportParams {
+        audio_in_enabled: true,
+        audio_in_sample_rate: Some(PIPELINE_SAMPLE_RATE),
+        audio_in_channels: 1,
+        audio_in_passthrough: true,
+        audio_in_stream_on_start: true,
+        audio_out_enabled: true,
+        audio_out_sample_rate: Some(PIPELINE_SAMPLE_RATE),
+        audio_out_10ms_chunks: chunks,
+        vad_analyzer: vad.clone(),
+        vad_params: VadParams {
+            // 8 kHz telephony is narrowband and quiet; gate on VAD confidence
+            // rather than raw volume.
+            confidence: 0.45,
+            min_volume: 0.0,
+            ..VadParams::default()
         },
-    );
-    transport.set_serializer(Box::new(serializer));
+        ..TransportParams::default()
+    };
+
+    let transport = match wire {
+        Wire::Kookoo { socket, serializer } => {
+            let transport = WebSocketTransport::new(
+                &format!("KooKooTransport-{call}"),
+                WebSocketParams { transport: audio_params(AUDIO_OUT_10MS_CHUNKS) },
+            );
+            transport.set_serializer(Box::new(serializer));
+            CallWire::Kookoo { transport, socket }
+        }
+        Wire::Asterisk { stream, handshake } => {
+            let transport = AudioSocketTransport::new(
+                &format!("AudioSocketTransport-{call}"),
+                AudioSocketParams { transport: audio_params(AUDIOSOCKET_OUT_10MS_CHUNKS) },
+            );
+            transport.set_serializer(Box::new(AudioSocketFrameSerializer::new()));
+            CallWire::Asterisk { transport, stream, handshake }
+        }
+    };
 
     // Faults raised while the call is up. Small: a call has one fault worth
     // acting on, and the loop breaks on the first.
@@ -1520,7 +1791,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             let mut metadata = std::collections::HashMap::new();
             metadata.insert("org_id".to_string(), flow.as_ref().map(|f| f.org_id.clone()).unwrap_or_default());
             metadata.insert("did".to_string(), did.clone());
-            metadata.insert("ucid".to_string(), start.ucid.clone());
+            metadata.insert("ucid".to_string(), arrival.id.clone());
             if let Some(id) = billed_agent_id.as_ref() {
                 metadata.insert("agent_id".to_string(), id.clone());
             }
@@ -1647,7 +1918,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                     &cfg.supabase_url,
                     &cfg.service_key,
                     &state.handovers,
-                    &start.ucid,
+                    &arrival.id,
                     &did,
                     &caller,
                     rustvani::vokoo::Cause::EngineFailed,
@@ -1723,7 +1994,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                             &cfg.supabase_url,
                             &cfg.service_key,
                             &state.handovers,
-                            &start.ucid,
+                            &arrival.id,
                             &did,
                             &caller,
                             rustvani::vokoo::Cause::EngineFailed,
@@ -1891,7 +2162,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         });
     }
 
-    let socket_fut = transport.run_socket(socket, push_tx);
+    let socket_fut = transport.run(push_tx);
     let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode || relay_engine.is_some())
         .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
     let task_fut = task.run(system_clock(), observer);
@@ -2100,7 +2371,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             &cfg.supabase_url,
             &cfg.service_key,
             &state.handovers,
-            &start.ucid,
+            &arrival.id,
             &did,
             &caller,
             cause,
@@ -2149,11 +2420,13 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     log::info!(
         "[call={call}] CALL_SUMMARY {}",
         serde_json::json!({
-            "ucid": start.ucid,
-            "did": start.did,
-            "caller": start.caller,
-            "operator": start.headers.get("operator"),
-            "circle": start.headers.get("circle"),
+            "ucid": arrival.id,
+            "did": arrival.did,
+            "caller": arrival.caller,
+            // Which wire this call came in on. First thing to read when a call
+            // was silent, because the two paths fail in different places.
+            "channel": arrival.channel,
+            "headers": arrival.headers,
             "mode": if relay_engine.is_some() {
                 "relay"
             } else if realtime_mode {
@@ -2184,6 +2457,7 @@ async fn main() {
         cfg: cfg.clone(),
         handovers: rustvani::vokoo::Handovers::new(),
         keypresses: rustvani::vokoo::Keypresses::new(),
+        pending: rustvani::vokoo::PendingCalls::new(),
     };
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 
@@ -2193,6 +2467,7 @@ async fn main() {
         .route("/flow/dryrun", post(flow_dry_run))
         .route("/catalogue/refresh", post(catalogue_refresh))
         .route("/kookoo", any(kookoo_webhook))
+        .route("/asterisk/incoming", post(asterisk_incoming))
         .route("/ws", get(ws_handler))
         .with_state(state.clone());
 
@@ -2213,6 +2488,13 @@ async fn main() {
         );
         log::info!("[discovery] refreshing the catalogue every {refresh_hours}h");
     }
+
+    // WhatsApp calls arrive here, from Asterisk on the same box. Loopback by
+    // default and deliberately: AudioSocket is unencrypted PCM, so this hop
+    // must never cross a network — which is the reason Asterisk runs on this
+    // machine rather than beside the rest of the telephony.
+    let audiosocket_bind = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
+    tokio::spawn(audiosocket_listener(audiosocket_bind, state.clone()));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
