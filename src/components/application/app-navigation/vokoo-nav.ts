@@ -1,68 +1,94 @@
 import {
     IconAgents,
-    IconBoards,
+    IconCallFlows,
     IconCallLogs,
-    IconChatLogs,
     IconEvals,
     IconFiles,
-    IconIssues,
+    IconIntegrations,
     IconLock,
     IconMembers,
-    IconMonitors,
-    IconNotifiers,
     IconOrganization,
     IconPhoneNumbers,
-    IconSessionLogs,
+    IconShapes,
     IconSquads,
-    IconTestSuites,
     IconTools,
     IconVoiceLibrary,
-    Stars02,
 } from "@/components/icons";
 import type { NavItemType } from "./config";
 
 /**
  * Sidebar structure, transcribed from the reference console.
  *
- * Group order and membership are deliberate, not alphabetical: BUILD is what
- * you configure, TEST is what you check it against, OBSERVE is what actually
- * happened. Routes match the Rust API's resource allowlist (`docs/ROUTES.md`),
- * so a nav entry and its endpoint cannot drift apart.
+ * Group order and membership are deliberate, not alphabetical, and each heading
+ * is a verb for what you do there:
+ *
+ *   COMPOSE    draw what happens — during a call, and after one
+ *   BUILD      what the agent is: its prompt, skills, tools, documents
+ *   CONFIGURE  what it runs on: a number, an engine, a provider key
+ *   OBSERVE    what actually happened
+ *   MANAGE     who can do any of it
+ *
+ * The line between BUILD and CONFIGURE is the one worth keeping: an agent and a
+ * provider key used to sit side by side under one heading, and they are not the
+ * same kind of thing at all — one is the product, the other is a credential.
+ *
+ * Routes match the Rust API's resource allowlist (`docs/ROUTES.md`), so a nav
+ * entry and its endpoint cannot drift apart.
  */
 export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
     {
-        label: "VoKoo Labs",
-        items: [{ label: "Composer", href: "/composer", icon: Stars02, badge: "Alpha" }],
-    },
-    {
-        label: "Build",
+        label: "Composer",
+        // Two boards, not one list with a filter. A flow answered while
+        // somebody is listening and a flow that runs after they have gone share
+        // a canvas and almost nothing else: different palettes, different
+        // triggers, different bindings. Separating them means the screen you
+        // are on already answers "when does this run", so creating one never
+        // has to ask.
         items: [
-            { label: "Agents", href: "/agents", icon: IconAgents },
-            { label: "Squads", href: "/squads", icon: IconSquads },
-            { label: "Tools", href: "/tools", icon: IconTools },
-            { label: "Phone Numbers", href: "/phone-numbers", icon: IconPhoneNumbers },
-            { label: "Voice Library", href: "/voice-library", icon: IconVoiceLibrary },
-            { label: "Files", href: "/files", icon: IconFiles },
-            { label: "Provider Keys", href: "/settings/credentials", icon: IconLock },
+            { label: "Calls", href: "/composer", icon: IconCallFlows, badge: "Alpha" },
+            { label: "Integrations", href: "/integrations", icon: IconIntegrations, badge: "Alpha" },
         ],
     },
     {
-        label: "Test",
+        // What the agent *is*. Everything here is authored: somebody writes a
+        // prompt, grants a skill, publishes a tool, uploads a document.
+        label: "Build",
         items: [
-            { label: "Test Suites", href: "/test-suites", icon: IconTestSuites },
-            { label: "Evals", href: "/evals", icon: IconEvals, badge: "Beta" },
+            { label: "Agents", href: "/agents", icon: IconAgents },
+            { label: "Skills", href: "/skills", icon: IconSquads },
+            { label: "Tools", href: "/tools", icon: IconTools },
+            // Not only what a post-call flow extracts: a tool's declared input is a
+            // named schema too, and seeing both together is how a schema pushed
+            // from the CLI becomes visible without opening a repository.
+            { label: "Schemas", href: "/structured-outputs", icon: IconShapes },
+            // "Knowledge", not "Files": what goes here is what the agent can
+            // draw on, and a file is only how it arrives. Naming it after the
+            // upload describes the mechanism rather than the purpose.
+            { label: "Knowledge", href: "/files", icon: IconFiles },
+        ],
+    },
+    {
+        // What it *runs on*. Nothing here is authored — a number is pointed at
+        // something, an engine picks providers, a key is pasted in. Filing a
+        // provider key beside an agent made one heading mean two things.
+        label: "Configure",
+        items: [
+            { label: "Phone Numbers", href: "/phone-numbers", icon: IconPhoneNumbers },
+            { label: "Engines", href: "/engines", icon: IconVoiceLibrary },
+            // "Providers", not "Provider Keys": the screen is where you say
+            // which vendors this organisation uses, and a key is how you say
+            // it. Naming it after the credential describes the form field
+            // rather than the decision.
+            { label: "Providers", href: "/settings/credentials", icon: IconLock },
         ],
     },
     {
         label: "Observe",
         items: [
-            { label: "Issues", href: "/issues", icon: IconIssues, badge: "Alpha" },
-            { label: "Monitors", href: "/monitors", icon: IconMonitors },
-            { label: "Notifiers", href: "/notifiers", icon: IconNotifiers },
-            { label: "Boards", href: "/boards", icon: IconBoards },
             { label: "Call Logs", href: "/call-logs", icon: IconCallLogs },
-            { label: "Chat Logs", href: "/chat-logs", icon: IconChatLogs },
-            { label: "Session Logs", href: "/session-logs", icon: IconSessionLogs },
+            // What the tools did, as opposed to what was said. Production, not
+            // testing — which is why it sits here and not under a Test heading.
+            { label: "Runs", href: "/runs", icon: IconEvals },
         ],
     },
     {
@@ -88,7 +114,7 @@ export const NAV_TITLES: Record<string, string> = Object.fromEntries(
  * the route alone, and guessing from the rendered markup would make the
  * navigation depend on what a screen happens to draw.
  */
-export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer"]);
+export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer", "/integrations"]);
 
 /**
  * Routes that take the whole window, navigation included.
@@ -100,6 +126,15 @@ export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer"]);
  *
  * A predicate rather than a set, because the route names a record.
  */
+/**
+ * Routes that get the window rather than the shell.
+ *
+ * The canvas measures against `window.innerWidth` and `window.innerHeight` to
+ * place nodes and to decide which side of a node its inspector opens on. Inside
+ * the shell every one of those numbers is wrong by the width of the navigation:
+ * the board draws offset, and the inspector opens past the right edge and is
+ * clipped. Both boards need the window for the same reason.
+ */
 export function isFullScreenRoute(pathname: string) {
-    return /^\/flows\/[^/]+$/.test(pathname);
+    return /^\/(flows|engines)\/[^/]+$/.test(pathname);
 }

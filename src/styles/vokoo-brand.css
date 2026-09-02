@@ -134,17 +134,33 @@
     --radius-xs: 0px;
     --radius-sm: 0px;
 
-    /* Controls are square (a product decision — see the components layer).
+    /* Everything is square (a product decision — see the components layer).
      *
      * Untitled UI styles every control wrapper with `rounded-lg`: the input
      * shell, select trigger, button, textarea. Squaring that one token squares
-     * all of them at once, and leaves cards and panels alone because those use
-     * `rounded-xl` / `rounded-2xl`.
+     * all of them at once.
      *
      * Chasing the wrappers by class instead would miss any component added
      * later, which is how half a UI ends up square and half rounded. */
     --radius-lg: 0px;
     --radius-md: 0px;
+
+    /* Containers too, since 2 September.
+     *
+     * These were left rounded on the reasoning that controls are square but
+     * cards and panels are not — which produced exactly the split the comment
+     * above warns about: square inputs sitting inside rounded cards, inside
+     * rounded tables, beside a square canvas. `rounded-xl` and `rounded-2xl`
+     * are 34 and 11 uses across the app, so this is where they all live.
+     *
+     * `--radius-full` is deliberately untouched: it is 72 uses, and they are
+     * avatars, status dots and pills where the radius *is* the shape. A
+     * squared dot is a different symbol, not a flatter one. */
+    --radius-xl: 0px;
+    --radius-2xl: 0px;
+    --radius-2xl-2: 0px;
+    --radius-3xl: 0px;
+    --radius-3xl-2: 0px;
 
     /* ---- elevation ----
      * Near-invisible only. Blurred elevation breaks the flat editorial feel;

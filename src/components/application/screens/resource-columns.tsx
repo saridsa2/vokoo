@@ -25,6 +25,14 @@ export type ColumnDef = {
 };
 
 export type ResourceView = {
+    /**
+     * Where a row leads, when it leads anywhere.
+     *
+     * Absent means the list is the whole screen. Present, the row becomes a
+     * link — which React Aria turns into real navigation, so a middle click and
+     * a keyboard both do what a reader expects.
+     */
+    detailHref?: (row: Row) => string;
     title: string;
     description: string;
     resource: string;
@@ -51,15 +59,18 @@ const statusCell = (field = "status") =>
 const updated = (field = "updated_at") => (row: Row) => timeAgo(row[field] as string);
 
 export const RESOURCE_VIEWS: Record<string, ResourceView> = {
-    squads: {
-        title: "Squads",
-        description: "Hand a call from one agent to another mid-conversation.",
-        resource: "squads",
-        createLabel: "Create Squad",
-        emptyTitle: "No squads yet",
-        emptyBody: "A squad lets one agent transfer a live call to another — for example reception handing off to billing.",
+    skills: {
+        title: "Skills",
+        description: "What an agent can do, and the tools each one grants.",
+        resource: "skills",
+        createLabel: "Create Skill",
+        detailHref: (row) => `/skills/${row.id}`,
+        emptyTitle: "No skills yet",
+        emptyBody:
+            "A skill is one thing an agent can do — book an appointment, cancel one. It holds the wording the agent uses and the tools it may call.",
         columns: [
             { id: "name", label: "Name", render: text("name") },
+            { id: "description", label: "Description", render: text("description") },
             { id: "status", label: "Status", render: statusCell() },
             { id: "updated_at", label: "Updated", render: updated(), secondary: true },
         ],
@@ -70,12 +81,24 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
         description: "Functions and integrations your agents can call.",
         resource: "tools",
         createLabel: "Create Tool",
+        detailHref: (row) => `/tools/${row.id}`,
         emptyTitle: "No tools yet",
         emptyBody: "Tools let an agent do something during a call — look up a booking, transfer to a human, end the call.",
+        // `kind`, not `type`, and there is no `status` column on this table —
+        // both were read from fields that do not exist, so every row showed a
+        // name and two dashes. `current_version` is the useful third fact: it
+        // separates a tool pushed with the SDK from one made here by hand.
         columns: [
             { id: "name", label: "Name", render: text("name") },
-            { id: "type", label: "Type", render: text("type") },
-            { id: "status", label: "Status", render: statusCell() },
+            { id: "kind", label: "Kind", render: text("kind") },
+            {
+                id: "current_version",
+                label: "Version",
+                render: (row) => {
+                    const version = Number(row.current_version ?? 0);
+                    return version > 0 ? `v${version}` : "—";
+                },
+            },
             { id: "updated_at", label: "Updated", render: updated(), secondary: true },
         ],
     },
@@ -84,38 +107,81 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
         title: "Phone Numbers",
         description: "KooKoo/Ozonetel numbers and the agent each one routes to.",
         resource: "phone-numbers",
+        detailHref: (row) => `/phone-numbers/${row.id}`,
         createLabel: "Connect Number",
         emptyTitle: "No numbers connected",
         emptyBody: "Connect a KooKoo DID to route incoming calls to an agent.",
         columns: [
             { id: "number", label: "Number", render: (row) => phoneNumber(row.number as string) },
-            { id: "provider", label: "Provider", render: text("provider") },
-            { id: "agent_id", label: "Agent", render: (row) => (row.agent_id ? "Assigned" : "Unassigned") },
+            // `carrier`, not `provider` — there is no `provider` column, so
+            // that cell rendered empty on every row.
+            { id: "carrier", label: "Carrier", render: text("carrier") },
+            {
+                id: "answers",
+                label: "Answers with",
+                // Read from `number_flows`, which is what the bridge resolves.
+                // The old cell asked `agent_id` and said "Unassigned" for a
+                // number that was answering calls — and somebody fixing that
+                // would have assigned an agent, which is not how this routes.
+                render: (row) => {
+                    const bindings = (row.number_flows ?? []) as {
+                        trigger_event: string;
+                        flows?: { name?: string } | null;
+                    }[];
+                    const answered = bindings.find((binding) => binding.trigger_event === "call.answered");
+                    if (!answered?.flows?.name) return "Nothing";
+                    const after = bindings.filter((binding) => binding.trigger_event !== "call.answered").length;
+                    return after > 0 ? `${answered.flows.name} (+${after} after)` : answered.flows.name;
+                },
+            },
             { id: "status", label: "Status", render: statusCell() },
         ],
     },
 
-    "voice-library": {
-        title: "Voice Library",
-        description: "Voices available to your agents.",
-        resource: "voice-library",
-        emptyTitle: "No voices synced",
-        emptyBody: "Voices come from the speech engines running on your own hardware — Qwen3-TTS and Kokoro.",
+    engines: {
+        title: "Engines",
+        description: "The models and services a call runs through.",
+        resource: "engines",
+        detailHref: (row) => `/engines/${row.id}`,
+        createLabel: "Create Engine",
+        emptyTitle: "No engines yet",
+        // Deliberately concrete about the two shapes, because they are what an
+        // engine chooses between and nothing else in the console explains it.
+        emptyBody: "The chain a call runs through: one speech-to-speech model, or listening, thinking and speaking as separate steps.",
         columns: [
-            { id: "name", label: "Voice", render: text("name") },
-            { id: "provider", label: "Engine", render: text("provider") },
-            { id: "language", label: "Language", render: text("language") },
+            { id: "name", label: "Name", render: text("name") },
+            {
+                id: "mode",
+                label: "Kind",
+                // "realtime" and "cascading" are rustvani's words. What a reader
+                // needs to know is whether it is one model or a relay.
+                render: (row) => (row.mode === "realtime" ? "One model" : "Relay"),
+            },
+            {
+                id: "config",
+                label: "Runs through",
+                render: (row) => {
+                    const config = (row.config ?? {}) as Record<string, { provider?: string; model?: string }>;
+                    if (row.mode === "realtime") {
+                        const rt = config.realtime ?? {};
+                        return [rt.provider, rt.model].filter(Boolean).join(" · ") || "—";
+                    }
+                    // The relay, in the order a call passes through it.
+                    return ["stt", "llm", "tts"].map((stage) => config[stage]?.provider ?? "—").join(" → ");
+                },
+            },
             { id: "status", label: "Status", render: statusCell() },
+            { id: "updated_at", label: "Updated", render: updated(), secondary: true },
         ],
     },
 
     files: {
-        title: "Files",
-        description: "Knowledge assets and their ingestion status.",
+        title: "Knowledge",
+        description: "Documents an agent can draw on when a caller asks something the prompt does not answer.",
         resource: "files",
-        createLabel: "Upload File",
-        emptyTitle: "No files yet",
-        emptyBody: "Upload documents an agent can draw on during a call.",
+        createLabel: "Add document",
+        emptyTitle: "Nothing here yet",
+        emptyBody: "Add a document — a price list, an FAQ, an admissions policy — and an agent can answer from it instead of improvising.",
         columns: [
             { id: "name", label: "Name", render: text("name") },
             { id: "mime_type", label: "Type", render: text("mime_type"), secondary: true },
@@ -253,9 +319,9 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
         title: "Call Logs",
         description: "Every call, with transcript and recording.",
         resource: "call-logs",
+        detailHref: (row) => `/call-logs/${row.id}`,
         emptyTitle: "No calls recorded yet",
-        emptyBody:
-            "Calls answered by the telephony bridge appear here once it writes them to the control plane. The bridge currently logs to the server journal instead.",
+        emptyBody: "Calls answered by the telephony bridge appear here.",
         columns: [
             { id: "from_number", label: "From", render: (row) => phoneNumber(row.from_number as string) },
             { id: "to_number", label: "To", render: (row) => phoneNumber(row.to_number as string), secondary: true },

@@ -47,6 +47,7 @@ export function useCatalogue(): CatalogueState {
                     transcribers: data?.transcribers ?? [],
                     vendors: data?.vendors ?? [],
                     nodeTypes: data?.nodeTypes ?? [],
+                    engineStages: data?.engineStages ?? [],
                 };
                 return cached;
             })

@@ -1,10 +1,11 @@
 "use client";
 
-import type { FC, HTMLAttributes, MouseEventHandler, ReactNode } from "react";
+import type { CSSProperties, FC, HTMLAttributes, MouseEventHandler, ReactNode } from "react";
 import { ChevronDown, Share04 } from "@/components/icons";
 import { Link as AriaLink } from "react-aria-components";
 import { Badge } from "@/components/base/badges/badges";
 import { cx, sortCx } from "@/utils/cx";
+import { navAccent } from "@/components/application/app-navigation/nav-accent";
 
 const styles = sortCx({
     root: "group relative flex max-h-9 w-full cursor-pointer items-center rounded-md bg-primary outline-focus-ring transition duration-100 ease-linear select-none hover:bg-primary_hover focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-2",
@@ -38,6 +39,12 @@ export const NavItemBase = ({ current, type, badge, href, icon: Icon, children, 
     // `iconOnly` was declared in the props and never read, so a caller asking
     // for a collapsed rail got a full-width item with a label. Honoured here:
     // the label carries the right margin, so without one the icon must not.
+    // The colour this destination takes when it is the one you are on. Our
+    // icons are Font Awesome duotone, so both layers follow from two variables
+    // — no second set of files, unlike the `icon-*-active.svg` pattern this is
+    // borrowed from.
+    const accent = current ? navAccent(href) : undefined;
+
     const iconElement = Icon && (
         <Icon
             aria-hidden="true"
@@ -45,7 +52,30 @@ export const NavItemBase = ({ current, type, badge, href, icon: Icon, children, 
                 "size-5 shrink-0 text-fg-quaternary transition-inherit-all group-hover/item:text-fg-quaternary_hover",
                 !iconOnly && "mr-2",
                 current && "text-fg-quaternary_hover",
+                // Font Awesome's own animation, once. A selected item stays
+                // selected, so an infinite one would be a permanent movement in
+                // the corner of the eye; a single beat marks the arrival and
+                // stops. FA disables it under `prefers-reduced-motion`, so the
+                // colour still carries the state on its own.
+                current && "fa-beat",
             )}
+            style={
+                accent
+                    ? ({
+                          "--fa-primary-color": accent.primary,
+                          "--fa-secondary-color": accent.secondary,
+                          // The shim dims the secondary layer for legibility on
+                          // a neutral icon. A selected one is carrying a colour
+                          // pair on purpose, so it is shown at full strength.
+                          "--fa-secondary-opacity": "1",
+                          "--fa-animation-iteration-count": "1",
+                          "--fa-animation-duration": "0.5s",
+                          // The default beat scales to 1.25, which at 20px
+                          // jumps the row. Just enough to notice.
+                          "--fa-beat-scale": "1.12",
+                      } as CSSProperties)
+                    : undefined
+            }
         />
     );
 

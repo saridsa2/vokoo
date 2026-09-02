@@ -36,7 +36,7 @@ export type ReconcileTarget = {
 
 export type Rewrite = {
     /** Editor tab the rewritten field lives on, so the screen can mark it. */
-    tab: "Model" | "Voice" | "Transcriber";
+    tab: "Persona";
     label: string;
     from: string;
     to: string;
@@ -97,7 +97,7 @@ export function reconcileProvider<T extends ReconcileTarget>(catalogue: Catalogu
         model = fallback.model?.id ?? model;
         if (model !== target.model) {
             rewrites.push({
-                tab: "Model",
+                tab: "Persona",
                 label: "Model",
                 from: nameOf(currentModel, target.model),
                 to: nameOf(fallback.model, model),
@@ -113,7 +113,7 @@ export function reconcileProvider<T extends ReconcileTarget>(catalogue: Catalogu
         if (next) {
             voiceConfig.voice = next;
             rewrites.push({
-                tab: "Voice",
+                tab: "Persona",
                 label: "Voice",
                 from: nameOf(currentVoice, currentVoiceId),
                 to: nameOf(fallback.voice, next),
@@ -131,7 +131,7 @@ export function reconcileProvider<T extends ReconcileTarget>(catalogue: Catalogu
         if (next) {
             transcriberConfig.transcriber = next;
             rewrites.push({
-                tab: "Transcriber",
+                tab: "Persona",
                 label: "Transcriber",
                 from: nameOf(currentTranscriber, currentTranscriberId),
                 to: nameOf(fallback.transcriber, next),
@@ -167,7 +167,7 @@ export function reconcileModel<T extends ReconcileTarget>(catalogue: Catalogue, 
             if (next) {
                 transcriberConfig.transcriber = next.id;
                 rewrites.push({
-                    tab: "Transcriber",
+                    tab: "Persona",
                     label: "Transcriber",
                     from: current ? current.label : "None",
                     to: next.label,

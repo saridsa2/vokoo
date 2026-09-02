@@ -93,6 +93,52 @@ export type CatalogueNodeType = {
     sort_order: number;
 };
 
+/**
+ * One provider rustvani can occupy one position in a call chain with.
+ *
+ * A row is a claim that `src/services/<stage>/<provider>.rs` exists in the
+ * crate. The console offers exactly these, because an engine naming a provider
+ * the binary cannot construct looks correct in the list and fails at connect
+ * time on a real call.
+ */
+export type CatalogueEngineStage = {
+    /** `<stage>:<provider>` — `stt:deepgram`. */
+    id: string;
+    /** Where in the chain: `realtime` (the whole chain), `stt`, `llm`, `tts`. */
+    stage: "realtime" | "stt" | "llm" | "tts";
+    provider_id: string;
+    label: string;
+    /** Two or three words, for a select trigger. Never a sentence. */
+    tagline: string;
+    /** The sentence, for places with room to read one. */
+    summary: string;
+    /** The module in rustvani, so a reader can check the claim. */
+    source_path: string;
+    /** The account this step bills to. Null when it runs on your own hardware. */
+    vendor_id: string | null;
+    /**
+     * What this step's model field can be set to. Empty means the step takes no
+     * model choice — a transcriber that only takes a language, say.
+     *
+     * Held here rather than in `models` because a transcriber model and a voice
+     * model are not the same kind of thing as a model an agent runs on, and the
+     * agent capability rules read that table.
+     */
+    models: { id: string; label: string }[];
+    /** Likewise for the voice field. Empty hides it. */
+    voices: { id: string; label: string }[];
+    /**
+     * Whether a model on this step can be given the agent's tools.
+     *
+     * False on `realtime:openai` and `llm:sarvam`, which cannot declare
+     * functions at all. Nothing fails when a model is never told a function
+     * exists, so an agent on one of those holds a conversation and takes no
+     * action — which is why this is stated rather than discovered.
+     */
+    supports_tools: boolean;
+    sort_order: number;
+};
+
 export type Catalogue = {
     providers: CatalogueProvider[];
     models: CatalogueModel[];
@@ -100,9 +146,10 @@ export type Catalogue = {
     transcribers: CatalogueTranscriber[];
     vendors: CatalogueVendor[];
     nodeTypes: CatalogueNodeType[];
+    engineStages: CatalogueEngineStage[];
 };
 
-export const EMPTY_CATALOGUE: Catalogue = { providers: [], models: [], voices: [], transcribers: [], vendors: [], nodeTypes: [] };
+export const EMPTY_CATALOGUE: Catalogue = { providers: [], models: [], voices: [], transcribers: [], vendors: [], nodeTypes: [], engineStages: [] };
 
 /**
  * The subset of an agent the capability layer reads.
@@ -112,11 +159,23 @@ export const EMPTY_CATALOGUE: Catalogue = { providers: [], models: [], voices: [
  * list screen, the publish gate — can supply them.
  */
 export type CapabilityScope = {
+    /**
+     * The agent runs on an engine.
+     *
+     * When it does, the fields below are a *record* of that engine rather than
+     * a choice made here — `attachEngine` writes them from it. The engine
+     * validates its own steps against `catalogue_engine_stages` and refuses to
+     * publish with a missing provider or an unconnected key, so checking them
+     * again here against `catalogue_providers` and `catalogue_models` is a
+     * second opinion from a different table. Those two tables know `local` and
+     * `gemini`; an engine can name OpenAI, Sarvam or Deepgram. The second
+     * opinion is simply wrong, and it blocked publish on a correct agent.
+     */
+    hasEngine: boolean;
     provider: string;
     model: string;
     voice: string | null;
     transcriber: string | null;
-    latencyThresholdMs: number | null;
 };
 
 export function providerOf(catalogue: Catalogue, id: string) {

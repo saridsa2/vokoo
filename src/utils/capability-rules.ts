@@ -29,8 +29,18 @@ import {
     type CapabilityScope,
 } from "./capability-registry";
 
-/** Tabs of the agent editor. A finding names the one it belongs to. */
-export type EditorTab = "Model" | "Voice" | "Transcriber" | "Tools" | "Analysis" | "Monitors" | "Compliance" | "Advanced";
+/**
+ * Tabs of the agent editor. A finding names the one it belongs to.
+ *
+ * There were eight. Six of them — Voice, Transcriber, Analysis, Monitors,
+ * Compliance, Advanced — were written by the console and read by nothing on the
+ * call path, and were removed rather than left to imply they did something. What
+ * they configured now belongs to an engine, which the bridge does read.
+ *
+ * So a finding about a voice or a transcriber still fires; it just points at the
+ * Persona tab, where the engine is chosen, and its remedy is to open the engine.
+ */
+export type EditorTab = "Persona" | "Skills";
 
 export type Severity = "blocking" | "attention" | "info";
 
@@ -50,6 +60,18 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
     // screen would fill with warnings about its own loading state.
     if (!catalogue.providers.length) return [];
 
+    // An agent on an engine is not judged here. Every rule below asks whether a
+    // provider, model, voice or transcriber is coherent — which is the engine's
+    // question, answered by the engine's own catalogue and enforced when the
+    // engine is published. Asking it again against a different table produced
+    // "Unknown provider openai" on an agent whose engine was correct, and
+    // refused the publish.
+    //
+    // What is lost is the sovereignty warning: it belongs on the engine screen
+    // now, where the provider is actually chosen. It is not reinstated here as
+    // a guess.
+    if (scope.hasEngine) return [];
+
     const findings: Finding[] = [];
     const provider = providerOf(catalogue, scope.provider);
     const model = modelOf(catalogue, scope.model);
@@ -61,10 +83,10 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
             {
                 id: "provider.unknown",
                 severity: "blocking",
-                tab: "Model",
+                tab: "Persona",
                 title: `Unknown provider "${scope.provider}"`,
                 detail: "This agent names a provider the platform does not offer, so nothing can resolve where it should run.",
-                remedy: "Choose a provider from the list.",
+                remedy: "Choose an engine, or open the one attached and give it a provider.",
             },
         ];
     }
@@ -75,19 +97,19 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "model.unknown",
             severity: "blocking",
-            tab: "Model",
+            tab: "Persona",
             title: `Unknown model "${scope.model}"`,
             detail: "This model is not in the catalogue, so its capabilities cannot be checked.",
-            remedy: "Choose a model from the list.",
+            remedy: "Open the engine and choose a model from the catalogue.",
         });
     } else if (model.provider_id !== provider.id) {
         findings.push({
             id: "model.wrong-provider",
             severity: "blocking",
-            tab: "Model",
+            tab: "Persona",
             title: `${model.label} does not run on ${provider.label}`,
             detail: `${model.label} belongs to ${model.provider_id}. A call would have nothing to send audio to.`,
-            remedy: `Pick a ${provider.label} model.`,
+            remedy: `Open the engine and pick a ${provider.label} model.`,
         });
     }
 
@@ -101,19 +123,19 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "voice.unset",
             severity: "attention",
-            tab: "Voice",
+            tab: "Persona",
             title: "No voice chosen",
             detail: "Calls will use the bridge's fallback voice, which is not necessarily one you would have picked for these callers.",
-            remedy: "Choose a voice.",
+            remedy: "Open the engine and choose a voice.",
         });
     } else if (scope.voice && !voice) {
         findings.push({
             id: "voice.unknown",
             severity: "blocking",
-            tab: "Voice",
+            tab: "Persona",
             title: `Unknown voice "${scope.voice}"`,
             detail: "Nothing in the catalogue matches this voice, so the agent would have no way to speak.",
-            remedy: "Choose a voice from the list.",
+            remedy: "Open the engine and choose a voice the provider offers.",
         });
     } else if (voice && voice.provider_id !== provider.id) {
         // Engine and voice are one decision, not two. A self-hosted engine
@@ -122,10 +144,10 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "voice.wrong-provider",
             severity: "blocking",
-            tab: "Voice",
+            tab: "Persona",
             title: `${voice.label} cannot speak on ${provider.label}`,
             detail: `${voice.label} runs on ${voice.engine}, which is part of the ${voice.provider_id} stack. ${provider.label} speaks with its own voices.`,
-            remedy: `Choose a ${provider.label} voice.`,
+            remedy: `Open the engine and choose a ${provider.label} voice.`,
         });
     }
 
@@ -137,10 +159,10 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
             findings.push({
                 id: "transcriber.required",
                 severity: "blocking",
-                tab: "Transcriber",
+                tab: "Persona",
                 title: `${model.label} needs a transcriber`,
                 detail: "This model reads text, not audio. With nothing transcribing for it the call connects, the caller speaks, and the agent never answers.",
-                remedy: "Choose a transcriber, or pick a model that hears audio directly.",
+                remedy: "Open the engine and give it a listening step, or choose an engine whose model hears audio directly.",
             });
         }
     }
@@ -149,10 +171,10 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "transcriber.wrong-provider",
             severity: "blocking",
-            tab: "Transcriber",
+            tab: "Persona",
             title: `${transcriber.label} is not available on ${provider.label}`,
             detail: `This transcriber belongs to the ${transcriber.provider_id} stack.`,
-            remedy: `Choose a ${provider.label} option.`,
+            remedy: `Open the engine and choose a ${provider.label} option.`,
         });
     }
 
@@ -163,21 +185,16 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "transcriber.redundant",
             severity: "attention",
-            tab: "Transcriber",
+            tab: "Persona",
             title: `${model.label} already hears the caller directly`,
             detail: `Putting ${transcriber.label} in front of it flattens accent, tone and code-switching into a transcript before the model sees them. It does buy you language detection, which native audio gives up.`,
         });
     }
 
-    if (model?.native_audio && (!transcriber || transcriber.is_passthrough)) {
-        findings.push({
-            id: "transcriber.no-language-detection",
-            severity: "info",
-            tab: "Transcriber",
-            title: "Nothing detects the spoken language",
-            detail: "With no transcriber the model hears accent and code-switching directly, which it understands better. Speech synthesis cannot switch language on its own, so the voice has to cover the languages your callers use.",
-        });
-    }
+    // A rule about language detection stood here. It told a reader that nothing
+    // detects the spoken language — true, and with nowhere to act on it: the
+    // language belongs to an engine, and an engine has no language control yet.
+    // It goes back when there is something to change.
 
     /* -------------------------------------------------------- Compliance */
 
@@ -186,35 +203,24 @@ export function evaluate(catalogue: Catalogue, scope: CapabilityScope): Finding[
         findings.push({
             id: "compliance.off-premise",
             severity: "attention",
-            tab: "Compliance",
+            tab: "Persona",
             title: `Caller audio is processed by ${provider.label}`,
             detail: provider.summary,
-            remedy: "Move this agent to a local provider if callers discuss anything you cannot send to a third party.",
+            remedy: "Attach an engine that runs on your own hardware if callers discuss anything you cannot send to a third party.",
         });
     }
 
-    /* ------------------------------------------------------------ Tools */
+    /* ----------------------------------------------------------- Skills */
 
     if (model && !model.supports_tools) {
         findings.push({
             id: "tools.unsupported",
             severity: "info",
-            tab: "Tools",
+            tab: "Skills",
+            // The skills still shape what the agent says — only the tools they
+            // bring go unused.
             title: `${model.label} cannot call tools`,
-            detail: "Any tool attached to this agent stays inert. Nothing fails; the model never reaches for it.",
-        });
-    }
-
-    /* --------------------------------------------------------- Monitors */
-
-    if (model?.latency_class === "network" && scope.latencyThresholdMs !== null && scope.latencyThresholdMs < 1200) {
-        findings.push({
-            id: "monitors.threshold-unrealistic",
-            severity: "attention",
-            tab: "Monitors",
-            title: "Latency threshold was set for a local model",
-            detail: `${scope.latencyThresholdMs} ms is achievable on your own hardware. ${provider.label} adds a network round trip, so this threshold will alert on every call.`,
-            remedy: "Raise the threshold, or move back to a local model.",
+            detail: "The tools these skills bring stay inert. Nothing fails; the model never reaches for one.",
         });
     }
 

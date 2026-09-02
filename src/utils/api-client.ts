@@ -110,6 +110,78 @@ export const api = {
 
     get: <T>(resource: string, id: string, context: AccessContext) => request<T>(`/api/v1/${resource}/${id}`, {}, context),
 
+    /**
+     * What happened the last times this tool ran on a real call.
+     *
+     * Empty until a caller reaches it: a test run belongs to no call, so it is
+     * not written into the call trace.
+     */
+    toolRuns: <T>(name: string | undefined, context: AccessContext) =>
+        request<T[]>(`/api/v1/tool-runs${name ? `?tool=${encodeURIComponent(name)}` : ""}`, {}, context),
+
+    /**
+     * The tools one skill grants.
+     *
+     * This link is what `compose_agent_tools` walks, so a tool missing from it
+     * is one the model is never declared — however well the prompt describes it.
+     */
+    skillTools: <T>(skillId: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/skills/${skillId}/tools`, {}, context),
+
+    /** Replace the set, because a list of checkboxes has a final state. */
+    setSkillTools: (skillId: string, toolIds: string[], context: AccessContext) =>
+        request<unknown>(
+            `/api/v1/skills/${skillId}/tools`,
+            { method: "PUT", body: JSON.stringify({ tool_ids: toolIds }) },
+            context,
+        ),
+
+    /**
+     * The skills an agent has.
+     *
+     * Where the chain starts: both prompt composers walk agent → skills → tools,
+     * so an agent with none is told nothing and declared nothing.
+     */
+    agentSkills: <T>(agentId: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/agents/${agentId}/skills`, {}, context),
+
+    setAgentSkills: (agentId: string, skillIds: string[], context: AccessContext) =>
+        request<unknown>(
+            `/api/v1/agents/${agentId}/skills`,
+            { method: "PUT", body: JSON.stringify({ skill_ids: skillIds }) },
+            context,
+        ),
+
+    /** Which flow answers which event on a number. */
+    numberFlows: <T>(numberId: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/phone-numbers/${numberId}/flows`, {}, context),
+
+    /** Bind one event to a flow, or pass null to unbind it. */
+    setNumberFlow: (numberId: string, triggerEvent: string, flowId: string | null, context: AccessContext) =>
+        request<unknown>(
+            `/api/v1/phone-numbers/${numberId}/flows`,
+            { method: "PUT", body: JSON.stringify({ trigger_event: triggerEvent, flow_id: flowId }) },
+            context,
+        ),
+
+    /** Every version of one tool, newest first. */
+    toolVersions: <T>(name: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/functions/${encodeURIComponent(name)}/versions`, {}, context),
+
+    /**
+     * Run one tool and report what it did.
+     *
+     * The same path a caller reaches: the control plane reads the version and
+     * hands the code to the executor. A test that ran somewhere else would
+     * prove something about somewhere else.
+     */
+    runFunction: <T>(name: string, args: unknown, version: number | undefined, context: AccessContext) =>
+        request<T>(
+            `/api/v1/functions/${encodeURIComponent(name)}/run`,
+            { method: "POST", body: JSON.stringify({ args, ...(version ? { version } : {}) }) },
+            context,
+        ),
+
     create: <T>(resource: string, body: unknown, context: AccessContext) =>
         request<T>(`/api/v1/${resource}`, { method: "POST", body: JSON.stringify(body) }, context),
 
@@ -173,6 +245,44 @@ export const api = {
 
     setVendorKey: <T>(body: { vendor: string; secret: string; label?: string }, context: AccessContext) =>
         request<T>("/api/v1/settings/vendors", { method: "POST", body: JSON.stringify(body) }, context),
+
+    /**
+     * Does this key work?
+     *
+     * Sends the key as typed, because nothing may read a stored one — the
+     * resolver is service_role only and the control plane holds no service key.
+     * `supported: false` means no probe is known for that vendor.
+     */
+    testVendorKey: (vendor: string, secret: string, context: AccessContext) =>
+        request<{ supported: boolean; ok?: boolean; reason?: string | null }>(
+            `/api/v1/settings/vendors/${vendor}/test`,
+            { method: "POST", body: JSON.stringify({ secret }) },
+            context,
+        ),
+
+    /**
+     * Would this engine work?
+     *
+     * The bridge opens the connections a call opens and reports what each
+     * provider said. Slow by nature — it is talking to three services — so
+     * callers should show it working.
+     */
+    preflightEngine: <T>(engineId: string, context: AccessContext) =>
+        request<T>(`/api/v1/engines/${engineId}/preflight`, { method: "POST" }, context),
+
+    /**
+     * Walk a flow against a finished call without changing anything.
+     *
+     * The same walk a real hangup takes, with the write to the call and the
+     * outgoing request withheld — so testing a flow cannot POST a lead into
+     * somebody's CRM. What the node view shows in Input and Output.
+     */
+    dryRunFlow: <T>(flowId: string, ucid: string, context: AccessContext) =>
+        request<T>(`/api/v1/flows/${flowId}/dry-run`, { method: "POST", body: JSON.stringify({ ucid }) }, context),
+
+    /** Ask every connected provider what it currently offers. */
+    refreshCatalogue: <T>(context: AccessContext) =>
+        request<T>("/api/v1/catalogue/refresh", { method: "POST" }, context),
 
     deleteVendorKey: (vendor: string, context: AccessContext) =>
         request<void>(`/api/v1/settings/vendors/${vendor}`, { method: "DELETE" }, context),

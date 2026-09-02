@@ -1,7 +1,7 @@
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { config } from "@fortawesome/fontawesome-svg-core";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import type { FC } from "react";
+import type { CSSProperties, FC } from "react";
 import {
     faAnglesLeft,
     faAnglesRight,
@@ -52,6 +52,7 @@ import {
     faPlus,
     faRightFromBracket,
     faScissors,
+    faSpinnerThird,
     faStar,
     faTerminal,
     faTrash,
@@ -72,12 +73,14 @@ import {
     faMicrophoneLines,
     faPaperPlane,
     faPhone,
+    faPhoneVolume,
     faRectangleList,
     faTriangleExclamation,
     faFileLines,
     faGaugeSimpleHigh,
     faLanguage,
     faLock,
+    faLockOpen,
     faShieldHalved,
     faSlidersUp,
     faStopwatch,
@@ -85,6 +88,8 @@ import {
     faTowerBroadcast,
     faUserGroup,
     faUsers,
+    faBracketsCurly,
+    faPlug,
     faWrench,
 } from "@awesome.me/kit-9a13e121e5/icons/duotone/solid";
 
@@ -132,10 +137,25 @@ type IconProps = {
     /** Untitled UI icons are stroked; Font Awesome glyphs are filled paths, so
      *  this is accepted for call-site compatibility and intentionally ignored. */
     strokeWidth?: string | number;
+    /**
+     * Passed through to the `<svg>`, and merged *after* the duotone defaults so
+     * a caller can override them.
+     *
+     * This is how a caller colours the two layers: `--fa-primary-color` and
+     * `--fa-secondary-color`. Without it the prop was silently dropped, which
+     * is the worst shape for a style prop — the call site looks right and the
+     * icon does not change.
+     *
+     * `CSSProperties`, not a custom-property record: an icon is passed around
+     * as a plain `ComponentType` in several places, and a narrower `style` than
+     * React's own makes it unassignable there. Call sites cast their `--fa-*`
+     * object, which is what the note above `DUOTONE_OPACITY` describes.
+     */
+    style?: CSSProperties;
 };
 
 const icon = (definition: IconDefinition): FC<IconProps> =>
-    function FaIcon({ className, size }) {
+    function FaIcon({ className, size, style }) {
         // Untitled UI sizes icons with Tailwind classes (size-4, size-5), so the
         // class must land on the <svg> itself rather than a wrapper. When a pixel
         // size is passed instead, translate it to explicit dimensions.
@@ -143,7 +163,11 @@ const icon = (definition: IconDefinition): FC<IconProps> =>
             <FontAwesomeIcon
                 icon={definition}
                 className={className}
-                style={size ? { ...DUOTONE_OPACITY, width: size, height: size } : DUOTONE_OPACITY}
+                style={{
+                    ...DUOTONE_OPACITY,
+                    ...(size ? { width: size, height: size } : {}),
+                    ...(style as Record<string, unknown> | undefined),
+                }}
             />
         );
     };
@@ -195,6 +219,8 @@ export const Moon01 = icon(faMoon);
 export const PlayCircle = icon(faCirclePlay);
 export const Plus = icon(faPlus);
 export const RefreshCcw02 = icon(faArrowsRotate);
+/** Spins. Used for work in flight — a test run, a walk of a flow. */
+export const Spinner = icon(faSpinnerThird);
 export const Scissors01 = icon(faScissors);
 export const SearchLg = icon(faMagnifyingGlass);
 export const Settings01 = icon(faGear);
@@ -225,6 +251,13 @@ export const IconMonitors = icon(faGaugeHigh);
 export const IconNotifiers = icon(faPaperPlane);
 export const IconBoards = icon(faChartSimple);
 export const IconCallLogs = icon(faRectangleList);
+// The two composer boards. Distinct from `IconPhoneNumbers` (a number you own)
+// and `IconTools` (a wrench), both of which they previously borrowed — Calls
+// was still wearing the magic wand from when the section was called VoKoo Labs.
+export const IconCallFlows = icon(faPhoneVolume);
+export const IconIntegrations = icon(faPlug);
+// A shape is a schema. `IconFiles` is a folder, which Files already wears.
+export const IconShapes = icon(faBracketsCurly);
 export const IconChatLogs = icon(faComments);
 export const IconSessionLogs = icon(faClockRotateLeft);
 export const IconOrganization = icon(faBuilding);
@@ -234,6 +267,9 @@ export const Sun = icon(faSun);
 /* Agent-editor setting icons. */
 export const IconLanguage = icon(faLanguage);
 export const IconLock = icon(faLock);
+// The open state, so a lock toggle shows what it will become rather than only
+// what it is.
+export const IconUnlock = icon(faLockOpen);
 export const IconShield = icon(faShieldHalved);
 export const IconSliders = icon(faSlidersUp);
 export const IconStopwatch = icon(faStopwatch);

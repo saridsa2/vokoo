@@ -5,7 +5,12 @@
     "scripts": {
         "dev": "next dev --turbopack",
         "build": "next build",
-        "start": "next start"
+        "start": "next start",
+        "test:sdk": "node --test packages/sdk/src/*.test.ts",
+        "test:cli": "node --test packages/cli/src/*.test.ts",
+        "test": "npm run test:sdk && npm run test:cli",
+        "catalogue:sync": "node scripts/sync-node-catalogue.mjs",
+        "catalogue:check": "node scripts/sync-node-catalogue.mjs --check"
     },
     "dependencies": {
         "@awesome.me/kit-9a13e121e5": "^1.0.7",
@@ -19,7 +24,6 @@
         "@tailwindcss/typography": "^0.5.19",
         "@untitledui/file-icons": "^0.0.9",
         "@untitledui/icons": "^0.0.22",
-        "@xyflow/react": "^12.11.5",
         "embla-carousel-react": "^8.6.0",
         "input-otp": "^1.4.2",
         "lucide-react": "^1.37.0",

@@ -5,8 +5,9 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { Tabs } from "@/components/application/tabs/tabs";
 import { ScreenHeader } from "@/components/application/screen/screen-header";
-import { AlertCircle, CheckCircle, IconLock, Share04, Trash01 } from "@/components/icons";
+import { AlertCircle, CheckCircle, IconLock, RefreshCcw02, Share04, Trash01 } from "@/components/icons";
 import { useCatalogue } from "@/hooks/use-catalogue";
 import type { CatalogueVendor } from "@/utils/capability-registry";
 import { useSession } from "@/hooks/use-session";
@@ -37,6 +38,47 @@ type Credential = {
 
 type VendorSlot = CatalogueVendor;
 
+/** Which role a step of an engine puts its vendor in. */
+const STAGE_ROLE: Record<string, string> = {
+    llm: "llm",
+    // A speech-to-speech model is a model. It belongs beside the others you
+    // would compare it against, not in a category of one.
+    realtime: "llm",
+    tts: "voice",
+    stt: "transcription",
+};
+
+/**
+ * Vendors the control plane knows how to probe.
+ *
+ * Each has a cheap authenticated listing endpoint. Kept in step with the match
+ * in `test_credential`; a vendor missing from either simply gets no button.
+ */
+const TESTABLE = new Set(["openai", "gemini", "deepgram"]);
+
+const TABS = [
+    {
+        id: "llm",
+        label: "Language models",
+        description: "The accounts your agents think on.",
+    },
+    {
+        id: "voice",
+        label: "Voice",
+        description: "Accounts that turn a reply into speech.",
+    },
+    {
+        id: "transcription",
+        label: "Transcription",
+        description: "Accounts that turn caller audio into text.",
+    },
+    {
+        id: "telephony",
+        label: "Telephony",
+        description: "The carrier that carries the calls.",
+    },
+];
+
 export function CredentialsScreen() {
     const { context, isReady } = useSession();
     const { catalogue } = useCatalogue();
@@ -45,6 +87,9 @@ export function CredentialsScreen() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [editing, setEditing] = useState<VendorSlot | null>(null);
+    const [tab, setTab] = useState("llm");
+    const [refreshing, setRefreshing] = useState(false);
+    const [refreshed, setRefreshed] = useState<string | null>(null);
 
     // What can be connected is catalogue data, so it arrives with everything
     // else the catalogue carries rather than through a request of its own.
@@ -69,6 +114,42 @@ export function CredentialsScreen() {
         void refresh();
     }, [isReady, refresh]);
 
+    /**
+     * Ask every connected provider what it currently offers.
+     *
+     * The lists an engine chooses from were typed by hand, and one of them named
+     * a Sarvam model Sarvam had retired — which a caller discovered as silence.
+     * This replaces them with what the providers actually say.
+     *
+     * The bridge does the asking, because it is the only process that may read a
+     * key. Providers with no key are skipped, and one that answers with nothing
+     * keeps its stored list rather than being emptied.
+     */
+    async function refreshCatalogue() {
+        if (!context) return;
+        setRefreshing(true);
+        setRefreshed(null);
+        setError(null);
+        try {
+            const { data } = await api.refreshCatalogue<{
+                refreshed: { id: string; models: number; voices: number; error: string | null }[];
+            }>(context);
+            const rows = data.refreshed ?? [];
+            const failed = rows.filter((row) => row.error);
+            setRefreshed(
+                rows.length === 0
+                    ? "No provider that publishes a catalogue is connected yet."
+                    : failed.length > 0
+                      ? `${failed.map((row) => `${row.id}: ${row.error}`).join("; ")}`
+                      : `Updated ${rows.length} from the providers.`,
+            );
+        } catch (cause) {
+            setError(cause instanceof ApiError ? cause.message : String(cause));
+        } finally {
+            setRefreshing(false);
+        }
+    }
+
     async function disconnect(slot: VendorSlot) {
         if (!context) return;
         if (!window.confirm(`Remove the ${slot.label} key? Agents and flows that need it will stop working on the next call.`)) return;
@@ -88,17 +169,57 @@ export function CredentialsScreen() {
         catalogue.providers.filter((provider) => !provider.is_sovereign).map((provider) => provider.id),
     );
 
-    const groups = ["inference", "telephony"].map((kind) => ({
-        kind,
-        title: kind === "inference" ? "Model providers" : "Telephony",
-        items: slots.filter((slot) => slot.kind === kind),
-    }));
+    /**
+     * What each vendor is for, derived rather than declared.
+     *
+     * `catalogue_vendors.kind` only knows "inference" and "telephony", which put
+     * six accounts doing three different jobs under one heading. The engine
+     * catalogue already records which step of a chain each vendor can fill, and
+     * a vendor can fill more than one — Sarvam transcribes, thinks and speaks;
+     * Deepgram transcribes and speaks. So a vendor appears under every role it
+     * actually has, and a provider withdrawn for not calling tools stops
+     * appearing under that role without anything here changing.
+     */
+    const rolesByVendor = new Map<string, Set<string>>();
+    for (const stage of catalogue.engineStages) {
+        if (!stage.vendor_id) continue;
+        const role = STAGE_ROLE[stage.stage];
+        if (!role) continue;
+        const roles = rolesByVendor.get(stage.vendor_id) ?? new Set<string>();
+        roles.add(role);
+        rolesByVendor.set(stage.vendor_id, roles);
+    }
+
+    const groups = TABS.map((tab) => ({
+        ...tab,
+        items: slots.filter((slot) =>
+            tab.id === "telephony"
+                ? slot.kind === "telephony"
+                : (rolesByVendor.get(slot.id)?.has(tab.id) ?? false),
+        ),
+    })).filter((tab) => tab.items.length > 0);
+
+    const active = groups.some((group) => group.id === tab) ? tab : (groups[0]?.id ?? "llm");
+    const shown = groups.find((group) => group.id === active);
 
     return (
         <>
             <ScreenHeader
-                title="Provider Keys"
-                description="Accounts VoKoo uses on your behalf — the model providers your agents run on, and the carrier that carries the calls."
+                title="Providers"
+                description="Accounts VoKoo uses on your behalf."
+                actions={
+                    <Button
+                        size="sm"
+                        color="secondary"
+                        iconLeading={RefreshCcw02}
+                        isDisabled={refreshing}
+                        isLoading={refreshing}
+                        showTextWhileLoading
+                        onClick={refreshCatalogue}
+                    >
+                        {refreshing ? "Asking providers…" : "Refresh models"}
+                    </Button>
+                }
             />
 
             <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6">
@@ -111,6 +232,12 @@ export function CredentialsScreen() {
                     </span>
                 </p>
 
+                {refreshed && (
+                    <p className="text-sm text-brand-secondary" role="status">
+                        {refreshed}
+                    </p>
+                )}
+
                 {error && (
                     <p className="text-sm text-error-primary" role="alert">
                         {error}
@@ -119,14 +246,31 @@ export function CredentialsScreen() {
 
                 {isLoading && <p className="text-sm text-tertiary">Loading…</p>}
 
+                {!isLoading && groups.length > 1 && (
+                    <Tabs selectedKey={active} onSelectionChange={(key) => setTab(String(key))}>
+                        <Tabs.List
+                            type="underline"
+                            items={groups.map((group) => ({
+                                id: group.id,
+                                label: group.label,
+                                // The count is the answer to "have I finished
+                                // here", which is why anyone opens this screen.
+                                badge: `${group.items.filter((slot) => byVendor.has(slot.id)).length}/${group.items.length}`,
+                            }))}
+                        >
+                            {(item) => <Tabs.Item {...item} />}
+                        </Tabs.List>
+                    </Tabs>
+                )}
+
                 {!isLoading &&
-                    groups.map((group) =>
-                        group.items.length === 0 ? null : (
-                            <section key={group.kind} className="flex flex-col gap-3">
-                                <h2 className="text-xs font-semibold tracking-wide text-tertiary uppercase">{group.title}</h2>
+                    [shown].filter(Boolean).map((group) =>
+                        group!.items.length === 0 ? null : (
+                            <section key={group!.id} className="flex flex-col gap-3">
+                                <p className="max-w-2xl text-sm text-tertiary">{group!.description}</p>
 
                                 <ul className="flex flex-col divide-y divide-border-secondary border-t border-b border-secondary">
-                                    {group.items.map((slot) => {
+                                    {group!.items.map((slot) => {
                                         const credential = byVendor.get(slot.id);
                                         const isMissing = !credential && needed.has(slot.id);
 
@@ -174,6 +318,8 @@ export function CredentialsScreen() {
                                                             size="sm"
                                                             color="link-gray"
                                                             href={slot.help_url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
                                                             iconTrailing={Share04}
                                                         >
                                                             Get a key
@@ -228,6 +374,8 @@ function CredentialDialog({
     const { context } = useSession();
     const [secret, setSecret] = useState("");
     const [isSaving, setIsSaving] = useState(false);
+    const [isTesting, setIsTesting] = useState(false);
+    const [verdict, setVerdict] = useState<{ ok: boolean; text: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     // Clear on open, so a key typed for one provider can never be submitted
@@ -235,7 +383,50 @@ function CredentialDialog({
     useEffect(() => {
         setSecret("");
         setError(null);
+        setVerdict(null);
     }, [slot]);
+
+    // A verdict belongs to the key it was reached on. Editing the key makes it
+    // stale, and a stale "Works" beside a changed key is worse than none.
+    useEffect(() => {
+        setVerdict(null);
+    }, [secret]);
+
+    /**
+     * Ask the provider whether this key authenticates.
+     *
+     * Tested as typed rather than after saving: nothing may read a stored key —
+     * the resolver is service_role only, and the control plane holds no service
+     * key. Typing is also when a wrong key is worth catching.
+     */
+    async function test() {
+        if (!slot || !context || !secret.trim()) return;
+        setIsTesting(true);
+        setError(null);
+        try {
+            const { data } = await api.testVendorKey(slot.id, secret.trim(), context);
+            // The server answers in vendor ids because that is what it routes
+            // on; the reader knows the label. Rewritten here rather than there,
+            // so the API keeps one vocabulary and the screen keeps the other.
+            const rejected = data.reason?.includes("rejected");
+            setVerdict(
+                !data.supported
+                    ? { ok: false, text: `There is no way to check a ${slot.label} key yet.` }
+                    : data.ok
+                      ? { ok: true, text: `${slot.label} accepted this key.` }
+                      : {
+                            ok: false,
+                            text: rejected
+                                ? `${slot.label} rejected this key.`
+                                : (data.reason ?? `${slot.label} did not accept this key.`),
+                        },
+            );
+        } catch (cause) {
+            setError(cause instanceof ApiError ? cause.message : String(cause));
+        } finally {
+            setIsTesting(false);
+        }
+    }
 
     async function save() {
         if (!slot || !context || !secret.trim()) return;
@@ -279,6 +470,16 @@ function CredentialDialog({
                                 hint="Stored encrypted. It cannot be displayed again after saving."
                             />
 
+                            {verdict && (
+                                <p
+                                    className={`flex items-center gap-1.5 text-sm ${verdict.ok ? "text-success-primary" : "text-error-primary"}`}
+                                    role="status"
+                                >
+                                    {verdict.ok ? <CheckCircle className="size-4" /> : <AlertCircle className="size-4" />}
+                                    {verdict.text}
+                                </p>
+                            )}
+
                             {error && (
                                 <p className="text-sm text-error-primary" role="alert">
                                     {error}
@@ -286,7 +487,22 @@ function CredentialDialog({
                             )}
                         </div>
 
-                        <footer className="flex justify-end gap-3 border-t border-secondary px-6 py-4">
+                        <footer className="flex items-center justify-end gap-3 border-t border-secondary px-6 py-4">
+                            {/* Only where a probe exists. A Test button that
+                                always passes is worse than no button. */}
+                            {slot && TESTABLE.has(slot.id) && (
+                                <Button
+                                    size="sm"
+                                    color="link-gray"
+                                    className="mr-auto"
+                                    isDisabled={!secret.trim() || isSaving}
+                                    isLoading={isTesting}
+                                    showTextWhileLoading
+                                    onClick={test}
+                                >
+                                    {isTesting ? "Testing…" : "Test key"}
+                                </Button>
+                            )}
                             <Button size="sm" color="secondary" isDisabled={isSaving} onClick={onClose}>
                                 Cancel
                             </Button>

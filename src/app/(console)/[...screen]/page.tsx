@@ -1,8 +1,12 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { ScreenPlaceholder } from "@/components/application/screen/screen-placeholder";
 import { AgentsScreen } from "@/components/application/screens/agents-screen";
 import { ResourceListScreen } from "@/components/application/screens/resource-list-screen";
 import { FlowsWorkspaceScreen } from "@/components/application/screens/flows-workspace-screen";
+import { RunsScreen } from "@/components/application/screens/runs-screen";
+import { SchemasScreen } from "@/components/application/screens/schemas-screen";
+import { SkillsScreen } from "@/components/application/screens/skills-screen";
+import { EnginesScreen } from "@/components/application/screens/engines-screen";
 import { CredentialsScreen } from "@/components/application/screens/credentials-screen";
 import { MembersScreen, OrganizationScreen } from "@/components/application/screens/settings-screens";
 
@@ -23,21 +27,11 @@ import { MembersScreen, OrganizationScreen } from "@/components/application/scre
  * Adding a list screen means adding the route here and its columns there.
  */
 const LIST_SCREENS = new Set([
-    "squads",
     "tools",
     "phone-numbers",
-    "voice-library",
     "files",
     "flows",
-    "test-suites",
-    "evals",
-    "issues",
-    "monitors",
-    "notifiers",
-    "boards",
     "call-logs",
-    "chat-logs",
-    "structured-outputs",
 ]);
 
 type ScreenDefinition = {
@@ -48,54 +42,68 @@ type ScreenDefinition = {
 };
 
 const SCREENS: Record<string, ScreenDefinition> = {
-    composer: { title: "Composer", description: "The flows that decide what happens on a call.", resource: "flows" },
+    composer: { title: "Calls", description: "What happens while somebody is on the line.", resource: "flows" },
+    integrations: { title: "Integrations", description: "What happens after a call ends.", resource: "flows" },
 
     agents: {
         title: "Agents",
         description: "Configure the agents that answer your calls.",
         resource: "agents",
     },
-    squads: { title: "Squads", description: "Hand a call from one agent to another mid-conversation.", resource: "squads" },
+    skills: { title: "Skills", description: "What an agent can do, and the tools each one grants.", resource: "skills" },
     tools: { title: "Tools", description: "Functions and integrations your agents can call.", resource: "tools" },
     "phone-numbers": {
         title: "Phone Numbers",
         description: "KooKoo/Ozonetel numbers and the agent each one routes to.",
         resource: "phone-numbers",
     },
-    "voice-library": { title: "Voice Library", description: "Voices available to your agents.", resource: "voice-library" },
-    files: { title: "Files", description: "Knowledge assets and their ingestion status.", resource: "files" },
+    engines: { title: "Engines", description: "The models and services a call runs through.", resource: "engines" },
+    files: {
+        title: "Knowledge",
+        description: "Documents an agent can draw on when a caller asks something the prompt does not answer.",
+        resource: "files",
+    },
     flows: { title: "Flows", description: "Visual call flows.", resource: "flows" },
-
-    "test-suites": { title: "Test Suites", description: "Scripted conversations run against an agent.", resource: "test-suites" },
-    evals: { title: "Evals", description: "Rubrics scored automatically against real calls.", resource: "evals" },
-
-    issues: { title: "Issues", description: "Problems detected in production calls.", resource: "issues" },
-    monitors: { title: "Monitors", description: "Rules that watch call quality and reliability.", resource: "monitors" },
-    notifiers: { title: "Notifiers", description: "Where alerts are delivered.", resource: "notifiers" },
-    boards: { title: "Boards", description: "Saved analytics views.", resource: "boards" },
-    "call-logs": { title: "Call Logs", description: "Every call, with transcript and recording.", resource: "call-logs" },
-    "chat-logs": { title: "Chat Logs", description: "Text conversations.", resource: "chat-logs" },
-    // No backing table: session activity is not modelled in the schema yet, and
-    // pointing this at `chats` would show unrelated rows under the wrong name.
-    "session-logs": { title: "Session Logs", description: "Raw session activity." },
     "structured-outputs": {
-        title: "Structured Outputs",
-        description: "JSON schemas extracted from conversations.",
+        title: "Schemas",
+        description: "Named shapes — what a tool takes, and what a call gets read into.",
         resource: "structured-outputs",
     },
+    runs: { title: "Runs", description: "Every tool a call ran, with what it was asked and what it gave back.", resource: "call-events" },
+    "call-logs": { title: "Call Logs", description: "Every call, with transcript and recording.", resource: "call-logs" },
     metrics: { title: "Metrics", description: "Operational dashboard.", resource: "metrics" },
 
     "settings/organization": { title: "Organization", description: "Workspace identity and plan." },
     "settings/members": { title: "Members", description: "Who has access to this workspace." },
     "settings/credentials": {
-        title: "Provider Keys",
+        title: "Providers",
         description: "Accounts VoKoo uses on your behalf.",
     },
 };
 
-export default async function ConsoleScreen({ params }: { params: Promise<{ screen: string[] }> }) {
+export default async function ConsoleScreen({
+    params,
+    searchParams,
+}: {
+    params: Promise<{ screen: string[] }>;
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
     const { screen } = await params;
     const route = screen.join("/");
+
+    // Before the lookup, because `evals` is no longer a screen and would 404
+    // here. Every tool's page links to `/evals?tool=…`, so the query is carried
+    // across — a redirect that dropped it would land on an unfiltered list and
+    // look like the link was wrong.
+    if (route === "evals") {
+        const query = new URLSearchParams(
+            Object.entries(await searchParams).flatMap(([key, value]) =>
+                typeof value === "string" ? [[key, value] as [string, string]] : [],
+            ),
+        ).toString();
+        redirect(query ? `/runs?${query}` : "/runs");
+    }
+
     const definition = SCREENS[route];
 
     if (!definition) notFound();
@@ -103,10 +111,16 @@ export default async function ConsoleScreen({ params }: { params: Promise<{ scre
     // Bespoke screens first, then anything with a column definition renders
     // through the shared list. Whatever is left falls back to a placeholder
     // naming the endpoint it will read.
-    // The composer is the workspace: it lists the flows, and opening one goes
-    // to /flows/:id, which takes the whole window.
-    if (route === "composer") return <FlowsWorkspaceScreen />;
+    // Two workspaces over one table, split by what a flow responds to. Each
+    // lists the flows of its kind and creates that kind, so the choice is made
+    // by which screen you opened rather than by a question in a dialog.
+    if (route === "composer") return <FlowsWorkspaceScreen family="call" />;
+    if (route === "integrations") return <FlowsWorkspaceScreen family="post_call" />;
     if (route === "agents") return <AgentsScreen />;
+    if (route === "runs") return <RunsScreen />;
+    if (route === "structured-outputs") return <SchemasScreen />;
+    if (route === "skills") return <SkillsScreen />;
+    if (route === "engines") return <EnginesScreen />;
     if (route === "settings/credentials") return <CredentialsScreen />;
     if (route === "settings/organization") return <OrganizationScreen />;
     if (route === "settings/members") return <MembersScreen />;

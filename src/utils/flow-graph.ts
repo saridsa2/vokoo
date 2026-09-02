@@ -52,6 +52,12 @@ export type Flow = {
     description: string | null;
     status: string;
     graph: FlowGraph | null;
+    /**
+     * The event this flow handles. It stays on the row rather than living only
+     * in the graph because `number_flows` and the bridge's `resolve_for_event`
+     * both query it, and neither can read into graph JSON.
+     */
+    trigger_event?: string;
     updated_at?: string;
 };
 

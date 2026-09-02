@@ -1,6 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+
+import { PaginationPageDefault } from "@/components/application/pagination/pagination";
+
+/**
+ * Rows per page.
+ *
+ * Every list in the console comes through this screen, so this is the one place
+ * it is decided.
+ *
+ * Ten rather than twenty-five: the tables here are small — fourteen calls,
+ * a handful of agents — and at twenty-five nothing in the console would ever
+ * show a second page. A page size no dataset reaches is pagination that exists
+ * only in the code.
+ */
+const PAGE_SIZE = 10;
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -18,7 +33,17 @@ import { RESOURCE_VIEWS, type Row } from "./resource-columns";
  * would be fifteen places for spacing, empty states and status colours to
  * drift apart.
  */
-export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
+export function ResourceListScreen({
+    resourceKey,
+    /**
+     * The screen's own create control, when it has one. Every "Create X" button
+     * in this console is decorative until the screen behind it supplies this.
+     */
+    createSlot,
+}: {
+    resourceKey: string;
+    createSlot?: ReactNode;
+}) {
     // The view is resolved here rather than passed in. `resource-columns` is a
     // client module, so a server component importing RESOURCE_VIEWS receives a
     // client reference and every lookup silently misses — and its render
@@ -27,6 +52,7 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
 
     const { records, isLoading, error } = useResource<Row>(view?.resource ?? "");
     const [query, setQuery] = useState("");
+    const [page, setPage] = useState(1);
 
     const filtered = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -39,6 +65,16 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
             Object.values(row).some((value) => typeof value === "string" && value.toLowerCase().includes(needle)),
         );
     }, [records, query]);
+
+    const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    // Clamped rather than reset: typing into the search while on page 4 should
+    // land on the last page of the new result, not throw the reader back to the
+    // first for a filter that still has four pages.
+    const current = Math.min(page, pages);
+    const shown = useMemo(
+        () => filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE),
+        [filtered, current],
+    );
 
     if (!view) return null;
 
@@ -62,7 +98,11 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
                         />
                     </div>
                 }
-                actions={view.createLabel ? <Button size="sm">{view.createLabel}</Button> : undefined}
+                // A screen that can actually create something supplies its own
+                // control. The plain button is what remains everywhere that
+                // cannot yet — it is decorative, and saying so here is better
+                // than each screen discovering it.
+                actions={createSlot ?? (view.createLabel ? <Button size="sm">{view.createLabel}</Button> : undefined)}
             />
 
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
@@ -106,9 +146,12 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
                                 ))}
                             </Table.Header>
 
-                            <Table.Body items={filtered}>
+                            <Table.Body items={shown}>
                                 {(row) => (
-                                    <Table.Row id={row.id}>
+                                    // `href` rather than a click handler: React
+                                    // Aria renders a real link, so a middle
+                                    // click opens a tab and the keyboard works.
+                                    <Table.Row id={row.id} href={view.detailHref?.(row)}>
                                         {view.columns.map((column) => (
                                             <Table.Cell
                                                 key={column.id}
@@ -125,9 +168,22 @@ export function ResourceListScreen({ resourceKey }: { resourceKey: string }) {
                 )}
 
                 {filtered.length > 0 && (
-                    <p className="text-sm text-tertiary">
-                        {filtered.length} of {records.length} {records.length === 1 ? "record" : "records"}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm text-tertiary">
+                            {/* Which rows these are, not just how many there
+                                are: on page three, "60 of 412" leaves the
+                                reader working out what they are looking at. */}
+                            {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, filtered.length)} of{" "}
+                            {filtered.length}
+                            {filtered.length === records.length ? "" : ` (filtered from ${records.length})`}{" "}
+                            {filtered.length === 1 ? "record" : "records"}
+                        </p>
+                        {/* Only when there is more than one page. A pager over a
+                            single page is a control that cannot do anything. */}
+                        {pages > 1 && (
+                            <PaginationPageDefault page={current} total={pages} onPageChange={setPage} />
+                        )}
+                    </div>
                 )}
             </div>
         </>

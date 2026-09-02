@@ -24,19 +24,11 @@ import { timeAgo } from "@/utils/format";
 import { AgentPublishDialog } from "./agent-publish-dialog";
 import { AgentVersionsPanel } from "./agent-versions-panel";
 import {
-    AdvancedPanel,
-    AnalysisPanel,
-    CompliancePanel,
     ConfigCard,
-    ConfigSection,
-    ModelSectionIcon,
-    MonitorsPanel,
-    ToolsPanel,
-    TranscriberPanel,
-    VoicePanel,
     configValue,
     type JsonConfig,
 } from "./agent-tabs";
+import { AgentSkillsPanel } from "./agent-skills-panel";
 
 /**
  * Agent configuration.
@@ -53,6 +45,8 @@ type Agent = {
     status: string;
     provider: string;
     model: string;
+    /** The engine this agent runs on. Null falls back to the bridge environment. */
+    engine_id: string | null;
     system_prompt: string;
     first_message: string;
     voice_config: JsonConfig | null;
@@ -63,7 +57,21 @@ type Agent = {
     updated_at?: string;
 };
 
-const TABS = ["Model", "Voice", "Transcriber", "Tools", "Analysis", "Monitors", "Compliance", "Advanced"] as const;
+/**
+ * Two tabs, where there were eight.
+ *
+ * Voice, Transcriber, Analysis, Monitors, Compliance and Advanced were each a
+ * full panel of settings that the console wrote and the call path never read —
+ * verified against `bridge/src` and `server/src`: the bridge takes four things
+ * from an agent, and those were not among them. A console that offers a choice
+ * with no consequence is worse than one that offers fewer choices, so they are
+ * gone until something reads them.
+ *
+ * What they configured belongs to an engine anyway. A voice and a transcriber
+ * are properties of the chain a call runs through, shared by every agent on it,
+ * not of who the agent is.
+ */
+const TABS = ["Persona", "Skills"] as const;
 
 
 
@@ -78,6 +86,9 @@ const NEW_AGENT: Partial<Agent> = {
     status: "draft",
     provider: "local",
     model: "gemma-4-12b",
+    // Left unset: an agent with no engine keeps whatever the bridge environment
+    // says, which is the behaviour every agent had before engines existed.
+    engine_id: null,
     first_message: "Hello! How can I help you today?",
     system_prompt:
         "[Identity]\nYou are a receptionist.\n\n" +
@@ -91,8 +102,74 @@ const NEW_AGENT: Partial<Agent> = {
     config: {},
 };
 
+/**
+ * What the attached engine resolves to, read-only.
+ *
+ * Not a second set of selects: the engine already decided these, and an
+ * editable copy here is how the same fact ends up in two places saying
+ * different things. Editing them means opening the engine.
+ */
+const EngineSummary = ({ engine }: { engine: EngineOption }) => {
+    const config = engine.config ?? {};
+    const steps =
+        engine.mode === "realtime"
+            ? [{ label: "Hears and speaks", stage: config.realtime }]
+            : [
+                  { label: "Listening", stage: config.stt },
+                  { label: "Thinking", stage: config.llm },
+                  { label: "Speaking", stage: config.tts },
+              ];
+
+    return (
+        <div className="flex max-w-xl flex-col gap-3 rounded-lg bg-secondary p-4 ring-1 ring-secondary">
+            <div className="flex items-baseline justify-between gap-4">
+                <span className="text-sm font-medium text-secondary">Runs through</span>
+                <Button href={`/engines/${engine.id}`} color="link-color" size="sm">
+                    Edit engine
+                </Button>
+            </div>
+
+            {/* A fixed label column, so the values line up as a list rather than
+                drifting to the far edge of whatever width this card is given. */}
+            <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-4 gap-y-2">
+                {steps.map((step) => (
+                    <div key={step.label} className="contents">
+                        <dt className="self-baseline text-xs font-medium tracking-wide text-quaternary uppercase">
+                            {step.label}
+                        </dt>
+                        <dd className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                            {step.stage?.provider ? (
+                                <>
+                                    <span className="text-sm text-secondary">{step.stage.provider}</span>
+                                    <span className="truncate font-mono text-xs text-tertiary">
+                                        {step.stage.model ?? "no model"}
+                                    </span>
+                                    {step.stage.voice ? (
+                                        <span className="text-xs text-tertiary">as {step.stage.voice}</span>
+                                    ) : null}
+                                </>
+                            ) : (
+                                <span className="text-sm text-tertiary">Not chosen</span>
+                            )}
+                        </dd>
+                    </div>
+                ))}
+            </dl>
+        </div>
+    );
+};
+
+type EngineOption = {
+    id: string;
+    name: string;
+    mode: string;
+    status: string;
+    config: Record<string, { provider?: string; model?: string; voice?: string }> | null;
+};
+
 export function AgentsScreen() {
     const { records, isLoading, error, create, refresh } = useResource<Agent>("agents");
+    const { records: engines } = useResource<EngineOption>("engines");
     const { context } = useSession();
     const { copied, copy } = useClipboard();
 
@@ -101,7 +178,7 @@ export function AgentsScreen() {
     const [isSaving, setIsSaving] = useState(false);
     const [isCreating, setIsCreating] = useState(false);
     const [query, setQuery] = useState("");
-    const [tab, setTab] = useState<(typeof TABS)[number]>("Model");
+    const [tab, setTab] = useState<(typeof TABS)[number]>("Persona");
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [publishError, setPublishError] = useState<string | null>(null);
@@ -119,11 +196,11 @@ export function AgentsScreen() {
         () =>
             draft
                 ? {
+                      hasEngine: Boolean(draft.engine_id),
                       provider: draft.provider,
                       model: draft.model,
                       voice: (draft.voice_config?.voice as string) ?? null,
                       transcriber: (draft.transcriber_config?.transcriber as string) ?? null,
-                      latencyThresholdMs: (draft.config?.latency_threshold_ms as number) ?? null,
                   }
                 : null,
         [draft],
@@ -245,6 +322,12 @@ export function AgentsScreen() {
                 draft.id,
                 {
                     name: draft.name,
+                    // Every layer dropped this independently — the diff, the
+                    // database function, and this payload — so switching an
+                    // agent's engine published successfully and changed
+                    // nothing. Sent explicitly, including as null, because
+                    // detaching an engine is a real edit.
+                    engine_id: draft.engine_id,
                     provider: draft.provider,
                     model: draft.model,
                     system_prompt: draft.system_prompt,
@@ -307,6 +390,52 @@ export function AgentsScreen() {
         supportingText: provider.tagline,
     }));
 
+    /**
+     * Attach an engine, and take its choices with it.
+     *
+     * The agent keeps its own provider, model and voice columns: the publish
+     * gate, the findings and the version diff all read them, and the bridge
+     * still falls back to them for an agent with no engine. Writing them from
+     * the engine is what stops the two from disagreeing — the drift that had
+     * three different model ids in three places, none of them wrong on its own.
+     */
+    const attachEngine = (engineId: string | null) => {
+        const engine = engines.find((option) => option.id === engineId);
+        // Whichever step decides what to say: the single model on a realtime
+        // engine, the thinking step on a relay. Taking only `realtime` left a
+        // relay's agent still recording the Gemini model it used to run on.
+        const deciding = engine?.config?.realtime ?? engine?.config?.llm;
+        const speaking = engine?.config?.realtime ?? engine?.config?.tts;
+        patch({
+            engine_id: engineId,
+            ...(deciding?.provider ? { provider: deciding.provider } : {}),
+            ...(deciding?.model ? { model: deciding.model } : {}),
+            ...(speaking?.voice && speaking.provider && draft
+                ? { voice_config: { ...draft.voice_config, voice: `${speaking.provider}:${speaking.voice}` } }
+                : {}),
+        });
+    };
+
+    /** The engine attached to the draft, if it is one this org still has. */
+    const attachedEngine = engines.find((option) => option.id === draft?.engine_id) ?? null;
+
+    /**
+     * What the chosen engine will actually do on a call.
+     *
+     * The bridge only reads an engine whose status is published, and falls back
+     * to its environment for anything else — silently, in a log line nobody is
+     * watching. Attaching a draft engine therefore looks like a change and is
+     * not one, so the editor says so at the point of choosing.
+     */
+    const engineHint = useMemo(() => {
+        const engine = engines.find((option) => option.id === draft?.engine_id);
+        if (!engine) return null;
+        if (engine.status !== "published") {
+            return `${engine.name} is a draft. Publish it to use it on calls.`;
+        }
+        return null;
+    }, [engines, draft?.engine_id]);
+
     const modelItems = (draft ? modelsFor(catalogue, draft.provider) : []).map((model) => ({
         id: model.id,
         label: model.label,
@@ -365,7 +494,7 @@ export function AgentsScreen() {
             setSelectedId(created.id);
             setDraft(created);
             baseline.current = created.updated_at ?? null;
-            setTab("Model");
+            setTab("Persona");
         }
     }
 
@@ -460,14 +589,14 @@ export function AgentsScreen() {
             </aside>
 
             {/* ---------- editor ---------- */}
-            <section className="flex min-h-0 min-w-0 flex-col overflow-y-auto">
+            <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
                 {!draft ? (
                     <div className="grid flex-1 place-items-center p-8">
                         <p className="text-sm text-tertiary">{isLoading ? "Loading…" : "Select an agent."}</p>
                     </div>
                 ) : (
                     <>
-                        <header className="border-b border-secondary px-6 pt-5">
+                        <header className="shrink-0 border-b border-secondary px-6 pt-5">
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div className="min-w-0">
                                     <h1 className="truncate text-xl font-semibold text-primary">{draft.name}</h1>
@@ -552,52 +681,22 @@ export function AgentsScreen() {
                             <RewriteNotice rewrites={rewrites} onDismiss={() => setRewrites([])} />
                         </header>
 
-                        <div className="min-w-0 p-6">
+                        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-6">
                             <FindingList findings={findings.forTab(tab)} />
 
-                            {tab === "Model" ? (
-                                <ConfigSection icon={ModelSectionIcon} label="Model">
-                                    <ConfigCard title="Model" description="Configure the behaviour of the agent.">
+                            {tab === "Persona" ? (
+                                <div className="flex flex-col gap-4">
+                                    {/* No section eyebrow above these. It
+                                        existed to group many cards under one of
+                                        eight tabs; with two tabs it only
+                                        repeated the tab's own name. */}
+                                    <ConfigCard title="Identity" description="Name, greeting and prompt.">
                                         <Input
                                             label="Name"
                                             value={draft.name}
                                             onChange={(value) => patch({ name: String(value) })}
                                             hint="Shown in call logs and phone number routing."
                                         />
-
-                                        <div className="grid gap-4 sm:grid-cols-2">
-                                            <Select
-                                                label="Provider"
-                                                items={providerItems}
-                                                selectedKey={draft.provider}
-                                                onSelectionChange={(key) => changeProvider(String(key))}
-                                                hint="Decides where caller audio is processed."
-                                            >
-                                                {(item) => (
-                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
-                                                        {item.label}
-                                                    </Select.Item>
-                                                )}
-                                            </Select>
-
-                                            {/* Filtered by provider. An unfiltered list lets you
-                                                pick a model that cannot run where you chose to
-                                                run it, and the failure surfaces on a call. */}
-                                            <Select
-                                                label="Model"
-                                                items={modelItems}
-                                                placeholder={modelItems.length ? "Select a model" : "No models for this provider"}
-                                                isDisabled={!modelItems.length}
-                                                selectedKey={draft.model}
-                                                onSelectionChange={(key) => changeModel(String(key))}
-                                            >
-                                                {(item) => (
-                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
-                                                        {item.label}
-                                                    </Select.Item>
-                                                )}
-                                            </Select>
-                                        </div>
 
                                         <Select
                                             label="First Message Mode"
@@ -626,62 +725,84 @@ export function AgentsScreen() {
                                             hint="Sent to the model on every turn."
                                         />
 
-                                        <div className="grid gap-4 sm:grid-cols-2">
-                                            <Input
-                                                label="Max tokens"
-                                                type="number"
-                                                value={String(configValue(draft.config, "max_tokens", 120))}
-                                                onChange={(value) =>
-                                                    patch({ config: { ...draft.config, max_tokens: Number(value) || 120 } })
-                                                }
-                                                hint="Caps reply length. Too low and replies truncate mid-sentence, which on a call sounds like a dropped line."
-                                            />
-                                            <Input
-                                                label="Temperature"
-                                                type="number"
-                                                value={String(configValue(draft.config, "temperature", 0.4))}
-                                                onChange={(value) =>
-                                                    patch({ config: { ...draft.config, temperature: Number(value) } })
-                                                }
-                                                hint="0–2. Higher wanders; a receptionist wants low."
-                                            />
-                                        </div>
-
                                         {draft.updated_at && (
                                             <p className="text-sm text-tertiary">Last updated {timeAgo(draft.updated_at)}.</p>
                                         )}
                                     </ConfigCard>
-                                </ConfigSection>
-                            ) : tab === "Voice" ? (
-                                <VoicePanel
-                                    config={draft.voice_config}
-                                    patch={(next) => patch({ voice_config: next })}
-                                    catalogue={catalogue}
-                                    provider={draft.provider}
-                                />
-                            ) : tab === "Transcriber" ? (
-                                <TranscriberPanel
-                                    config={draft.transcriber_config}
-                                    patch={(next) => patch({ transcriber_config: next })}
-                                    catalogue={catalogue}
-                                    provider={draft.provider}
-                                />
-                            ) : tab === "Tools" ? (
-                                <ToolsPanel />
-                            ) : tab === "Analysis" ? (
-                                <AnalysisPanel config={draft.analysis_config} patch={(next) => patch({ analysis_config: next })} />
-                            ) : tab === "Monitors" ? (
-                                <MonitorsPanel config={draft.config} patch={(next) => patch({ config: next })} />
-                            ) : tab === "Compliance" ? (
-                                <CompliancePanel
-                                    config={draft.compliance_config}
-                                    patch={(next) => patch({ compliance_config: next })}
-                                    catalogue={catalogue}
-                                    provider={draft.provider}
-                                />
-                            ) : (
-                                <AdvancedPanel config={draft.config} patch={(next) => patch({ config: next })} />
-                            )}
+
+                                    <ConfigCard title="How it speaks" description="The engine this agent runs on.">
+                                        <Select
+                                            label="Engine"
+                                            placeholder="Server default"
+                                            selectedKey={draft.engine_id ?? ""}
+                                            onSelectionChange={(key) => attachEngine(String(key) || null)}
+                                            items={[
+                                                { id: "", label: "Server default", supportingText: "No engine" },
+                                                ...engines.map((option) => ({
+                                                    id: option.id,
+                                                    label: option.status === "published" ? option.name : `${option.name} (draft)`,
+                                                    supportingText: option.mode === "realtime" ? "One model" : "Relay",
+                                                })),
+                                            ]}
+                                            hint={
+                                                engineHint ?? "How this agent hears and speaks."
+                                            }
+                                        >
+                                            {(item) => (
+                                                <Select.Item id={item.id} supportingText={item.supportingText}>
+                                                    {item.label}
+                                                </Select.Item>
+                                            )}
+                                        </Select>
+
+                                        {attachedEngine ? (
+                                            <EngineSummary engine={attachedEngine} />
+                                        ) : (
+                                            <div className="grid gap-4 sm:grid-cols-2">
+                                            <Select
+                                                label="Provider"
+                                                items={providerItems}
+                                                selectedKey={draft.provider}
+                                                onSelectionChange={(key) => changeProvider(String(key))}
+                                                hint={
+                                                    draft.engine_id
+                                                        ? "Set by the engine."
+                                                        : "Where caller audio is processed."
+                                                }
+                                            >
+                                                {(item) => (
+                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
+                                                        {item.label}
+                                                    </Select.Item>
+                                                )}
+                                            </Select>
+
+                                            {/* Filtered by provider. An unfiltered list lets you
+                                                pick a model that cannot run where you chose to
+                                                run it, and the failure surfaces on a call. */}
+                                            <Select
+                                                label="Model"
+                                                items={modelItems}
+                                                placeholder={modelItems.length ? "Select a model" : "No models for this provider"}
+                                                isDisabled={!modelItems.length}
+                                                selectedKey={draft.model}
+                                                onSelectionChange={(key) => changeModel(String(key))}
+                                            >
+                                                {(item) => (
+                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
+                                                        {item.label}
+                                                    </Select.Item>
+                                                )}
+                                            </Select>
+                                        </div>
+
+                                        )}
+
+                                    </ConfigCard>
+                                </div>
+                            ) : tab === "Skills" ? (
+                                <AgentSkillsPanel agentId={draft.id} />
+                            ) : null}
                         </div>
                     </>
                 )}

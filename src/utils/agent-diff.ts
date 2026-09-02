@@ -24,13 +24,25 @@ export type FieldChange = {
 };
 
 /** Scalar columns, in the order they appear in the editor. */
-export const SCALAR_FIELDS = ["name", "provider", "model", "first_message", "system_prompt"] as const;
+export const SCALAR_FIELDS = [
+    "name",
+    // The engine is the biggest change anyone can make to an agent — it decides
+    // how the call sounds and whether tools can be called at all. It was missing
+    // here, so switching engines produced no diff, the editor never became
+    // dirty, and Publish stayed disabled with nothing saying why.
+    "engine_id",
+    "provider",
+    "model",
+    "first_message",
+    "system_prompt",
+] as const;
 
 /** jsonb columns, each backing one tab. */
 export const CONFIG_FIELDS = ["voice_config", "transcriber_config", "analysis_config", "compliance_config", "config"] as const;
 
 const COLUMN_LABELS: Record<string, string> = {
     name: "Name",
+    engine_id: "Engine",
     provider: "Provider",
     model: "Model",
     first_message: "First message",

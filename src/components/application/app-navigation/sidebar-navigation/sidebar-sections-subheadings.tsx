@@ -15,29 +15,18 @@ interface SidebarNavigationSectionsSubheadingsProps {
     activeUrl?: string;
     /** List of items to display. */
     items: Array<{ label: string; items: NavItemType[] }>;
-    /** Render as an icon rail. Screens that are themselves a split ask for this. */
+    /** Render as an icon rail. The shell decides; this only draws it. */
     isCollapsed?: boolean;
-    /** Called when the reader pins the labelled nav open, or unpins it. */
-    onPinnedChange?: (pinned: boolean) => void;
-    /** Whether the labelled nav is currently pinned. */
-    isPinned?: boolean;
 }
 
 export const SidebarNavigationSectionsSubheadings = ({
     activeUrl = "/",
     items,
     isCollapsed = false,
-    isPinned = false,
-    onPinnedChange,
 }: SidebarNavigationSectionsSubheadingsProps) => {
     // 68px fits a 20px icon with the same padding the expanded item uses, so
     // the icons do not shift horizontally when the rail expands.
     const MAIN_SIDEBAR_WIDTH = isCollapsed ? 68 : 276;
-
-    // Only offered where it does something. On a single-pane screen the nav is
-    // already expanded, so a pin control there would be a toggle with no
-    // visible effect until the reader navigated somewhere else.
-    const canPin = !!onPinnedChange && (isCollapsed || isPinned);
 
     const content = (
         <aside
@@ -46,21 +35,24 @@ export const SidebarNavigationSectionsSubheadings = ({
                     "--width": `${MAIN_SIDEBAR_WIDTH}px`,
                 } as React.CSSProperties
             }
-            className="flex h-full w-full max-w-full flex-col justify-between overflow-x-hidden overflow-y-auto bg-primary pt-4 shadow-xs ring-secondary ring-inset lg:w-(--width) lg:rounded-xl lg:ring-1"
+            // 200ms rather than the 100ms used for hover states: this moves 208px
+            // and a fast transition on that distance reads as a jump. `ease-out`
+            // so it settles rather than stops.
+            className="relative flex h-full w-full max-w-full flex-col overflow-hidden bg-primary pt-4 shadow-xs ring-secondary transition-[width] duration-200 ease-out ring-inset motion-reduce:transition-none lg:w-(--width) lg:rounded-xl lg:ring-1"
         >
             {isCollapsed ? (
-                <div className="flex flex-col items-center gap-2 px-2">
+                <div className="flex shrink-0 flex-col items-center gap-2 px-2">
                     <VokooLogo className="h-6" iconOnly />
                     <ThemeToggle />
                 </div>
             ) : (
-                <div className="flex items-center justify-between gap-5 px-4 lg:pl-5">
+                <div className="flex shrink-0 items-center justify-between gap-5 px-4 lg:pl-5">
                     <VokooLogo className="h-6" />
                     <ThemeToggle />
                 </div>
             )}
 
-            <ul className="mt-6 md:mt-5">
+            <ul className="scrollbar-hide mt-6 min-h-0 flex-1 overflow-x-hidden overflow-y-auto md:mt-5">
                 {items.map((group) => (
                     <li key={group.label}>
                         {/* The subheading is the first thing to go: it labels a
@@ -112,28 +104,13 @@ export const SidebarNavigationSectionsSubheadings = ({
             <div
                 className={
                     isCollapsed
-                        ? "mt-auto flex flex-col items-center gap-3 px-2 py-4"
-                        : "mt-auto flex flex-col gap-5 px-2 py-4 lg:gap-6 lg:px-4 lg:py-4"
+                        ? "flex shrink-0 flex-col items-center gap-3 px-2 py-4"
+                        : "flex shrink-0 flex-col gap-5 px-2 py-4 lg:gap-6 lg:px-4 lg:py-4"
                 }
             >
-                {canPin && (
-                    <Tooltip
-                        title={isPinned ? "Collapse navigation" : "Keep navigation open"}
-                        description={isPinned ? undefined : "Stays open on split screens, on this browser."}
-                        placement="right"
-                    >
-                        <ButtonUtility
-                            size="xs"
-                            color="tertiary"
-                            icon={isPinned ? ChevronLeftDouble : ChevronRightDouble}
-                            aria-label={isPinned ? "Collapse navigation" : "Keep navigation open"}
-                            onClick={() => onPinnedChange?.(!isPinned)}
-                            className={isCollapsed ? undefined : "self-start"}
-                        />
-                    </Tooltip>
-                )}
                 <VokooAccountCard iconOnly={isCollapsed} />
             </div>
+
         </aside>
     );
 

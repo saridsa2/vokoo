@@ -83,3 +83,24 @@ input[type="search"]::-webkit-search-cancel-button {
 .recharts-surface path {
     outline: none;
 }
+
+/* Scrollbars are hidden across the whole application.
+ *
+ * The `scrollbar-hide` utility above is opt-in per element, which meant every
+ * pane that scrolled had to remember it. Scrolling itself is untouched — this
+ * removes the track, not the behaviour, so wheel, trackpad, keyboard and
+ * programmatic scrolling all work exactly as before.
+ */
+@layer base {
+    *,
+    *::before,
+    *::after {
+        -ms-overflow-style: none; /* old Edge */
+        scrollbar-width: none; /* Firefox */
+    }
+
+    *::-webkit-scrollbar {
+        display: none;
+        -webkit-appearance: none;
+    }
+}
