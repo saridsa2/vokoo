@@ -32,7 +32,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-    title: "VoKoo",
+    title: "Sarvathra",
     description: "Voice AI control plane",
 };
 

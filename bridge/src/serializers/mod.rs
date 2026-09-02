@@ -9,10 +9,12 @@
 //! [`serialize`]: FrameSerializer::serialize
 //! [`deserialize`]: FrameSerializer::deserialize
 
+pub mod audiosocket;
 pub mod g711;
 pub mod kookoo;
 pub mod twilio;
 
+pub use audiosocket::{AudioSocketFrame, FrameKind, FrameReader};
 pub use kookoo::{CallCapture, KOOKOO_FRAME_SAMPLES, KooKooFrameSerializer, KooKooInputParams, KooKooStart};
 pub use twilio::{TwilioFrameSerializer, TwilioInputParams, TwilioStart};
 
