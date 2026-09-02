@@ -34,6 +34,7 @@ async fn once(api_key: &str, model: &str) -> Result<(f64, f64), String> {
         voice: Some("Aoede".to_string()),
         instructions: INSTRUCTIONS.to_string(),
         functions: Vec::new(),
+        ..Default::default()
     })
     .await?;
     let connect_ms = t_connect.elapsed().as_secs_f64() * 1000.0;

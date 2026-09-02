@@ -71,7 +71,12 @@ pub struct CallControl {
 /// Ozonetel's domestic instance wants a conference number as a zero followed by
 /// ten digits — not `+91…`, not `91…`. Passing the number the way it is stored
 /// gets "Please pass valid Conference number", or worse, "call not found".
-fn dialable(number: &str) -> Option<String> {
+/// The one shape the carrier is shown, however the number was stored.
+///
+/// `0` plus the last ten digits, which is what KooKoo's own `<dial>` example
+/// uses (`09912343234`) and what `CONFERENCE` needs. A number typed into the
+/// composer as `+91…`, `91…` or with spaces all reduce to the same string here.
+pub(crate) fn dialable(number: &str) -> Option<String> {
     let digits: String = number.chars().filter(char::is_ascii_digit).collect();
     let last_ten = digits.get(digits.len().checked_sub(10)?..)?;
     Some(format!("0{last_ten}"))

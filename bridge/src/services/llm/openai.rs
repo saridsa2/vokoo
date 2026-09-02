@@ -1,0 +1,965 @@
+//! OpenAI LLM service (chat completions, SSE streaming, function calling).
+//!
+//! Supports:
+//!   - Plain text inference
+//!   - Tool/function calling with SSE delta accumulation
+//!   - Re-invocation loop (model calls tool → execute → re-invoke)
+//!   - Dhara transition hooks for conversation flow management
+//!   - Built-in tool lifecycle (on_start / on_stop / on_cancel)
+//!
+//! Pipeline position:
+//!   LLMUserAggregator → OpenAILLMHandler → LLMAssistantAggregator
+//!
+//! Lifecycle:
+//!   StartFrame  → initialise cacheable tools (pg connects, caches schema)
+//!   frames flow → inference + tool execution
+//!   EndFrame    → graceful shutdown (flush caches, return connections)
+//!   CancelFrame → cancel token fires, then on_cancel → on_stop
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use async_trait::async_trait;
+use chrono::Utc;
+use futures::StreamExt;
+use log;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tokio_util::sync::CancellationToken;
+
+use crate::adapters::base::LLMAdapter;
+use crate::adapters::openai::OpenAILLMAdapter;
+use crate::billing::{BillingCollector, BillingEvent};
+use crate::context::{LLMContext, ToolCall};
+use crate::error::{PipecatError, Result};
+use crate::frames::{
+    ControlFrame, DataFrame, Frame, FrameDirection, FunctionCallData,
+    FunctionCallRawResultData, FunctionCallResultData, FrameHandler, FrameInner,
+    FrameProcessor, SystemFrame,
+};
+use crate::tools::BuiltinTool;
+
+use super::function_registry::{FunctionRegistry, RegistryHandler};
+
+/// Hook called after all tool calls in a batch complete, before re-invoking
+/// inference. Used by DharaManager to apply node transitions.
+pub type TransitionHook = Arc<dyn Fn(&Arc<Mutex<LLMContext>>) + Send + Sync>;
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct OpenAILLMConfig {
+    pub api_key: String,
+    pub model: String,
+    pub base_url: String,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub seed: Option<i64>,
+    pub max_completion_tokens: Option<u32>,
+    pub service_tier: Option<String>,
+    /// Reasoning effort for thinking models. Gemini 2.5 and o-series burn
+    /// completion budget on internal reasoning before emitting a token — on a
+    /// phone turn that is pure latency, and with a small max_tokens it returns
+    /// an EMPTY reply because the budget is gone before output starts.
+    /// `Some("none")` disables it. Omitted from the request when `None`, so
+    /// providers that don't know the field are unaffected.
+    pub reasoning_effort: Option<String>,
+    /// Maximum number of recursive tool call rounds. Prevents infinite loops.
+    pub max_tool_rounds: usize,
+    /// Context window size for this model in tokens. `None` falls back to
+    /// the hardcoded table in `resolve_context_window_tokens()`. Set
+    /// explicitly to override for custom or self-hosted models.
+    pub context_window_tokens: Option<usize>,
+}
+
+/// Hardcoded context windows for common models. Returns `None` for unknowns —
+/// callers treat `None` as "no trimming".
+fn default_context_tokens(model: &str) -> Option<usize> {
+    let m = model.to_lowercase();
+    let m = m.split('/').next_back().unwrap_or(&m);
+    if m.starts_with("gpt-4.1") { return Some(1_047_576); }
+    if m.starts_with("gpt-4o") { return Some(128_000); }
+    if m.starts_with("gpt-4-turbo") { return Some(128_000); }
+    if m.starts_with("gpt-3.5") { return Some(16_385); }
+    if m.starts_with("claude-opus-4") || m.starts_with("claude-sonnet-4") { return Some(1_048_576); }
+    if m.starts_with("claude-3") { return Some(200_000); }
+    if m.starts_with("gemini-2") || m.starts_with("gemini-1.5") { return Some(1_048_576); }
+    None
+}
+
+impl OpenAILLMConfig {
+    /// Returns the effective context window token limit for this config,
+    /// preferring the explicit override then falling back to the model table.
+    pub fn resolve_context_window_tokens(&self) -> Option<usize> {
+        self.context_window_tokens.or_else(|| default_context_tokens(&self.model))
+    }
+}
+
+impl Default for OpenAILLMConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            model: "gpt-4.1".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            temperature: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            seed: None,
+            max_completion_tokens: None,
+            service_tier: None,
+            reasoning_effort: None,
+            max_tool_rounds: 5,
+            context_window_tokens: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpenAI API wire types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
+#[derive(Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<Value>,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    service_tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Deserialize)]
+struct ChatChunk {
+    choices: Vec<ChunkChoice>,
+    usage: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct ChunkChoice {
+    delta: ChunkDelta,
+    #[allow(dead_code)]
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ChunkDelta {
+    content: Option<String>,
+    #[allow(dead_code)]
+    role: Option<String>,
+    tool_calls: Option<Vec<ChunkToolCall>>,
+}
+
+#[derive(Deserialize)]
+struct ChunkToolCall {
+    index: u32,
+    id: Option<String>,
+    function: Option<ChunkToolCallFunction>,
+}
+
+#[derive(Deserialize)]
+struct ChunkToolCallFunction {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Tool call accumulator
+// ---------------------------------------------------------------------------
+
+struct PartialToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl PartialToolCall {
+    fn into_tool_call(self) -> ToolCall {
+        ToolCall {
+            id: self.id,
+            function_name: self.name,
+            arguments: self.arguments,
+        }
+    }
+}
+
+enum InferenceOutcome {
+    Text,
+    ToolCalls(Vec<ToolCall>),
+}
+
+// ---------------------------------------------------------------------------
+// Billing guard
+// ---------------------------------------------------------------------------
+
+/// Records LLM usage for one streamed inference round, surviving cancellation.
+///
+/// A barge-in interruption `abort()`s the in-flight inference task, dropping
+/// the stream future mid-flight — so the `record()` call that would normally
+/// run after the loop never executes, and the usage-only chunk OpenAI sends
+/// *after* the content may never arrive. This guard records on `Drop`, so an
+/// interrupted (or usage-less) round is still billed from an estimate instead
+/// of leaking revenue. A normal completion calls `commit_real` with the exact
+/// counts, which disarms the estimate.
+struct LlmBillingGuard {
+    billing:           Option<Arc<dyn BillingCollector>>,
+    model:             String,
+    est_input_tokens:  u32,
+    output_chars:      usize,
+    recorded:          bool,
+}
+
+impl LlmBillingGuard {
+    fn new(
+        billing: Option<Arc<dyn BillingCollector>>,
+        model: String,
+        est_input_tokens: u32,
+    ) -> Self {
+        Self { billing, model, est_input_tokens, output_chars: 0, recorded: false }
+    }
+
+    fn add_output_chars(&mut self, n: usize) {
+        self.output_chars += n;
+    }
+
+    /// Record the exact token counts reported by the provider and disarm the
+    /// drop-time estimate.
+    fn commit_real(&mut self, input_tokens: u32, output_tokens: u32) {
+        if let Some(bc) = &self.billing {
+            bc.record(BillingEvent::LlmUsage {
+                session_id:    bc.session_id(),
+                provider:      "openai".to_string(),
+                model:         self.model.clone(),
+                input_tokens,
+                output_tokens,
+                estimated:     false,
+                occurred_at:   Utc::now(),
+            });
+        }
+        self.recorded = true;
+    }
+}
+
+impl Drop for LlmBillingGuard {
+    fn drop(&mut self) {
+        if self.recorded {
+            return;
+        }
+        let Some(bc) = &self.billing else { return };
+        // ~4 chars per token is the standard rough heuristic for English text.
+        let output_tokens = self.output_chars.div_ceil(4) as u32;
+        if self.est_input_tokens == 0 && output_tokens == 0 {
+            return;
+        }
+        bc.record(BillingEvent::LlmUsage {
+            session_id:    bc.session_id(),
+            provider:      "openai".to_string(),
+            model:         self.model.clone(),
+            input_tokens:  self.est_input_tokens,
+            output_tokens,
+            estimated:     true,
+            occurred_at:   Utc::now(),
+        });
+    }
+}
+
+/// Rough token estimate for billing fallback: ~4 characters per token.
+fn estimate_tokens(serialized_chars: usize) -> u32 {
+    serialized_chars.div_ceil(4) as u32
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
+pub struct OpenAILLMHandler {
+    config: OpenAILLMConfig,
+    client: Client,
+    adapter: OpenAILLMAdapter,
+    registry: Arc<Mutex<FunctionRegistry>>,
+    /// Optional hook called after tool calls complete, before re-invoking.
+    /// Used by DharaManager for node transitions.
+    transition_hook: Arc<RwLock<Option<TransitionHook>>>,
+    /// Built-in tools attached to this handler.
+    tools: Vec<Arc<dyn BuiltinTool>>,
+    /// Cancellation token — cancelled on CancelFrame, cascades to all tools.
+    cancel_token: CancellationToken,
+    /// Optional billing collector — records LLM token usage per inference call.
+    billing: Option<Arc<dyn BillingCollector>>,
+}
+
+impl OpenAILLMHandler {
+    /// Create a handler with an empty, owned registry (no tools).
+    pub fn new(config: OpenAILLMConfig) -> Self {
+        Self {
+            config,
+            client: Client::new(),
+            adapter: OpenAILLMAdapter::new(),
+            registry: Arc::new(Mutex::new(FunctionRegistry::new())),
+            transition_hook: Arc::new(RwLock::new(None)),
+            tools: Vec::new(),
+            cancel_token: CancellationToken::new(),
+            billing: None,
+        }
+    }
+
+    /// Create a handler with a pre-built registry (simple tool calling, no dhara).
+    pub fn with_registry(config: OpenAILLMConfig, registry: FunctionRegistry) -> Self {
+        Self {
+            config,
+            client: Client::new(),
+            adapter: OpenAILLMAdapter::new(),
+            registry: Arc::new(Mutex::new(registry)),
+            transition_hook: Arc::new(RwLock::new(None)),
+            tools: Vec::new(),
+            cancel_token: CancellationToken::new(),
+            billing: None,
+        }
+    }
+
+    /// Create a handler with a shared registry (used by DharaManager).
+    ///
+    /// The `Arc<Mutex<FunctionRegistry>>` is shared with DharaManager,
+    /// which swaps its contents on node transitions.
+    pub fn with_shared_registry(
+        config: OpenAILLMConfig,
+        registry: Arc<Mutex<FunctionRegistry>>,
+    ) -> Self {
+        Self {
+            config,
+            client: Client::new(),
+            adapter: OpenAILLMAdapter::new(),
+            registry,
+            transition_hook: Arc::new(RwLock::new(None)),
+            tools: Vec::new(),
+            cancel_token: CancellationToken::new(),
+            billing: None,
+        }
+    }
+
+    /// Attach a billing collector to record token usage per LLM call.
+    pub fn with_billing(mut self, billing: Arc<dyn BillingCollector>) -> Self {
+        self.billing = Some(billing);
+        self
+    }
+
+    
+    pub fn set_transition_hook(&self, hook: TransitionHook) {
+    *self.transition_hook.write().unwrap() = Some(hook);
+    }
+
+    pub fn transition_hook_slot(&self) -> Arc<RwLock<Option<TransitionHook>>> {
+        self.transition_hook.clone()
+    }
+
+    /// Attach a built-in tool.
+    ///
+    /// Registers the tool's handlers into the shared registry immediately.
+    /// Handlers capture `Arc<OnceCell<...>>` refs — the actual resources
+    /// (connections, caches) are populated later in `on_start()` when
+    /// `StartFrame` flows through.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let pg = Arc::new(NeonPostgresTool::from_env());
+    /// handler.add_tool(pg);
+    /// ```
+    pub fn add_tool(&mut self, tool: Arc<dyn BuiltinTool>) {
+        log::info!("OpenAILLM: attaching tool '{}'", tool.name());
+        tool.register_all(&mut self.registry.lock().unwrap());
+        self.tools.push(tool);
+    }
+
+    /// Get the tool schemas from all attached tools.
+    ///
+    /// Convenience for building `ToolsSchema` at pipeline setup:
+    /// ```rust,ignore
+    /// let schemas = handler.collect_tool_schemas();
+    /// let tools = ToolsSchema::new(schemas);
+    /// ```
+    pub fn collect_tool_schemas(&self) -> Vec<crate::adapters::schemas::FunctionSchema> {
+        self.tools.iter().flat_map(|t| t.tool_schemas()).collect()
+    }
+
+    pub fn into_processor(self) -> FrameProcessor {
+        FrameProcessor::new("OpenAILLM", Box::new(self), false)
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle helpers
+    // -----------------------------------------------------------------------
+
+    /// Initialise all cacheable tools. Called on StartFrame.
+    async fn start_tools(&self) {
+        for tool in &self.tools {
+            if tool.is_cacheable() {
+                let child = self.cancel_token.child_token();
+                log::info!("OpenAILLM: starting tool '{}'...", tool.name());
+                if let Err(e) = tool.on_start(child).await {
+                    log::error!(
+                        "OpenAILLM: tool '{}' failed to start: {}",
+                        tool.name(), e
+                    );
+                }
+            }
+        }
+    }
+
+    /// Gracefully stop all tools. Called on EndFrame.
+    async fn stop_tools(&self) {
+        for tool in &self.tools {
+            log::debug!("OpenAILLM: stopping tool '{}'...", tool.name());
+            if let Err(e) = tool.on_stop().await {
+                log::error!(
+                    "OpenAILLM: tool '{}' failed to stop: {}",
+                    tool.name(), e
+                );
+            }
+        }
+    }
+
+    /// Cancel all tools. Called on CancelFrame.
+    async fn cancel_tools(&self) {
+        // 1. Trip the cancellation token — background tasks exit via select!
+        self.cancel_token.cancel();
+
+        // 2. Give each tool a chance to do tool-specific cancellation
+        //    (e.g. cancel in-flight postgres queries), then on_stop()
+        for tool in &self.tools {
+            log::debug!("OpenAILLM: cancelling tool '{}'...", tool.name());
+            if let Err(e) = tool.on_cancel().await {
+                log::error!(
+                    "OpenAILLM: tool '{}' cancel failed: {}",
+                    tool.name(), e
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SSE streaming
+    // -----------------------------------------------------------------------
+
+    /// Run a single SSE stream.
+    async fn run_stream(
+        &self,
+        context: &Arc<Mutex<LLMContext>>,
+        processor: &FrameProcessor,
+    ) -> Result<InferenceOutcome> {
+        let (api_messages, tools, tool_choice) = {
+            let ctx = context.lock().unwrap();
+            let messages = ctx.to_api_messages();
+            let converted = self.adapter.convert_messages(&messages);
+            let tools = ctx.tools.as_ref().map(|t| self.adapter.to_provider_tools_format(t));
+            let tool_choice = ctx.tool_choice.as_ref().map(|tc| self.adapter.to_provider_tool_choice(tc));
+            (converted, tools, tool_choice)
+        };
+
+        // Estimate input tokens from the serialized prompt before the messages
+        // are moved into the request body — used as the billing fallback if the
+        // round is interrupted before OpenAI returns real usage counts.
+        let est_input_tokens = if self.billing.is_some() {
+            let chars = serde_json::to_string(&api_messages)
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
+            estimate_tokens(chars)
+        } else {
+            0
+        };
+
+        let url = format!("{}/chat/completions", self.config.base_url);
+        log::info!(
+            "OpenAILLM: {} messages -> {} (model={})",
+            api_messages.len(), url, self.config.model
+        );
+
+        let body = ChatRequest {
+            model: self.config.model.clone(),
+            messages: api_messages,
+            stream: true,
+            temperature: self.config.temperature,
+            top_p: self.config.top_p,
+            frequency_penalty: self.config.frequency_penalty,
+            presence_penalty: self.config.presence_penalty,
+            seed: self.config.seed,
+            max_completion_tokens: self.config.max_completion_tokens,
+            service_tier: self.config.service_tier.clone(),
+            reasoning_effort: self.config.reasoning_effort.clone(),
+            tools,
+            tool_choice,
+            // Request usage counts in the final streaming chunk.
+            stream_options: if self.billing.is_some() {
+                Some(StreamOptions { include_usage: true })
+            } else {
+                None
+            },
+        };
+
+        let response = self.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| PipecatError::pipeline(format!("OpenAILLM: request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(PipecatError::pipeline(
+                format!("OpenAILLM: HTTP {} — {}", status, body),
+            ));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut tool_accum: HashMap<u32, PartialToolCall> = HashMap::new();
+        let mut last_usage: Option<(u32, u32)> = None;
+
+        // Records usage even if this task is aborted mid-stream by a barge-in.
+        let mut billing_guard =
+            LlmBillingGuard::new(self.billing.clone(), self.config.model.clone(), est_input_tokens);
+
+        'outer: while let Some(chunk) = stream.next().await {
+            let bytes = chunk.map_err(|e| {
+                PipecatError::pipeline(format!("OpenAILLM: stream read error: {}", e))
+            })?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            while let Some(pos) = buffer.find('\n') {
+                let line = buffer[..pos].trim_end_matches('\r').trim().to_string();
+                buffer = buffer[pos + 1..].to_string();
+
+                if line.is_empty() {
+                    continue;
+                }
+
+                let data = match line.strip_prefix("data: ") {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                if data == "[DONE]" {
+                    log::debug!("OpenAILLM: stream complete");
+                    break 'outer;
+                }
+
+                match serde_json::from_str::<ChatChunk>(data) {
+                    Ok(chunk) => {
+                        // Capture token usage from the final usage-only chunk
+                        // (sent when stream_options.include_usage = true).
+                        if let Some(u) = &chunk.usage {
+                            let inp = u["prompt_tokens"    ].as_u64().unwrap_or(0) as u32;
+                            let out = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
+                            if inp + out > 0 {
+                                last_usage = Some((inp, out));
+                            }
+                        }
+                        if let Some(choice) = chunk.choices.first() {
+                            if let Some(content) = &choice.delta.content {
+                                if !content.is_empty() {
+                                    billing_guard.add_output_chars(content.chars().count());
+                                    processor.push_frame(
+                                        Frame::llm_text(content.clone()),
+                                        FrameDirection::Downstream,
+                                    ).await?;
+                                }
+                            }
+                            if let Some(tool_calls) = &choice.delta.tool_calls {
+                                for tc in tool_calls {
+                                    let entry = tool_accum.entry(tc.index).or_insert_with(|| {
+                                        PartialToolCall {
+                                            id: String::new(),
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        }
+                                    });
+                                    if let Some(id) = &tc.id {
+                                        entry.id = id.clone();
+                                    }
+                                    if let Some(func) = &tc.function {
+                                        if let Some(name) = &func.name {
+                                            entry.name = name.clone();
+                                        }
+                                        if let Some(args) = &func.arguments {
+                                            entry.arguments.push_str(args);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("OpenAILLM: chunk parse error: {} — raw: {}", e, data);
+                    }
+                }
+            }
+        }
+
+        // Emit billing with real token counts when the provider reported them.
+        // Otherwise the guard's Drop records an estimate (covers a stream that
+        // ended without a usage chunk; a mid-stream abort is handled the same
+        // way when the task is cancelled).
+        match last_usage {
+            Some((inp, out)) => billing_guard.commit_real(inp, out),
+            None => log::debug!(
+                "OpenAILLM: no usage chunk — billing will be estimated on drop"
+            ),
+        }
+
+        if tool_accum.is_empty() {
+            Ok(InferenceOutcome::Text)
+        } else {
+            let mut calls: Vec<(u32, PartialToolCall)> = tool_accum.into_iter().collect();
+            calls.sort_by_key(|(idx, _)| *idx);
+            let tool_calls: Vec<ToolCall> =
+                calls.into_iter().map(|(_, tc)| tc.into_tool_call()).collect();
+            log::info!(
+                "OpenAILLM: model requested {} tool call(s): [{}]",
+                tool_calls.len(),
+                tool_calls
+                    .iter()
+                    .map(|tc| tc.function_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Ok(InferenceOutcome::ToolCalls(tool_calls))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Inference with tool execution loop
+    // -----------------------------------------------------------------------
+
+    /// Full inference with tool execution and re-invocation loop.
+    async fn run_inference(
+        &self,
+        context: Arc<Mutex<LLMContext>>,
+        processor: &FrameProcessor,
+    ) -> Result<()> {
+        // Discard any messages staged by a previously interrupted round so this
+        // inference starts from clean committed history. (doc/turn-acid.md)
+        context.lock().unwrap().rollback();
+
+        let mut round = 0;
+
+        loop {
+            if round >= self.config.max_tool_rounds {
+                log::warn!(
+                    "OpenAILLM: max tool rounds ({}) reached",
+                    self.config.max_tool_rounds
+                );
+                break;
+            }
+            round += 1;
+
+            if let Some(budget) = self.config.resolve_context_window_tokens() {
+                context.lock().unwrap().trim_to_context_budget(budget);
+            }
+
+            match self.run_stream(&context, processor).await? {
+                InferenceOutcome::Text => break,
+                InferenceOutcome::ToolCalls(tool_calls) => {
+                    // Stage the assistant tool_calls message. It is committed
+                    // into context only once all its results are staged too (at
+                    // the round boundary below), so an interruption mid-round
+                    // never leaves an orphaned tool_calls. (doc/turn-acid.md)
+                    context
+                        .lock()
+                        .unwrap()
+                        .stage_assistant_tool_calls(None, tool_calls.clone());
+
+                    processor
+                        .push_frame(Frame::function_call_start(), FrameDirection::Downstream)
+                        .await?;
+
+                    for tc in &tool_calls {
+                        processor
+                            .push_frame(
+                                Frame::function_call_in_progress(FunctionCallData {
+                                    id: tc.id.clone(),
+                                    function_name: tc.function_name.clone(),
+                                    arguments: tc.arguments.clone(),
+                                }),
+                                FrameDirection::Downstream,
+                            )
+                            .await?;
+
+                        // Look up handler in the shared registry
+                        let handler = {
+                            let reg = self.registry.lock().unwrap();
+                            reg.get(&tc.function_name).cloned()
+                        };
+
+                        // Execute handler — resolve to (summary, Option<raw_data>)
+                        let (summary, raw_data) = match handler {
+                            Some(RegistryHandler::Simple(f)) => {
+                                log::info!(
+                                    "OpenAILLM: executing simple '{}' (id={})",
+                                    tc.function_name, tc.id
+                                );
+                                let result = f(tc.arguments.clone()).await;
+                                (result, None)
+                            }
+                            Some(RegistryHandler::Data(f)) => {
+                                log::info!(
+                                    "OpenAILLM: executing data '{}' (id={})",
+                                    tc.function_name, tc.id
+                                );
+                                let output = f(tc.arguments.clone()).await;
+                                (output.summary, output.full_data)
+                            }
+                            None => {
+                                log::warn!(
+                                    "OpenAILLM: no handler for '{}'",
+                                    tc.function_name
+                                );
+                                (
+                                    format!(
+                                        "{{\"error\": \"function '{}' is not registered\"}}",
+                                        tc.function_name
+                                    ),
+                                    None,
+                                )
+                            }
+                        };
+
+                        // Raw data frame downstream (UI/logging) — LLM never sees this
+                        if let Some(data) = raw_data {
+                            processor
+                                .push_frame(
+                                    Frame::function_call_raw_result(FunctionCallRawResultData {
+                                        id: tc.id.clone(),
+                                        function_name: tc.function_name.clone(),
+                                        raw_data: data,
+                                    }),
+                                    FrameDirection::Downstream,
+                                )
+                                .await?;
+                        }
+
+                        // Summary result frame — LLM sees this on next round
+                        processor
+                            .push_frame(
+                                Frame::function_call_result(FunctionCallResultData {
+                                    id: tc.id.clone(),
+                                    function_name: tc.function_name.clone(),
+                                    result: summary.clone(),
+                                }),
+                                FrameDirection::Downstream,
+                            )
+                            .await?;
+
+                        // Only summary goes into LLM context — staged alongside
+                        // the assistant tool_calls message above.
+                        context.lock().unwrap().stage_tool_result(&tc.id, &summary);
+                    }
+
+                    processor
+                        .push_frame(Frame::function_call_end(), FrameDirection::Downstream)
+                        .await?;
+
+                    // Commit the staged round (assistant tool_calls + results)
+                    // into context atomically. Done BEFORE the transition hook,
+                    // which reads/clears `messages` directly. (doc/turn-acid.md)
+                    context.lock().unwrap().commit();
+
+                    // --- Transition hook ---
+                    if let Some(hook) = self.transition_hook.read().unwrap().as_ref() {
+                        hook(&context);
+                    }
+
+                    log::info!("OpenAILLM: re-invoking inference (round {})", round + 1);
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FrameHandler
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl FrameHandler for OpenAILLMHandler {
+    async fn on_process_frame(
+        &self,
+        processor: &FrameProcessor,
+        frame: Frame,
+        direction: FrameDirection,
+    ) -> Result<()> {
+        match &frame.inner {
+            // ----- Lifecycle: StartFrame -----
+            // Initialise cacheable tools (connect, cache schemas, etc.)
+            FrameInner::System(SystemFrame::Start(_)) => {
+                log::info!("OpenAILLM: StartFrame — initialising tools...");
+                self.start_tools().await;
+                processor.push_frame(frame, direction).await?;
+            }
+
+            // ----- Lifecycle: EndFrame -----
+            // Graceful shutdown — flush caches, return connections
+            FrameInner::Control(ControlFrame::End { .. }) => {
+                log::info!("OpenAILLM: EndFrame — stopping tools...");
+                self.stop_tools().await;
+                processor.push_frame(frame, direction).await?;
+            }
+
+            // ----- Lifecycle: CancelFrame -----
+            // Abrupt shutdown — cancel in-flight work, then stop
+            FrameInner::System(SystemFrame::Cancel { .. }) => {
+                log::warn!("OpenAILLM: CancelFrame — cancelling tools...");
+                self.cancel_tools().await;
+                processor.push_frame(frame, direction).await?;
+            }
+
+            // ----- Inference trigger -----
+            FrameInner::Data(DataFrame::LLMContextFrame(context)) => {
+                let context = context.clone();
+                processor
+                    .push_frame(
+                        Frame::llm_full_response_start(),
+                        FrameDirection::Downstream,
+                    )
+                    .await?;
+                if let Err(e) = self.run_inference(context, processor).await {
+                    log::error!("OpenAILLM: inference error: {}", e);
+                    processor.push_error(e.to_string(), false).await?;
+                }
+                processor
+                    .push_frame(
+                        Frame::llm_full_response_end(),
+                        FrameDirection::Downstream,
+                    )
+                    .await?;
+            }
+
+            // ----- Pass-through -----
+            _ => {
+                processor.push_frame(frame, direction).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn can_generate_metrics(&self) -> bool {
+        true
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    struct MockCollector {
+        events: Arc<StdMutex<Vec<BillingEvent>>>,
+        id: uuid::Uuid,
+    }
+    impl MockCollector {
+        fn new() -> Arc<Self> {
+            Arc::new(Self { events: Arc::new(StdMutex::new(Vec::new())), id: uuid::Uuid::new_v4() })
+        }
+        fn events(&self) -> Vec<BillingEvent> {
+            self.events.lock().unwrap().clone()
+        }
+    }
+    impl BillingCollector for MockCollector {
+        fn record(&self, e: BillingEvent) { self.events.lock().unwrap().push(e); }
+        fn session_id(&self) -> uuid::Uuid { self.id }
+    }
+
+    #[test]
+    fn guard_commit_real_records_exact_counts_and_disarms_drop() {
+        let mock = MockCollector::new();
+        {
+            let mut g = LlmBillingGuard::new(Some(mock.clone()), "gpt-4o-mini".into(), 100);
+            g.add_output_chars(40);
+            g.commit_real(56, 32);
+        } // drop here must NOT record again
+        let events = mock.events();
+        assert_eq!(events.len(), 1, "exactly one usage event");
+        match &events[0] {
+            BillingEvent::LlmUsage { input_tokens, output_tokens, estimated, .. } => {
+                assert_eq!(*input_tokens, 56);
+                assert_eq!(*output_tokens, 32);
+                assert!(!*estimated);
+            }
+            other => panic!("expected LlmUsage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guard_drop_without_commit_records_estimate() {
+        let mock = MockCollector::new();
+        {
+            let mut g = LlmBillingGuard::new(Some(mock.clone()), "gpt-4o-mini".into(), 100);
+            g.add_output_chars(40); // ~10 tokens
+            // no commit_real — simulates a barge-in abort mid-stream
+        }
+        let events = mock.events();
+        assert_eq!(events.len(), 1, "drop must record an estimated usage");
+        match &events[0] {
+            BillingEvent::LlmUsage { input_tokens, output_tokens, estimated, .. } => {
+                assert_eq!(*input_tokens, 100);
+                assert_eq!(*output_tokens, 10);
+                assert!(*estimated, "interrupted round must be flagged estimated");
+            }
+            other => panic!("expected LlmUsage, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn guard_drop_with_no_usage_records_nothing() {
+        let mock = MockCollector::new();
+        {
+            let _g = LlmBillingGuard::new(Some(mock.clone()), "gpt-4o-mini".into(), 0);
+            // no input estimate, no output → nothing billable
+        }
+        assert_eq!(mock.events().len(), 0);
+    }
+
+    #[test]
+    fn guard_without_collector_does_not_panic_on_drop() {
+        let mut g = LlmBillingGuard::new(None, "m".into(), 50);
+        g.add_output_chars(8);
+        drop(g);
+    }
+}

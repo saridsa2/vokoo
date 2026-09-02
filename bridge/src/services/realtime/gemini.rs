@@ -32,6 +32,13 @@ pub struct GeminiLiveConfig {
     /// Functions the model may call. A flow declares one so the agent can
     /// report how it finished rather than the bridge inferring it.
     pub functions: Vec<FunctionDeclaration>,
+    /// BCP-47 codes the caller is expected to speak, most likely first.
+    pub language_codes: Vec<String>,
+    /// How much the model wanders. A receptionist wants low.
+    pub temperature: Option<f32>,
+    /// Caps reply length. Too low and replies truncate mid-sentence, which on a
+    /// call sounds like a dropped line.
+    pub max_output_tokens: Option<u32>,
     /// Listen without speaking.
     ///
     /// After a transfer the agent stays on the call as a silent participant, so
@@ -49,6 +56,10 @@ impl Default for GeminiLiveConfig {
             voice: None,
             instructions: String::new(),
             functions: Vec::new(),
+            // Indian English first: this line is answered in Hyderabad.
+            language_codes: vec!["en-IN".into(), "en-US".into()],
+            temperature: None,
+            max_output_tokens: None,
             transcribe_only: false,
         }
     }
@@ -78,6 +89,8 @@ impl GeminiLiveSession {
             } else {
                 Modality::Audio
             }]),
+            temperature: cfg.temperature,
+            max_output_tokens: cfg.max_output_tokens,
             ..Default::default()
         };
         if let Some(voice_name) = cfg.voice.clone().filter(|_| !cfg.transcribe_only) {
@@ -99,7 +112,15 @@ impl GeminiLiveSession {
             // of what was said, and the turn timing has nothing to key off —
             // there is no local VAD in realtime mode, so the caller's
             // transcript is the only turn boundary available.
-            input_audio_transcription: Some(Default::default()),
+            // A language hint rather than automatic detection, which put
+            // German in the record of an English call. The crate notes that a
+            // regular Live model may treat this as a bare presence marker and
+            // ignore the inner fields — so this is correct configuration, not a
+            // guaranteed fix, and a real call is what settles it.
+            input_audio_transcription: Some(gemini_live::AudioTranscriptionConfig {
+                language_codes: Some(cfg.language_codes.clone()),
+                ..Default::default()
+            }),
             output_audio_transcription: Some(Default::default()),
             tools: (!cfg.functions.is_empty())
                 .then(|| vec![Tool::FunctionDeclarations(cfg.functions.clone())]),

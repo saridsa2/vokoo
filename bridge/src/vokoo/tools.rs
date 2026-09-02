@@ -87,13 +87,20 @@ pub async fn call(
     // "working" is a success the flow can route: the tool was accepted and is
     // still running, and the dispatcher will record what it did. A flow that
     // treated that as failure would undo work that is about to succeed.
-    let outcome = if body.get("ok").and_then(Value::as_bool) == Some(true) {
-        match body.get("result").and_then(|r| r.get("status")).and_then(Value::as_str) {
-            Some("working") => "working",
-            _ => "ok",
-        }
-    } else {
-        "failed"
+    //
+    // It arrives as `ok: false, error: "timed_out"` rather than as a success,
+    // because the same envelope is handed to the model on the live path and
+    // telling a model a booking succeeded when it has not is how a caller is
+    // told something untrue. A graph can branch on "still running"; a sentence
+    // to a caller cannot. So the mapping back to a routable outcome happens
+    // here, where the catalogue's outcomes for `tool.call` are known.
+    let outcome = match (
+        body.get("ok").and_then(Value::as_bool),
+        body.get("error").and_then(Value::as_str),
+    ) {
+        (Some(true), _) => "ok",
+        (_, Some("timed_out")) => "working",
+        _ => "failed",
     };
 
     log::info!("[tool] {tool} -> {outcome}");

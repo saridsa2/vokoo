@@ -27,27 +27,29 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{StatusCode, header},
     response::IntoResponse,
-    routing::{any, get},
+    routing::{any, get, post},
 };
 
+use serde_json::json;
 use rustvani::error::Result;
 use rustvani::observer::{BaseObserver, FramePushed, FrameProcessed};
+use rustvani::billing::BillingCollector as _;
 use rustvani::frames::{
-    Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor, SystemFrame,
+    ControlFrame, Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor, SystemFrame,
 };
 use rustvani::processors::{
     llm_assistant_aggregator::LLMAssistantAggregator, llm_user_aggregator::LLMUserAggregator,
 };
 use rustvani::serializers::{CallCapture, KooKooFrameSerializer, KooKooInputParams, KooKooStart};
 use rustvani::services::{
-    GeminiLiveConfig, GeminiLiveSession, OpenAIRealtimeConfig, OpenAIRealtimeSession,
+    GeminiLiveConfig, GeminiLiveSession,
     RealtimeControls, RealtimeEvent, RealtimeProcessor, RealtimeSession,
     DeepgramSttConfig, DeepgramSttHandler, DeepgramTtsConfig, DeepgramTtsHandler, OpenAILLMConfig,
     OpenAILLMHandler,
@@ -94,9 +96,14 @@ struct AppState {
     /// Set by a call's flow, read by the IVR webhook after that call's socket
     /// has closed. The two never share anything else.
     handovers: rustvani::vokoo::Handovers,
+    /// What each call has pressed, written by the IVR webhook and read by both
+    /// it and the socket handler. A menu is asked on one HTTP request and
+    /// answered on another, so the answer cannot live in either.
+    keypresses: rustvani::vokoo::Keypresses,
 }
 
 struct AgentConfig {
+    internal_token: String,
     pipeline_mode: String,
     supabase_url: String,
     service_key: String,
@@ -110,74 +117,11 @@ struct AgentConfig {
     realtime_base_url: String,
     realtime_key: String,
     live_model: String,
+    transcript_languages: Vec<String>,
     live_voice: String,
     stt_language: String,
     tts_voice: String,
     system_prompt: String,
-}
-
-/// How an agent node reports the way it finished.
-///
-/// Declared to the model as a function, so the outcome is the model's judgement
-/// rather than a keyword match on a transcript. `gone_quiet` and `timeout` are
-/// deliberately absent: those are observed by the bridge, and a model asked to
-/// judge its own silence would be guessing.
-/// One of the agent's tools, as the provider wants it.
-///
-/// `tools.schema` is stored as a plain JSON Schema, which is what `parameters`
-/// takes, so it is passed through unchanged. A tool with no schema is skipped
-/// rather than declared with empty parameters: the model would call it with
-/// nothing and the dispatcher would reject it for missing arguments, which
-/// spends a caller's patience to reach a failure we can predict here.
-fn tool_declaration(tool: &serde_json::Value) -> Option<gemini_live::FunctionDeclaration> {
-    let name = tool.get("name")?.as_str()?.to_string();
-    let schema = tool.get("schema")?.clone();
-    if !schema.is_object() {
-        log::warn!("[tools] {name} has no usable schema — not declaring it");
-        return None;
-    }
-    Some(gemini_live::FunctionDeclaration {
-        name,
-        description: tool
-            .get("description")
-            .and_then(|d| d.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        parameters: schema,
-        // Left to the provider's defaults, as the outcome function does. These
-        // control response scheduling for Gemini 2.5-era tools; choosing values
-        // here would be picking behaviour nobody has asked for.
-        scheduling: None,
-        behavior: None,
-    })
-}
-
-fn outcome_function() -> gemini_live::FunctionDeclaration {
-    gemini_live::FunctionDeclaration {
-        name: "finish_call".into(),
-        // What happens after an outcome is the flow's decision, not the
-        // agent's, so the wording here stays neutral about it. Saying "goodbye"
-        // on out_of_scope was the agent assuming the call was over while the
-        // flow was about to put the caller through to a person.
-        description: "Call this the moment the caller's need is settled, or the moment you cannot settle it. \
-Do not announce that you are calling it, and do not say goodbye or imply the call is ending — \
-what happens next is decided after you report, and it is often that somebody else takes over. \
-Say only that you are sorting it out for them.".into(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "outcome": {
-                    "type": "string",
-                    "enum": ["done", "wants_human", "out_of_scope", "failed"],
-                    "description": "done: the caller got what they rang for. wants_human: they asked for a person. out_of_scope: what they want is not something you do — say so plainly, but do not turn them away, because somebody else may still help them. failed: you tried and could not."
-                },
-                "note": {"type": "string", "description": "One short line for the call log."}
-            },
-            "required": ["outcome"]
-        }),
-        scheduling: None,
-        behavior: None,
-    }
 }
 
 /// Write the steps the runner has taken since this was last called.
@@ -210,6 +154,14 @@ async fn start_listening(
         voice: None,
         instructions: String::new(),
         functions: Vec::new(),
+        // The transcribe model is the one that honours these, so the part of
+        // the call handled by a person is the part most likely to be written
+        // down in the right language.
+        language_codes: vec!["en-IN".into(), "en-US".into()],
+        // The listener writes down what two people say; it does not answer, so
+        // the engine's reply parameters do not apply to it.
+        temperature: None,
+        max_output_tokens: None,
         transcribe_only: true,
     })
     .await
@@ -317,6 +269,10 @@ fn env_or(key: &str, default: &str) -> String {
 impl AgentConfig {
     fn from_env() -> Self {
         Self {
+            // Shared with the control plane, which is the only caller. Empty
+            // refuses every request rather than allowing them: an unset secret
+            // must not mean an open endpoint.
+            internal_token: env_or("BRIDGE_INTERNAL_TOKEN", ""),
             pipeline_mode: env_or("PIPELINE_MODE", "echo"),
             supabase_url: env_or("SUPABASE_URL", ""),
             service_key: env_or("SUPABASE_SERVICE_ROLE_KEY", ""),
@@ -339,6 +295,13 @@ impl AgentConfig {
             realtime_base_url: env_or("REALTIME_BASE_URL", "wss://api.openai.com/v1/realtime"),
             realtime_key: env_or("REALTIME_API_KEY", ""),
             live_model: env_or("LIVE_MODEL", "models/gemini-3.1-flash-live-preview"),
+            // Who is expected to be on the line. Automatic detection put German
+            // in the record of an English call.
+            transcript_languages: env_or("TRANSCRIPT_LANGUAGES", "en-IN,en-US")
+                .split(',')
+                .map(|code| code.trim().to_string())
+                .filter(|code| !code.is_empty())
+                .collect(),
             live_voice: env_or("LIVE_VOICE", "Kore"),
             reasoning_effort: env_or("REASONING_EFFORT", "none"),
             // ~120 tokens is roughly 8 seconds of speech; a phone turn should
@@ -499,7 +462,116 @@ impl FrameHandler for EchoHandler {
 }
 
 /// Emits the priming burst on pipeline start, then gets out of the way.
-struct Primer;
+/// Milliseconds since the epoch. A clock that only has to measure a gap.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Opens the inbound direction, and watches that it stays open.
+///
+/// The watchdog exists because of a call on 1 September that stopped and said
+/// nothing: the agent asked a question, the caller answered, and for
+/// forty-two seconds there was no VAD transition, no audio frame and no error —
+/// until the caller gave up. Every other turn logs `VAD server: → Speaking`
+/// within milliseconds, so caller audio had stopped reaching the pipeline
+/// rather than being misheard. Nothing recorded that, so there was nothing to
+/// diagnose from.
+///
+/// This sits immediately after `transport.input()`, which makes it the first
+/// place a frame from the carrier is seen. The count it reports is the number of
+/// audio frames that reached *here*; `CALL_SUMMARY` reports what the socket
+/// received. When the two disagree the gap is inside the bridge, and when they
+/// agree the carrier stopped sending — which are different problems and, until
+/// now, indistinguishable.
+struct Primer {
+    call: u64,
+    /// Milliseconds since the epoch, as of the last audio frame.
+    last_audio: Arc<std::sync::atomic::AtomicU64>,
+    /// Audio frames seen since the call began.
+    seen: Arc<std::sync::atomic::AtomicU64>,
+    /// Cleared when the call ends, so the watchdog stops with it.
+    live: Arc<std::sync::atomic::AtomicBool>,
+    /// Where a stall is reported. The Primer does not decide what to do about
+    /// one — the call loop owns that, and owns the socket that has to close
+    /// for the carrier to ask us where the call goes next.
+    fault: Option<tokio::sync::mpsc::Sender<rustvani::vokoo::Cause>>,
+}
+
+impl Primer {
+    fn new(call: u64) -> Self {
+        Self {
+            call,
+            last_audio: Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
+            seen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            live: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            fault: None,
+        }
+    }
+
+    fn reporting_to(mut self, fault: tokio::sync::mpsc::Sender<rustvani::vokoo::Cause>) -> Self {
+        self.fault = Some(fault);
+        self
+    }
+
+    /// Complain when the caller's audio stops, and say so again when it returns.
+    ///
+    /// Two seconds of silence is a caller thinking. Ten is a fault — and the
+    /// point is to record the moment it began, not to act on it: this only
+    /// writes to the log, because a bridge that hangs up on a quiet line would
+    /// be a worse failure than the one it is diagnosing.
+    fn watch(&self) {
+        use std::sync::atomic::Ordering;
+        let (call, last, seen, live, fault) = (
+            self.call,
+            self.last_audio.clone(),
+            self.seen.clone(),
+            self.live.clone(),
+            self.fault.clone(),
+        );
+        tokio::spawn(async move {
+            const QUIET_MS: u64 = 10_000;
+            // Escalate well after the warning. Input frames arrive at roughly
+            // fifty a second whether or not anybody is talking — silence is
+            // still frames — so twenty seconds of *none* is a broken audio
+            // path, not a quiet caller. The distinction is what makes it safe
+            // to act on: this cannot fire on someone who has stopped speaking.
+            const BROKEN_MS: u64 = 20_000;
+            let mut complained = false;
+            let mut escalated = false;
+            while live.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let gap = now_millis().saturating_sub(last.load(Ordering::Relaxed));
+                if gap >= QUIET_MS && !complained {
+                    complained = true;
+                    log::warn!(
+                        "[call={call}] no caller audio for {:.1}s — {} audio frame(s) so far. \
+                         Compare with media_packets_in in CALL_SUMMARY: if that kept rising, the \
+                         audio stopped inside the bridge.",
+                        gap as f64 / 1000.0,
+                        seen.load(Ordering::Relaxed)
+                    );
+                } else if gap < QUIET_MS && complained {
+                    complained = false;
+                    log::warn!("[call={call}] caller audio resumed");
+                }
+
+                if gap >= BROKEN_MS && !escalated {
+                    escalated = true;
+                    log::error!(
+                        "[call={call}] no caller audio for {:.0}s — the line is broken, escalating",
+                        gap as f64 / 1000.0
+                    );
+                    if let Some(fault) = fault.as_ref() {
+                        let _ = fault.send(rustvani::vokoo::Cause::NoAudio).await;
+                    }
+                }
+            }
+        });
+    }
+}
 
 #[async_trait]
 impl FrameHandler for Primer {
@@ -509,12 +581,34 @@ impl FrameHandler for Primer {
         frame: Frame,
         direction: FrameDirection,
     ) -> Result<()> {
-        if matches!(&frame.inner, FrameInner::System(SystemFrame::Start(_))) {
-            log::info!("[primer] opening the inbound direction");
-            let silence =
-                Frame::output_audio(priming_silence(PIPELINE_SAMPLE_RATE), PIPELINE_SAMPLE_RATE, 1);
-            processor.push_frame(silence, direction).await?;
+        use std::sync::atomic::Ordering;
+
+        match &frame.inner {
+            FrameInner::System(SystemFrame::Start(_)) => {
+                log::info!("[primer] opening the inbound direction");
+                self.last_audio.store(now_millis(), Ordering::Relaxed);
+                self.watch();
+                let silence = Frame::output_audio(
+                    priming_silence(PIPELINE_SAMPLE_RATE),
+                    PIPELINE_SAMPLE_RATE,
+                    1,
+                );
+                processor.push_frame(silence, direction).await?;
+            }
+
+            FrameInner::System(SystemFrame::InputAudioRaw(_)) => {
+                self.last_audio.store(now_millis(), Ordering::Relaxed);
+                self.seen.fetch_add(1, Ordering::Relaxed);
+            }
+
+            FrameInner::Control(ControlFrame::End { .. })
+            | FrameInner::System(SystemFrame::Cancel { .. }) => {
+                self.live.store(false, Ordering::Relaxed);
+            }
+
+            _ => {}
         }
+
         processor.push_frame(frame, direction).await
     }
 }
@@ -524,6 +618,39 @@ fn xml(body: String) -> impl IntoResponse {
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/xml; charset=utf-8")],
         format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<response>\n{body}\n</response>"),
+    )
+}
+
+/// Ask the caller to press a key.
+///
+/// The prompt is spoken by the **carrier**, not by an engine — this is returned
+/// before any stream exists, which is the whole reason a language menu can work
+/// at all. It also means the menu is read by Google's voice rather than the
+/// one the call will use, and that is the trade: the alternative is choosing a
+/// language after the transcriber has already opened in one.
+///
+/// Three details of the verb, from KooKoo's own reference and each one a way
+/// to get it wrong:
+///
+/// * **The prompt nests inside the tag.** Not before it — the tag's content is
+///   what to play while waiting.
+/// * **`o` is the timeout in milliseconds. `t` is the terminating character**,
+///   `#` by default. A first version read `t` as the timeout and set the
+///   terminator to the string "8000".
+/// * **There is no URL.** The tag takes none; the carrier always calls back to
+///   the application URL configured in the portal. Which is why the node that
+///   asked cannot be carried in the callback and is remembered per call
+///   instead — see `Keypresses::asking`.
+///
+/// `l="1"` returns on the first key, so a language menu needs no terminator.
+fn collect_digits_xml(prompt: &str, language: &str, timeout_seconds: u64) -> String {
+    format!(
+        "    <collectdtmf l=\"1\" o=\"{ms}\">\n        \
+         <playtext lang=\"{lang}\" speed=\"3\" quality=\"best\" type=\"ggl\">{prompt}</playtext>\n    \
+         </collectdtmf>",
+        ms = timeout_seconds.saturating_mul(1000),
+        lang = rustvani::vokoo::escape(language),
+        prompt = rustvani::vokoo::escape(prompt),
     )
 }
 
@@ -541,6 +668,216 @@ pub fn new_call_xml(
     )
 }
 
+/// Would this engine work?
+///
+/// The bridge answers because it is the only process that may read a provider
+/// key — `resolve_vendor_secret` is `service_role` only, and the control plane
+/// deliberately holds no service key. So the control plane gates the request on
+/// the caller's organisation and forwards it here with a shared secret.
+/// Walk a flow against a finished call, changing nothing.
+///
+/// What the console's node view shows in its Input and Output panes. The same
+/// walk a real hangup takes — the difference is one flag, which withholds the
+/// write to the call and the request to the outside world.
+///
+/// Gated like pre-flight, and for the same reason: reading a transcript needs a
+/// provider key, and the bridge is the only process allowed to hold one.
+#[derive(serde::Deserialize)]
+struct DryRunRequest {
+    flow_id: String,
+    /// The carrier's id for a finished call. Its transcript is what the flow
+    /// is tested against — a made-up one would test the flow against nothing.
+    ucid: String,
+}
+
+async fn flow_dry_run(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<DryRunRequest>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
+    }
+
+    match rustvani::vokoo::postcall::dry_run(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        &request.flow_id,
+        &request.ucid,
+    )
+    .await
+    {
+        Ok(steps) => (StatusCode::OK, Json(json!({ "ok": true, "steps": steps }))),
+        Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+    }
+}
+
+async fn engine_preflight(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<PreflightRequest>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    // Constant-time is overkill for a shared secret behind a private network,
+    // but an empty configured token matching an empty header is not.
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
+    }
+
+    let Some((engine, org_id)) = rustvani::vokoo::graph::engine_by_id(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        &request.engine_id,
+    )
+    .await
+    else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such engine" })));
+    };
+
+    let ctx = rustvani::vokoo::StageContext {
+        // Pre-flight opens the real connections but serves no caller, so there
+        // is no session to attribute its usage to. It does cost the vendor
+        // something; that cost is deliberately unattributed rather than
+        // charged to whichever call happens to run next.
+        billing: std::sync::Arc::new(rustvani::billing::NoopBillingCollector),
+        supabase_url: &state.cfg.supabase_url,
+        service_key: &state.cfg.service_key,
+        org_id: &org_id,
+        sample_rate: PIPELINE_SAMPLE_RATE,
+    };
+
+    let steps = rustvani::vokoo::engine::preflight(&engine, &ctx).await;
+    let ok = steps.iter().all(|step| step.ok);
+    log::info!(
+        "[preflight] engine '{}' ({}) — {}",
+        engine.name,
+        engine.mode,
+        if ok { "ready" } else { "not ready" }
+    );
+
+    (StatusCode::OK, Json(json!({ "engine": engine.name, "mode": engine.mode, "ok": ok, "steps": steps })))
+}
+
+#[derive(serde::Deserialize)]
+struct PreflightRequest {
+    engine_id: String,
+}
+
+/// Ask every connected provider what it currently offers.
+///
+/// Same gate and same reason as pre-flight: it needs provider keys, and the
+/// bridge is the only process that may read one.
+async fn catalogue_refresh(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<RefreshRequest>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
+    }
+
+    let found = rustvani::vokoo::discovery::refresh(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        &request.org_id,
+    )
+    .await;
+    log::info!("[discovery] refreshed {} stage(s)", found.len());
+    (StatusCode::OK, Json(json!({ "refreshed": found })))
+}
+
+#[derive(serde::Deserialize)]
+struct RefreshRequest {
+    org_id: String,
+}
+
+/// What the IVR should return next, given what the caller has pressed so far.
+///
+/// Walks the flow in preview — evaluating opening hours and the like, but
+/// touching nothing on the carrier, because the socket handler walks the same
+/// flow for real a moment later and anything done here would be done twice.
+///
+/// `Some(xml)` is a menu to ask. `None` means the flow wants no more keys, and
+/// the caller of this should hand back the stream.
+async fn next_menu_xml(state: &AppState, params: &BTreeMap<String, String>) -> Option<String> {
+    let ucid = params.get("sid").map(String::as_str).unwrap_or_default();
+    let did = params.get("called_number").map(String::as_str).unwrap_or_default();
+    if ucid.is_empty() || did.is_empty() {
+        return None;
+    }
+
+    let cfg = &state.cfg;
+    let flow = rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, did).await?;
+    let control = rustvani::vokoo::CallControl::new(
+        rustvani::vokoo::CallHandle {
+            ucid: ucid.to_string(),
+            did: did.to_string(),
+            caller: params.get("cid").cloned().unwrap_or_default(),
+            org_id: flow.org_id.clone(),
+        },
+        cfg.supabase_url.clone(),
+        cfg.service_key.clone(),
+        state.handovers.clone(),
+    );
+
+    let mut runner = rustvani::vokoo::FlowRunner::new(&flow, &control)
+        .preview()
+        .already_answered(state.keypresses.all(ucid));
+
+    match runner.advance().await {
+        rustvani::vokoo::NodeAction::CollectDigits {
+            node, prompt, language, keys, timeout_seconds, ..
+        } => {
+            state.keypresses.asking(ucid, &node.id);
+            log::info!(
+                "[IVR] ucid={ucid} asking {} ({} key(s): {})",
+                node.name,
+                keys.len(),
+                keys.iter().map(|(k, l)| format!("{k}={l}")).collect::<Vec<_>>().join(", ")
+            );
+            Some(collect_digits_xml(&prompt, &language, timeout_seconds))
+        }
+        other => {
+            if let rustvani::vokoo::NodeAction::Finished(reason) = &other {
+                log::info!("[IVR] ucid={ucid} no menu before the conversation: {reason}");
+            }
+            None
+        }
+    }
+}
+
+/// The key the carrier collected, whatever it decided to call the parameter.
+///
+/// The platform doc has the verb and not the callback, so rather than assert a
+/// name this reads the first plausible one that holds a single keypad
+/// character. Every parameter is logged either way, which is what will replace
+/// this guess with a fact.
+fn collected_key(params: &BTreeMap<String, String>) -> Option<String> {
+    const LIKELY: &[&str] = &["data", "digits", "dtmf", "signal", "input", "collectdtmf"];
+    LIKELY.iter().find_map(|name| {
+        let value = params.get(*name)?.trim();
+        let mut chars = value.chars();
+        let first = chars.next()?;
+        // One keypad character, and nothing after it.
+        if chars.next().is_none() && (first.is_ascii_digit() || first == '*' || first == '#') {
+            Some(first.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 async fn kookoo_webhook(
     State(state): State<AppState>,
     Query(params): Query<BTreeMap<String, String>>,
@@ -555,14 +892,76 @@ async fn kookoo_webhook(
         serde_json::to_string(&params).unwrap_or_default()
     );
 
+    // How the carrier actually answers a `<collectdtmf>`, measured on a real
+    // call on 1 September:
+    //
+    //     event=GotDTMF  sid=82664099658379233  data=2
+    //
+    // Note what is *not* there: which menu asked. A first version put a
+    // `vokoo_menu` marker in a URL on the `<collectdtmf>` tag and matched on
+    // it. It never arrived — **the tag takes no URL at all**; the carrier
+    // always calls back to the application URL from the portal. Custom query
+    // params on *that* URL are echoed back, but it is one URL for every call
+    // and every menu, so it cannot say which node is waiting.
+    //
+    // So the node is remembered per call. The cost of getting this wrong was
+    // measured: the marker never matched, the request fell through to the
+    // unknown-event arm, and a bare 200 to a live call is a hang-up ten
+    // seconds in.
+    //
+    // The marker is still read first, in case a future firmware carries one.
+    let awaiting = params.get("sid").and_then(|ucid| state.keypresses.awaiting(ucid));
+    let menu_node = params.get("vokoo_menu").cloned().or_else(|| {
+        (event == "GotDTMF").then_some(awaiting).flatten()
+    });
+    if let Some(node_id) = menu_node.as_deref() {
+        let ucid = params.get("sid").map(String::as_str).unwrap_or_default();
+        match collected_key(&params) {
+            Some(key) => {
+                log::info!("[IVR] ucid={ucid} pressed {key} at {node_id}");
+                state.keypresses.record(ucid, node_id, &key);
+            }
+            None => {
+                // Nothing pressed, or pressed something we could not find in
+                // the parameters. `timeout` is the outcome the node declares
+                // for exactly this, and it is wired to a branch.
+                log::warn!(
+                    "[IVR] ucid={ucid} no key found in the callback for {node_id} — taking timeout. params={}",
+                    serde_json::to_string(&params).unwrap_or_default()
+                );
+                state.keypresses.record(ucid, node_id, "timeout");
+            }
+        }
+
+        // Another menu, or on with the call.
+        return match next_menu_xml(&state, &params).await {
+            Some(menu) => xml(menu).into_response(),
+            None => xml(new_call_xml(&params, &state.ws_url, &state.sip_number, &state.is_sip))
+                .into_response(),
+        };
+    }
+
     match event {
         "NewCall" if state.ivr_mode == "playtext" => xml(
             "    <playtext lang=\"en-IN\">Hello. This is VoKoo. The webhook is working. Goodbye.</playtext>\n    <hangup/>".to_string(),
         )
         .into_response(),
-        "NewCall" => {
+        // A test ping never opens a socket, so previewing its flow would ask a
+        // question nobody is there to answer. It gets the stream XML it is
+        // checking for and no side effects, which is what it is testing.
+        "NewCall" if is_test_ping => {
             xml(new_call_xml(&params, &state.ws_url, &state.sip_number, &state.is_sip))
                 .into_response()
+        }
+        "NewCall" => {
+            // Does this flow want a key before it wants a conversation? Only a
+            // menu reached before anything touches the carrier counts — see
+            // `next_menu_xml`.
+            match next_menu_xml(&state, &params).await {
+                Some(menu) => xml(menu).into_response(),
+                None => xml(new_call_xml(&params, &state.ws_url, &state.sip_number, &state.is_sip))
+                    .into_response(),
+            }
         }
         // The call is still up here. Whether it stays up is decided by what we
         // return: a flow that asked for a hand-over gets dialled out, and
@@ -622,7 +1021,73 @@ async fn kookoo_webhook(
                 }
             }
         }
-        _ => StatusCode::OK.into_response(),
+        "Hangup" | "Disconnect" => {
+            if let Some(ucid) = params.get("sid") {
+                state.keypresses.forget(ucid);
+            }
+
+            // The call is over, and this is the only moment the carrier hands
+            // over the recording — `call_recording_url` arrives here and
+            // nowhere else, which is why `calls.recording_url` has been empty:
+            // nothing was reading the event that carries it.
+            //
+            // `Hangup` only. `Disconnect` is us ending the call and is followed
+            // by a `Hangup` of its own, so running on both would run the flow
+            // twice — and "twice" in a post-call flow is two leads in a CRM.
+            if event == "Hangup" {
+                let did = params.get("called_number").cloned().unwrap_or_default();
+                let ucid = params.get("sid").cloned().unwrap_or_default();
+                if !did.is_empty() && !ucid.is_empty() {
+                    // The two outcomes `trigger.call_ended` declares. The
+                    // carrier says which, and it is the one thing a post-call
+                    // flow cannot work out for itself afterwards.
+                    let ended_by = match params.get("disconnect_reason").map(String::as_str) {
+                        Some("user_disconnected") => "caller_hung_up",
+                        _ => "we_ended",
+                    };
+                    let recording = params
+                        .get("call_recording_url")
+                        .filter(|url| url.starts_with("http"))
+                        .cloned();
+
+                    // Stored on the call whether or not a post-call flow exists.
+                    // It expires at the carrier, so the moment it is offered is
+                    // the only moment it can be kept.
+                    if let Some(url) = recording.clone() {
+                        let (base, key, ucid) =
+                            (state.cfg.supabase_url.clone(), state.cfg.service_key.clone(), ucid.clone());
+                        tokio::spawn(async move {
+                            rustvani::vokoo::CallRecord::store_recording(&base, &key, &ucid, &url).await;
+                        });
+                    }
+
+                    rustvani::vokoo::postcall::run_detached(
+                        state.cfg.supabase_url.clone(),
+                        state.cfg.service_key.clone(),
+                        did,
+                        ucid,
+                        ended_by.to_string(),
+                        recording,
+                    );
+                }
+            }
+
+            StatusCode::OK.into_response()
+        }
+        // A bare 200 is not neutral: the carrier ends a call it has no XML for,
+        // which is how the first menu test lost its caller ten seconds in.
+        // Hangup-shaped events are genuinely over and take the 200; anything
+        // else is named in the log rather than silently dropped.
+        other => {
+            if !other.is_empty() && !matches!(other, "Hangup" | "Disconnect" | "NewCall") {
+                log::warn!(
+                    "[IVR] unhandled event {other} — answering 200. If the caller was still on \
+                     the line, the carrier has just hung up on them. params={}",
+                    serde_json::to_string(&params).unwrap_or_default()
+                );
+            }
+            StatusCode::OK.into_response()
+        }
     }
 }
 
@@ -729,28 +1194,82 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     let mut runner = match (flow.as_ref(), control.as_ref()) {
         (Some(f), Some(c)) => {
             log::info!("[call={call}] flow: {}", f.name);
-            Some(rustvani::vokoo::FlowRunner::new(f, c))
+            Some(
+                rustvani::vokoo::FlowRunner::new(f, c)
+                    .already_answered(state.keypresses.all(&start.ucid)),
+            )
         }
         _ => None,
     };
 
     let mut agent_node_id: Option<String> = None;
+    let mut billed_agent_id: Option<String> = None;
     let mut trail_written = 0usize;
     // Replaced by the flow's agent, when there is one.
     let mut instructions = cfg.system_prompt.clone();
     // Likewise the model: `LIVE_MODEL` is the fallback, not the source.
     let mut live_model = cfg.live_model.clone();
+    let mut live_voice = cfg.live_voice.clone();
+    // Model parameters. `None` leaves them out of the request entirely, so the
+    // provider's own defaults apply rather than a number this file invented.
+    // Kept past the block that resolves it: the engine decides which pipeline
+    // gets built, and that happens after the flow has finished walking.
+    let mut agent_engine: Option<rustvani::vokoo::Engine> = None;
+    let mut live_temperature: Option<f32> = None;
+    let mut live_max_tokens: Option<u32> = None;
     // The agent's own tools, declared to the provider beside the flow's
     // outcome function.
     let mut agent_functions: Vec<serde_json::Value> = Vec::new();
+    // How the agent opens the call. `None` means it does not speak first.
+    let mut greeting: Option<String> = Some(env_or(
+        "GREETING_PROMPT",
+        "The caller has just connected. Greet them in one short sentence \
+         and ask how you can help.",
+    ));
     if let Some(r) = runner.as_mut() {
-        match r.advance().await {
+        // A menu reached here has already been answered on the webhook that
+        // returned this stream, so the walk normally passes straight through
+        // it. Reaching one that has *not* been answered means it sits after an
+        // agent node, where the carrier can no longer be asked — `<collectdtmf>`
+        // is answered between streams and this stream is open. Rather than
+        // stranding the caller in a question nothing can ask, take the branch
+        // the node already declares for nobody pressing anything.
+        //
+        // Bounded: recording the outcome fills `answered`, so the same node
+        // cannot suspend the walk twice.
+        let action = loop {
+            match r.advance().await {
+                rustvani::vokoo::NodeAction::CollectDigits { node, .. } => {
+                    log::warn!(
+                        "[call={call}] flow reached menu {} with the stream already open — \
+                         keys are collected between streams, so this cannot be asked. \
+                         Taking the no-keypress branch.",
+                        node.name
+                    );
+                    let node_id = node.id.clone();
+                    r.digits_collected(&node_id, "timeout");
+                }
+                other => break other,
+            }
+        };
+        match action {
+            // The loop above turns every menu into its no-keypress branch, so
+            // this cannot happen. Logged rather than `unreachable!` because a
+            // panic on the call path is not a silent bot — the carrier ends the
+            // call the moment this socket closes.
+            rustvani::vokoo::NodeAction::CollectDigits { node, .. } => {
+                log::error!("[call={call}] menu {} survived the loop above", node.name);
+            }
             rustvani::vokoo::NodeAction::RunAgent { node, agent_id, timeout_seconds } => {
                 log::info!(
                     "[call={call}] flow reached agent node {} (timeout {}s)",
                     node.name, timeout_seconds
                 );
                 agent_node_id = Some(node.id.clone());
+                // Kept for billing: which agent ran is a dimension a cost
+                // report needs, and by the time the pipeline is built the
+                // flow walk has moved on.
+                billed_agent_id = Some(agent_id.clone());
 
                 // The flow names an agent; that agent's prompt and skills live
                 // in the database. Falling back to the environment's prompt
@@ -798,31 +1317,77 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                             .join(", ")
                     );
 
-                    // And its model. The catalogue decides which provider model
-                    // this agent runs on, so a provider rename is an `UPDATE`
-                    // rather than an edit to `bridge.env` on the server. A
-                    // missing or inactive row leaves `LIVE_MODEL` standing:
-                    // degraded, not silent.
-                    match rustvani::vokoo::graph::model_for_agent(
+                    // How it opens the call. The console has had a First
+                    // Message field per agent since the beginning and nothing
+                    // read it; every call opened with one line from bridge.env.
+                    if let Some(chosen) = rustvani::vokoo::agent_greeting(
                         &cfg.supabase_url,
                         &cfg.service_key,
                         &agent_id,
                     )
                     .await
                     {
-                        Some(model) => {
-                            if model != live_model {
-                                log::info!(
-                                    "[call={call}] agent {agent_id} — model {model} from the \
-                                     catalogue (LIVE_MODEL says {})",
-                                    cfg.live_model
-                                );
+                        greeting = chosen;
+                    }
+
+                    // And the engine it runs on: how it hears and speaks.
+                    //
+                    // This replaces a lookup that read `agents.model` and
+                    // resolved it through `catalogue_models`. The model id then
+                    // lived in three places that could disagree — the agent row,
+                    // `LIVE_MODEL`, and a fallback in this file — and on
+                    // 31 August all three said one thing while the catalogue had
+                    // no such row at all. An engine holds the model, the voice
+                    // and the shape together, so there is one place to look.
+                    match rustvani::vokoo::engine_for_agent(
+                        &cfg.supabase_url,
+                        &cfg.service_key,
+                        &agent_id,
+                    )
+                    .await
+                    {
+                        Some(engine) => {
+                            log::info!(
+                                "[call={call}] agent {agent_id} — engine '{}' ({})",
+                                engine.name,
+                                engine.mode
+                            );
+                            if engine.mode != "realtime" {
+                                // A relay is built further down, from the same
+                                // row. Nothing to resolve here: its model and
+                                // its voice belong to its own steps, not to a
+                                // single realtime stage.
+                            } else {
+                                // The catalogue still turns a friendly id into
+                                // the provider's, so a provider rename stays an
+                                // UPDATE rather than an edit on the server.
+                                if let Some(id) = engine.get("realtime", "model") {
+                                    match rustvani::vokoo::graph::model_id(
+                                        &cfg.supabase_url,
+                                        &cfg.service_key,
+                                        id,
+                                    )
+                                    .await
+                                    {
+                                        Some(resolved) => live_model = resolved,
+                                        None => log::warn!(
+                                            "[call={call}] engine names model {id}, which is not in                                              the catalogue — using LIVE_MODEL {}",
+                                            cfg.live_model
+                                        ),
+                                    }
+                                }
+                                if let Some(voice) = engine.get("realtime", "voice") {
+                                    live_voice = voice.to_string();
+                                }
+                                live_temperature =
+                                    engine.get_f64("realtime", "temperature").map(|v| v as f32);
+                                live_max_tokens =
+                                    engine.get_f64("realtime", "max_tokens").map(|v| v as u32);
                             }
-                            live_model = model;
+                            agent_engine = Some(engine);
                         }
                         None => log::warn!(
-                            "[call={call}] no catalogue model for agent {agent_id} — \
-                             falling back to LIVE_MODEL {}",
+                            "[call={call}] agent {agent_id} has no published engine —                              using the environment ({})",
                             cfg.live_model
                         ),
                     }
@@ -854,7 +1419,19 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         }
     }
 
-    let realtime_mode = cfg.pipeline_mode == "realtime" && !cfg.llm_key.is_empty();
+    // The engine decides the shape, per call. `PIPELINE_MODE` remains the
+    // answer only for a call that never reached an agent node — one that fell
+    // back to the number's agent, where there is no engine to ask.
+    let realtime_mode = match agent_engine.as_ref() {
+        Some(engine) => engine.mode == "realtime" && !cfg.llm_key.is_empty(),
+        None => cfg.pipeline_mode == "realtime" && !cfg.llm_key.is_empty(),
+    };
+    // Which realtime provider, likewise.
+    let realtime_provider = agent_engine
+        .as_ref()
+        .and_then(|engine| engine.get("realtime", "provider"))
+        .unwrap_or(&cfg.realtime_provider)
+        .to_string();
     let agent_mode = cfg.pipeline_mode == "agent" && cfg.agent_ready();
     if cfg.pipeline_mode == "agent" && !agent_mode {
         log::error!("[call={call}] PIPELINE_MODE=agent but keys are missing — using echo");
@@ -863,7 +1440,15 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     // No local VAD in realtime mode: Gemini does server-side turn detection
     // and sends Interrupted itself. Running Silero as well means two things
     // cancelling the same reply, which is one too many.
-    let vad = if agent_mode {
+    let relay_engine = agent_engine
+        .as_ref()
+        .filter(|engine| engine.mode == "cascading")
+        .cloned();
+
+    // A relay does its own turn-taking, so it needs local VAD. A realtime model
+    // does server-side turn detection and sends Interrupted itself; running
+    // Silero as well means two things cancelling the same reply.
+    let vad = if agent_mode || relay_engine.is_some() {
         match SileroVadNative::new(PIPELINE_SAMPLE_RATE) {
             Ok(v) => Some(Arc::new(v) as Arc<dyn rustvani::vad::VadAnalyzer>),
             Err(e) => {
@@ -901,7 +1486,14 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     );
     transport.set_serializer(Box::new(serializer));
 
-    let primer = FrameProcessor::new("Primer", Box::new(Primer), false);
+    // Faults raised while the call is up. Small: a call has one fault worth
+    // acting on, and the loop breaks on the first.
+    let (fault_tx, mut fault_rx) = tokio::sync::mpsc::channel::<rustvani::vokoo::Cause>(4);
+    let primer = FrameProcessor::new(
+        "Primer",
+        Box::new(Primer::new(call).reporting_to(fault_tx.clone())),
+        false,
+    );
 
     // Where the agent node reports how it finished. Bounded at one: the first
     // outcome ends the node, and anything after it is about a call that is
@@ -909,54 +1501,263 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     let (outcome_tx, mut outcome_rx) =
         tokio::sync::mpsc::channel::<(String, serde_json::Value)>(1);
 
-    let mut realtime_controls: Option<RealtimeControls> = None;
-    let (task, context) = if realtime_mode {
-        log::info!("[call={call}] realtime mode — provider={} model={} voice={}", cfg.realtime_provider, live_model, cfg.live_voice);
-        let session: Box<dyn RealtimeSession> = if cfg.realtime_provider == "openai" {
-            match OpenAIRealtimeSession::connect(OpenAIRealtimeConfig {
-                api_key: cfg.realtime_key.clone(),
-                base_url: cfg.realtime_base_url.clone(),
-                model: live_model.clone(),
-                voice: cfg.live_voice.clone(),
-                instructions: instructions.clone(),
-                ..OpenAIRealtimeConfig::default()
-            })
-            .await
-            {
-                Ok(s) => Box::new(s),
-                Err(e) => {
-                    log::error!("[call={call}] realtime connect failed: {e}");
-                    return;
-                }
+    // What this call consumes, and where it is written down.
+    //
+    // rustvani has counted all along — the collector, the drain task and the
+    // per-provider instrumentation are upstream and compiled in. Nothing had
+    // ever handed a collector to a handler, so every one of them received
+    // `None` and the whole subsystem sat dark. This is the missing argument.
+    //
+    // Keyed on the call's own row id, so `billing_sessions.session_id` joins
+    // straight to `calls.id` and a cost has a call to belong to. Without a call
+    // record there is nothing to attribute usage to, and counting it would
+    // produce a bill nobody could explain — so it counts nothing instead.
+    let (billing, billing_drain): (
+        std::sync::Arc<dyn rustvani::billing::BillingCollector>,
+        Option<tokio::task::JoinHandle<()>>,
+    ) = match record.id().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
+        Some(session_id) => {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("org_id".to_string(), flow.as_ref().map(|f| f.org_id.clone()).unwrap_or_default());
+            metadata.insert("did".to_string(), did.clone());
+            metadata.insert("ucid".to_string(), start.ucid.clone());
+            if let Some(id) = billed_agent_id.as_ref() {
+                metadata.insert("agent_id".to_string(), id.clone());
             }
-        } else {
-            match GeminiLiveSession::connect(GeminiLiveConfig {
-                api_key: cfg.llm_key.clone(),
-                model: live_model.clone(),
-                voice: Some(cfg.live_voice.clone()),
-                instructions: instructions.clone(),
-                functions: if flow.is_some() {
-                    // The outcome function first: it is the one the flow waits
-                    // on, and it exists whether or not the agent has tools.
-                    let mut declared = vec![outcome_function()];
-                    declared.extend(agent_functions.iter().filter_map(tool_declaration));
-                    declared
-                } else {
-                    Vec::new()
-                },
-                transcribe_only: false,
-            })
-            .await
-            {
-                Ok(s) => Box::new(s),
-                Err(e) => {
-                    log::error!("[call={call}] gemini live connect failed: {e}");
-                    return;
+            // The dimension the whole exercise is for: what an engine costs to
+            // run. A call with no engine falls back to the environment and has
+            // none to attribute, which the view reports as an unattributed row
+            // rather than folding into somebody else's total.
+            if let Some(engine) = agent_engine.as_ref() {
+                metadata.insert("engine_id".to_string(), engine.id.clone());
+                metadata.insert("engine_name".to_string(), engine.name.clone());
+                metadata.insert("engine_mode".to_string(), engine.mode.clone());
+            }
+
+            let storage = std::sync::Arc::new(rustvani::vokoo::PostgrestBillingStorage::new(
+                cfg.supabase_url.clone(),
+                cfg.service_key.clone(),
+                metadata.clone(),
+            ));
+            let (collector, drain) = rustvani::billing::SessionBilling::new(session_id, storage, 256);
+            collector.record(rustvani::billing::BillingEvent::SessionStart {
+                session_id,
+                started_at: chrono::Utc::now(),
+                metadata,
+            });
+            log::info!("[call={call}] billing session {session_id}");
+            (collector, Some(drain))
+        }
+        None => {
+            log::warn!("[call={call}] no call record — usage will not be attributed");
+            (std::sync::Arc::new(rustvani::billing::NoopBillingCollector), None)
+        }
+    };
+
+    let mut realtime_controls: Option<RealtimeControls> = None;
+    let (task, context) = if let Some(engine) = relay_engine.as_ref() {
+        // A relay, built from the engine row rather than from PIPELINE_MODE.
+        // Every step resolves its own key from the vault for this organisation,
+        // so two businesses on the same bridge can run on different accounts.
+        log::info!(
+            "[call={call}] relay — engine '{}' stt={} llm={} tts={}",
+            engine.name,
+            engine.get("stt", "provider").unwrap_or("—"),
+            engine.get("llm", "provider").unwrap_or("—"),
+            engine.get("tts", "provider").unwrap_or("—"),
+        );
+
+        // The org is the flow's. A call that fell back to the number's agent
+        // never built one, and has no organisation to resolve keys against.
+        let Some(control) = control.as_ref() else {
+            log::error!("[call={call}] a relay needs a flow to know whose keys to use");
+            return;
+        };
+        let service = control.service();
+
+        let declared: Vec<_> = rustvani::vokoo::engine::declare(&agent_functions)
+            .into_iter()
+            .chain(std::iter::once(rustvani::vokoo::engine::outcome_schema(&[
+                "done".to_string(),
+                "wants_human".to_string(),
+                "out_of_scope".to_string(),
+                "failed".to_string(),
+            ])))
+            .collect();
+        let tool_names: Vec<String> = agent_functions
+            .iter()
+            .filter_map(|t| t.get("name")?.as_str().map(str::to_owned))
+            .collect();
+
+        let context = rustvani::context::shared_context_with_tools(
+            Some(instructions.clone()),
+            rustvani::adapters::schemas::ToolsSchema::new(declared),
+            None,
+        );
+
+        let route = rustvani::vokoo::engine::ToolRoute {
+            supabase_url: service.supabase_url.to_string(),
+            service_key: service.service_key.to_string(),
+            org_id: service.org_id.to_string(),
+            ucid: service.ucid.to_string(),
+        };
+        let registry = rustvani::vokoo::engine::registry(route, outcome_tx.clone(), tool_names);
+
+        let stage_ctx = rustvani::vokoo::StageContext {
+            supabase_url: &cfg.supabase_url,
+            service_key: &cfg.service_key,
+            org_id: service.org_id,
+            sample_rate: PIPELINE_SAMPLE_RATE,
+            billing: billing.clone(),
+        };
+
+        // The same channel and the same writer task the realtime path uses, so
+        // a relay's transcript lands in `calls.transcript` like any other. It
+        // did not before: a 127-second call recorded zero lines while every
+        // turn of it sat in the log.
+        let (transcript_tx, mut transcript_rx) =
+            tokio::sync::mpsc::channel::<(String, String)>(64);
+        {
+            let record = record.clone();
+            tokio::spawn(async move {
+                while let Some((speaker, text)) = transcript_rx.recv().await {
+                    record.transcript_line(&speaker, &text);
                 }
+            });
+        }
+
+        let relay = match rustvani::vokoo::build_relay(
+            engine,
+            &stage_ctx,
+            context.clone(),
+            registry,
+            Some(transcript_tx),
+        )
+        .await
+        {
+            Ok(relay) => relay,
+            Err(problem) => {
+                // Named rather than swallowed: every one of these is something
+                // somebody can fix — a step left empty, a key not connected.
+                log::error!("[call={call}] engine '{}' cannot run: {problem}", engine.name);
+                // And the caller is sent to a person rather than left on a line
+                // that will never speak. Returning here is what a caller heard
+                // as silence when a relay was published on a retired model.
+                rustvani::vokoo::escalate(
+                    &cfg.supabase_url,
+                    &cfg.service_key,
+                    &state.handovers,
+                    &start.ucid,
+                    &did,
+                    &caller,
+                    rustvani::vokoo::Cause::EngineFailed,
+                )
+                .await;
+                return;
             }
         };
+
+        if !relay.calls_tools && !agent_functions.is_empty() {
+            log::warn!(
+                "[call={call}] engine '{}' thinks with a model that cannot call tools — \
+                 the agent's {} tool(s) stay unreachable",
+                engine.name,
+                agent_functions.len()
+            );
+        }
+
+        let mut processors = vec![transport.input(), primer];
+        processors.extend(relay.processors);
+        processors.push(transport.output());
+
+        let task = PipelineTask::new(
+            processors,
+            PipelineParams { allow_interruptions: true, ..PipelineParams::default() },
+        );
+        (task, Some(relay.context))
+    } else if realtime_mode {
+        log::info!("[call={call}] realtime mode — provider={realtime_provider} model={live_model} voice={live_voice}");
+        // One builder, the same one pre-flight uses. What used to be here was
+        // a branch per provider — each repeating the vault lookup, the
+        // environment fallback and its own connect — beside a *different*
+        // builder in `realtime_probe` that knew only Gemini. Two
+        // implementations of one thing, which is how a pre-flight passes an
+        // engine a call cannot run.
+        let session: Box<dyn RealtimeSession> = match relay_engine
+            .as_ref()
+            .or(agent_engine.as_ref())
+        {
+            Some(engine) => {
+                let stage_ctx = rustvani::vokoo::StageContext {
+                    supabase_url: &cfg.supabase_url,
+                    service_key: &cfg.service_key,
+                    org_id: control.as_ref().map(|c| c.service().org_id).unwrap_or(""),
+                    sample_rate: PIPELINE_SAMPLE_RATE,
+                    billing: billing.clone(),
+                };
+                let fallback = if realtime_provider == "openai" {
+                    cfg.realtime_key.clone()
+                } else {
+                    cfg.llm_key.clone()
+                };
+                match rustvani::vokoo::build_realtime(
+                    engine,
+                    &stage_ctx,
+                    rustvani::vokoo::RealtimeRequest {
+                        instructions: &instructions,
+                        functions: agent_functions.clone(),
+                        // Only a call that reached a flow has an outcome to
+                        // report, and only then is `finish_call` declared.
+                        declare_outcome: flow.is_some(),
+                        language_codes: cfg.transcript_languages.clone(),
+                        fallback_key: Some(fallback),
+                        probe: false,
+                    },
+                )
+                .await
+                {
+                    Ok(session) => session,
+                    Err(problem) => {
+                        log::error!("[call={call}] realtime engine cannot run: {problem}");
+                        rustvani::vokoo::escalate(
+                            &cfg.supabase_url,
+                            &cfg.service_key,
+                            &state.handovers,
+                            &start.ucid,
+                            &did,
+                            &caller,
+                            rustvani::vokoo::Cause::EngineFailed,
+                        )
+                        .await;
+                        return;
+                    }
+                }
+            }
+            // No engine row at all: a call that never reached a flow, running
+            // on the environment. Nothing to build from, so nothing is built.
+            None => {
+                log::error!("[call={call}] realtime mode with no engine to build from");
+                return;
+            }
+        };
+        // Every conversation until now went unrecorded: `transcript_line` was
+        // only ever called on the listen-only path, so `calls.transcript` has
+        // been empty on every call this system has taken. The realtime layer
+        // sends lines here and this task writes them, which keeps a database
+        // handle out of the audio loop.
+        let (transcript_tx, mut transcript_rx) = tokio::sync::mpsc::channel::<(String, String)>(64);
+        {
+            let record = record.clone();
+            tokio::spawn(async move {
+                while let Some((speaker, text)) = transcript_rx.recv().await {
+                    record.transcript_line(&speaker, &text);
+                }
+            });
+        }
+
         let mut rt = RealtimeProcessor::new(session, PIPELINE_SAMPLE_RATE)
-            .with_outcomes(outcome_tx.clone());
+            .with_outcomes(outcome_tx.clone())
+            .with_transcript(transcript_tx);
 
         // Tools are reachable only when a flow ran: the organisation and the
         // carrier's ucid come from the call control the flow built, and a call
@@ -983,11 +1784,12 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             });
         }
 
-        let rt = rt
-            .with_greeting(env_or(
-                "GREETING_PROMPT",
-                "The caller has just connected. Greet them in one short sentence                  and ask how you can help.",
-            ));
+        let rt = match greeting.clone() {
+            Some(prompt) => rt.with_greeting(prompt),
+            // "User speaks first": connect and wait. The priming silence still
+            // goes out, so KooKoo starts streaming caller audio either way.
+            None => rt,
+        };
         // Taken before the pipeline consumes the processor: the flow decides
         // when the agent stops talking, and the flow does not own the pipeline.
         realtime_controls = Some(rt.controls());
@@ -1066,6 +1868,16 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
 
     // Greet on connect. With no user turn in the context yet, the model
     // produces its opening line.
+    //
+    // The agent's First Message decides what that line is, on a relay as much as
+    // on a realtime model. Seeded as a user turn because there is no other way
+    // to instruct a chat model at the top of a conversation — the system prompt
+    // is the agent's character, not one instruction about one turn.
+    if let (Some(context), Some(prompt)) = (context.as_ref(), greeting.as_ref()) {
+        if let Ok(mut held) = context.lock() {
+            held.add_user_message(prompt);
+        }
+    }
     if let Some(context) = context {
         let push_tx = push_tx.clone();
         task.add_on_pipeline_started(move |_frame| {
@@ -1080,7 +1892,7 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
     }
 
     let socket_fut = transport.run_socket(socket, push_tx);
-    let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode)
+    let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode || relay_engine.is_some())
         .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
     let task_fut = task.run(system_clock(), observer);
 
@@ -1120,10 +1932,35 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         env_or("AGENT_IDLE_SECONDS", "20").parse().unwrap_or(20),
     );
 
+    // Set by whichever arm below decided the call could not be served.
+    let mut fault: Option<rustvani::vokoo::Cause> = None;
+
     loop {
         tokio::select! {
             r = &mut socket_fut => { log::info!("[call={call}] socket closed: {r:?}"); break }
-            r = &mut task_fut   => { log::info!("[call={call}] pipeline ended: {r:?}"); break }
+            r = &mut task_fut   => {
+                // A pipeline that ends with an error before the agent has
+                // reported anything is a caller listening to nothing, not a
+                // call that finished. What kind of error is not knowable from
+                // here — `PipecatError` covers a provider hanging up and a
+                // processor giving way alike — so it is reported as the
+                // provider being lost rather than guessing at a panic.
+                let broke = r.is_err() && agent_outcome.is_none();
+                log::info!("[call={call}] pipeline ended: {r:?}");
+                if broke {
+                    log::error!("[call={call}] the pipeline failed mid-call — escalating");
+                    fault = Some(rustvani::vokoo::Cause::ProviderLost);
+                }
+                break
+            }
+
+            // Something on the call path has given up. Break so the socket
+            // closes: the carrier then asks what to do next on `event=Stream`,
+            // which is the only moment a failed call can still be redirected.
+            Some(cause) = fault_rx.recv() => {
+                fault = Some(cause);
+                break
+            }
 
             // Nothing has reached this loop for a while. The pipeline is still
             // carrying audio either way, so this measures the flow being stuck,
@@ -1187,6 +2024,20 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
                 r.agent_finished(node_id, outcome);
                 let keep_open = loop {
                     match r.advance().await {
+                        // The agent has already spoken to this caller, so the
+                        // stream is open and `<collectdtmf>` cannot reach them.
+                        // A menu wired after an agent is a flow we cannot serve
+                        // as written; say so and take the branch it declares
+                        // for nobody pressing anything.
+                        rustvani::vokoo::NodeAction::CollectDigits { node, .. } => {
+                            log::warn!(
+                                "[call={call}] {} asks for a key after the agent — keys are \
+                                 collected between streams. Taking the no-keypress branch.",
+                                node.name
+                            );
+                            let menu_id = node.id.clone();
+                            r.digits_collected(&menu_id, "timeout");
+                        }
                         rustvani::vokoo::NodeAction::Finished(reason) => {
                             log::info!("[call={call}] flow ended: {reason}");
                             break false;
@@ -1237,6 +2088,52 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
         log::info!("[call={call}] listening ended with the call");
     }
 
+    // The call could not be served. Queue where it goes before this function
+    // returns and the socket closes — the carrier asks for the next
+    // instruction on `event=Stream`, and by then this task is gone.
+    //
+    // Nothing is queued if the caller has already hung up; the handover simply
+    // expires. Better a wasted lookup than a caller left in silence because we
+    // waited to be sure they were still there.
+    if let Some(cause) = fault {
+        rustvani::vokoo::escalate(
+            &cfg.supabase_url,
+            &cfg.service_key,
+            &state.handovers,
+            &start.ucid,
+            &did,
+            &caller,
+            cause,
+        )
+        .await;
+    }
+
+    // Close the billing session and let the drain finish.
+    //
+    // `SessionEnd` is what moves the session from `active` to a settled total,
+    // and the drain task writes the final checkpoint after it. Returning
+    // without waiting drops the tail of the call — which is the part with the
+    // agent's longest replies in it.
+    //
+    // Bounded: a database that has stopped answering must not hold a worker
+    // open after the caller has gone. The last checkpoint is already durable,
+    // so the cost of giving up here is bounded by one checkpoint interval,
+    // which is the guarantee the storage was designed around.
+    if let Some(drain) = billing_drain {
+        billing.record(rustvani::billing::BillingEvent::SessionEnd {
+            session_id: billing.session_id(),
+            ended_at: chrono::Utc::now(),
+            finish_reason: if fault.is_some() { "cancel".to_string() } else { "end".to_string() },
+        });
+        drop(billing);
+        match tokio::time::timeout(std::time::Duration::from_secs(10), drain).await {
+            Ok(_) => log::info!("[call={call}] billing settled"),
+            Err(_) => log::warn!(
+                "[call={call}] billing did not settle in 10s — the last checkpoint stands"
+            ),
+        }
+    }
+
     // The flow's own account of how the call ended, which may disagree with the
     // carrier's — and when it does, that disagreement is the interesting part.
     record
@@ -1257,7 +2154,15 @@ async fn handle_call(mut socket: WebSocket, state: AppState) {
             "caller": start.caller,
             "operator": start.headers.get("operator"),
             "circle": start.headers.get("circle"),
-            "mode": if realtime_mode { "realtime" } else if agent_mode { "agent" } else { "echo" },
+            "mode": if relay_engine.is_some() {
+                "relay"
+            } else if realtime_mode {
+                "realtime"
+            } else if agent_mode {
+                "agent"
+            } else {
+                "echo"
+            },
             "duration_ms": t0.elapsed().as_millis() as u64,
             "media_packets_in": media_in,
             "control_messages_in": other_in,
@@ -1278,11 +2183,15 @@ async fn main() {
         ivr_mode: env_or("IVR_MODE", "stream"),
         cfg: cfg.clone(),
         handovers: rustvani::vokoo::Handovers::new(),
+        keypresses: rustvani::vokoo::Keypresses::new(),
     };
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/engine/preflight", post(engine_preflight))
+        .route("/flow/dryrun", post(flow_dry_run))
+        .route("/catalogue/refresh", post(catalogue_refresh))
         .route("/kookoo", any(kookoo_webhook))
         .route("/ws", get(ws_handler))
         .with_state(state.clone());
@@ -1292,6 +2201,18 @@ async fn main() {
         state.ws_url, state.sip_number, state.is_sip, state.ivr_mode,
         cfg.pipeline_mode, cfg.agent_ready()
     );
+
+    // Keep the engine catalogue honest without anybody pressing a button. The
+    // hand-typed list is what put a retired Sarvam model in front of a caller.
+    let refresh_hours: u64 = env_or("CATALOGUE_REFRESH_HOURS", "12").parse().unwrap_or(12);
+    if refresh_hours > 0 {
+        rustvani::vokoo::discovery::schedule(
+            cfg.supabase_url.clone(),
+            cfg.service_key.clone(),
+            std::time::Duration::from_secs(refresh_hours * 3600),
+        );
+        log::info!("[discovery] refreshing the catalogue every {refresh_hours}h");
+    }
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");

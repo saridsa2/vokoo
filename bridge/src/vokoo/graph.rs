@@ -57,6 +57,31 @@ impl FlowNode {
     pub fn config_i64(&self, key: &str) -> Option<i64> {
         self.config.get(key)?.as_i64()
     }
+
+    /// Branches the flow author wrote, as `(id, label)`.
+    ///
+    /// A menu's outcomes are not declared by its type — the composer stores one
+    /// entry per key here and draws a port for each. A row without an id cannot
+    /// be transitioned from, so it is dropped rather than carried as a branch
+    /// nothing can leave by.
+    pub fn config_branches(&self, key: &str) -> Vec<(String, String)> {
+        self.config
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        let id = row.get("id")?.as_str()?.trim();
+                        if id.is_empty() {
+                            return None;
+                        }
+                        let label = row.get("label").and_then(Value::as_str).unwrap_or(id);
+                        Some((id.to_string(), label.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,7 +142,12 @@ impl Flow {
 /// The carrier reports the called number without a plus and sometimes without
 /// the country code, while the console stores whatever the operator typed.
 /// Matching one spelling makes a number that is plainly present look unmapped.
-fn spellings(did: &str) -> Vec<String> {
+/// Every way this number might be written in the database.
+///
+/// The carrier sends `918040802529`; the console stores `+918040802529`. An
+/// exact match finds neither from the other, which is why anything looking a
+/// number up goes through here rather than comparing strings.
+pub(crate) fn spellings(did: &str) -> Vec<String> {
     let digits: String = did.chars().filter(char::is_ascii_digit).collect();
     let mut out = vec![did.to_string(), digits.clone(), format!("+{digits}")];
     if digits.len() >= 10 {
@@ -158,6 +188,8 @@ async fn get(
 /// bound to events on it, siblings rather than subflows.
 pub const TRIGGER_ANSWERED: &str = "call.answered";
 pub const TRIGGER_ENDED: &str = "call.ended";
+/// The exception flow: what to do when the call cannot be served at all.
+pub const TRIGGER_FAILED: &str = "call.failed";
 
 /// The published flow that answers a DID, or `None` to fall back to the agent.
 pub async fn resolve_for_did(base: &str, key: &str, did: &str) -> Option<Flow> {
@@ -308,6 +340,66 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
     }))
 }
 
+/// One flow by id, published or not.
+///
+/// For the dry run behind the console's node view. Draft is deliberate and is
+/// the difference from `load`: a call must never reach a draft, which is why
+/// that query filters on `status`, but testing a flow *before* publishing it is
+/// the entire point of being able to test one.
+pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+
+    let rows = get(
+        &client,
+        base,
+        key,
+        "flows",
+        &[
+            ("id", format!("eq.{flow_id}")),
+            ("select", "id,org_id,name,graph".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .ok()?;
+    let row: FlowRow = serde_json::from_value(rows.into_iter().next()?).ok()?;
+
+    let registry_rows = get(
+        &client,
+        base,
+        key,
+        "catalogue_node_types",
+        &[
+            ("is_active", "eq.true".into()),
+            ("select", "id,node_type,label,provider_action,suspends,default_timeout_seconds".into()),
+        ],
+    )
+    .await
+    .ok()?;
+
+    Some(Flow {
+        id: row.id,
+        org_id: row.org_id,
+        name: row.name,
+        start: row.graph.start,
+        nodes: row.graph.nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
+        transitions: row
+            .graph
+            .transitions
+            .into_iter()
+            .map(|t| ((t.from, t.outcome), t.to))
+            .collect(),
+        registry: registry_rows
+            .into_iter()
+            .filter_map(|r| serde_json::from_value::<NodeType>(r).ok())
+            .map(|t| (t.id.clone(), t))
+            .collect(),
+    })
+}
+
 /// An organisation's key for a vendor, from the vault.
 ///
 /// Read through a function only the service role may execute, so a key can be
@@ -333,6 +425,172 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
 /// catalogue, a row marked inactive, a request that failed. The caller keeps
 /// `LIVE_MODEL`, so a catalogue mistake degrades the call rather than silencing
 /// the phone. The same contract `resolve_for_did` and `agent_prompt` follow.
+/// How an agent hears and speaks.
+///
+/// The composition lives in the database and the implementations live here, the
+/// same division `catalogue_node_types` uses for the flow vocabulary: an engine
+/// built from providers this binary has is a row and needs no deploy.
+///
+/// Resolved per call, so changing an agent's engine takes effect on the next
+/// call rather than the next restart.
+#[derive(Debug, Clone)]
+pub struct Engine {
+    /// The row id. Carried because cost is reported per engine, and a name is
+    /// not a key: two engines may share one, and renaming one would detach it
+    /// from every call it had already run.
+    pub id: String,
+    pub name: String,
+    /// `realtime` or `cascading`.
+    pub mode: String,
+    /// The stages, keyed by name. Read by whichever mode is in play.
+    pub config: Value,
+}
+
+impl Engine {
+    /// A value from one stage of the composition, e.g. `("realtime", "voice")`.
+    pub fn get(&self, stage: &str, field: &str) -> Option<&str> {
+        self.config.get(stage)?.get(field)?.as_str()
+    }
+
+    /// A number from a stage. The console writes these as JSON numbers, but a
+    /// hand-edited row can hold a string, and a model parameter is not worth
+    /// dropping a call over.
+    pub fn get_f64(&self, stage: &str, field: &str) -> Option<f64> {
+        let value = self.config.get(stage)?.get(field)?;
+        value.as_f64().or_else(|| value.as_str()?.trim().parse().ok())
+    }
+}
+
+/// The engine an agent runs on, with its provider model id already resolved.
+///
+/// Returns `None` for an agent with no engine, which keeps the behaviour it had
+/// before engines existed: whatever the bridge's environment says. Removing that
+/// fallback before every agent has an engine would take the phone down.
+/// One engine by id, with the organisation that owns it.
+///
+/// `engine_for_agent` reaches an engine through the agent that runs on it, which
+/// is the only route a call needs. Pre-flight has an engine and no agent — it
+/// answers "would this work" before anything is attached to it.
+pub async fn engine_by_id(base: &str, key: &str, engine_id: &str) -> Option<(Engine, String)> {
+    if base.is_empty() || key.is_empty() || engine_id.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let rows = get(
+        &client,
+        base,
+        key,
+        "engines",
+        &[
+            ("id", format!("eq.{engine_id}")),
+            ("select", "name,mode,config,status,org_id".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|e| log::warn!("[preflight] could not read engine {engine_id} ({e})"))
+    .ok()?;
+
+    let row = rows.first()?;
+    let org = row.get("org_id")?.as_str()?.to_owned();
+    Some((
+        Engine {
+            id: row.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            name: row.get("name")?.as_str()?.to_owned(),
+            mode: row.get("mode")?.as_str()?.to_owned(),
+            config: row.get("config").cloned().unwrap_or_else(|| serde_json::json!({})),
+        },
+        org,
+    ))
+}
+
+pub async fn engine_for_agent(base: &str, key: &str, agent_id: &str) -> Option<Engine> {
+    if base.is_empty() || key.is_empty() || agent_id.is_empty() {
+        return None;
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    // One request: PostgREST embeds the engine through the foreign key, so this
+    // does not cost a second round trip on a call somebody is waiting on.
+    let rows = get(
+        &client,
+        base,
+        key,
+        "agents",
+        &[
+            ("id", format!("eq.{agent_id}")),
+            ("select", "engines(id,name,mode,config,status)".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|e| log::warn!("[engine] could not read agent {agent_id} ({e})"))
+    .ok()?;
+
+    let engine = rows.first()?.get("engines")?;
+    if engine.is_null() {
+        return None;
+    }
+
+    // A draft engine must not answer a call, the same rule a draft flow and a
+    // draft skill already follow.
+    if engine.get("status").and_then(Value::as_str) != Some("published") {
+        log::warn!("[engine] agent {agent_id} points at a draft engine — using the environment");
+        return None;
+    }
+
+    Some(Engine {
+        id: engine.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+        name: engine.get("name").and_then(Value::as_str).unwrap_or("engine").to_string(),
+        mode: engine.get("mode").and_then(Value::as_str)?.to_string(),
+        config: engine.get("config").cloned().unwrap_or_else(|| serde_json::json!({})),
+    })
+}
+
+/// A catalogue id turned into the provider's own model id.
+///
+/// Split out of `model_for_agent` so an engine can name a model the same way an
+/// agent used to: a provider rename stays an `UPDATE` to one row rather than an
+/// edit to `bridge.env` on the server.
+pub async fn model_id(base: &str, key: &str, catalogue_id: &str) -> Option<String> {
+    if base.is_empty() || key.is_empty() || catalogue_id.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let models = get(
+        &client,
+        base,
+        key,
+        "catalogue_models",
+        &[
+            ("id", format!("eq.{catalogue_id}")),
+            ("is_active", "eq.true".into()),
+            ("select", "provider_model_id".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .ok()?;
+
+    models
+        .first()?
+        .get("provider_model_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
 pub async fn model_for_agent(base: &str, key: &str, agent_id: &str) -> Option<String> {
     if base.is_empty() || key.is_empty() || agent_id.is_empty() {
         return None;
@@ -443,6 +701,60 @@ pub async fn agent_tools(base: &str, key: &str, agent_id: &str) -> Vec<Value> {
 /// `compose_agent_prompt` assembles the prompt, the skills, each skill's tools
 /// and the closing instruction to escalate anything not on the list. That last
 /// line is what makes an out-of-scope request a decision rather than a guess.
+/// How the agent opens the call, and whether it opens at all.
+///
+/// The greeting used to be `GREETING_PROMPT` in `bridge.env`: one sentence for
+/// every agent on every number, while the console had a First Message field per
+/// agent that nothing read. This makes that field the one that decides.
+///
+/// `None` means the agent does not speak first — it connects and waits, which is
+/// what "user speaks first" asks for.
+pub async fn agent_greeting(base: &str, key: &str, agent_id: &str) -> Option<Option<String>> {
+    if base.is_empty() || key.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok()?;
+
+    let rows = get(
+        &client,
+        base,
+        key,
+        "agents",
+        &[
+            ("id", format!("eq.{agent_id}")),
+            ("select", "first_message,config".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|e| log::warn!("[greeting] could not read agent {agent_id} ({e})"))
+    .ok()?;
+
+    let row = rows.first()?;
+    let mode = row
+        .get("config")
+        .and_then(|c| c.get("first_message_mode"))
+        .and_then(Value::as_str)
+        .unwrap_or("agent-first");
+    if mode == "user-first" {
+        return Some(None);
+    }
+
+    let text = row.get("first_message").and_then(Value::as_str).unwrap_or("").trim();
+    // An agent set to speak first with nothing to say still has to speak, or
+    // KooKoo never starts streaming caller audio. Falling back to the
+    // environment keeps that true.
+    if text.is_empty() {
+        return None;
+    }
+    Some(Some(format!(
+        "The caller has just connected. Open the call by saying exactly this, and nothing more: {text}"
+    )))
+}
+
 pub async fn agent_prompt(base: &str, key: &str, agent_id: &str) -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))

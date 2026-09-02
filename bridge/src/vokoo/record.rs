@@ -98,6 +98,60 @@ impl CallRecord {
         }
     }
 
+    /// Keep the carrier's recording of a call.
+    ///
+    /// **`calls.recording_url` has been empty on every call this system has
+    /// taken**, and not because no recording exists — `<start-record/>` has
+    /// been in the answering XML from the beginning and the carrier hands the
+    /// URL over on the `Hangup` event. Nothing read that event, so nothing
+    /// stored it.
+    ///
+    /// Keyed on the carrier's ucid rather than our row id, because the caller
+    /// here is the IVR webhook, which knows the call by the carrier's name.
+    pub async fn store_recording(base: &str, key: &str, ucid: &str, url: &str) {
+        if base.is_empty() || key.is_empty() {
+            return;
+        }
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(client) => client,
+            Err(problem) => {
+                log::warn!("[call-record] {problem}");
+                return;
+            }
+        };
+
+        let sent = client
+            .patch(format!("{base}/rest/v1/calls"))
+            .query(&[("provider_call_id", format!("eq.{ucid}"))])
+            .header("apikey", key)
+            .header("Authorization", format!("Bearer {key}"))
+            .header("Content-Type", "application/json")
+            // Ask for the rows back. A PATCH that matches nothing is a success
+            // to PostgREST, so without this the log says "stored" for a call
+            // that does not exist — which is the kind of line that makes a
+            // later investigation start from a false fact.
+            .header("Prefer", "return=representation")
+            .json(&serde_json::json!({ "recording_url": url }))
+            .send()
+            .await;
+
+        match sent {
+            Ok(response) if response.status().is_success() => {
+                let rows: Vec<serde_json::Value> = response.json().await.unwrap_or_default();
+                if rows.is_empty() {
+                    log::warn!("[call-record] no call row for {ucid} — the recording url is lost");
+                } else {
+                    log::info!("[call-record] recording stored for {ucid}");
+                }
+            }
+            Ok(response) => log::warn!("[call-record] recording not stored: {}", response.status()),
+            Err(problem) => log::warn!("[call-record] recording not stored: {problem}"),
+        }
+    }
+
     pub fn id(&self) -> Option<&str> {
         self.call_id.as_deref()
     }
@@ -141,7 +195,16 @@ impl CallRecord {
     /// transcript held in memory is a transcript lost when the caller hangs up
     /// unexpectedly, which is exactly the call worth reading afterwards.
     pub fn transcript_line(&self, speaker: &str, text: &str) {
-        let Some(call_id) = self.call_id.clone() else { return };
+        // Said out loud because the alternative was archaeology. Three calls
+        // recorded zero transcript lines while every word of them sat in this
+        // same log, and nothing distinguished "never asked" from "asked and
+        // failed" — `rpc` warns on failure, so silence meant it was never
+        // reached, and there was no way to see which side was at fault.
+        let Some(call_id) = self.call_id.clone() else {
+            log::warn!("[call-record] dropping a {speaker} line: this call is not being recorded");
+            return;
+        };
+        log::debug!("[call-record] {speaker}: {} chars", text.len());
         let (base, key) = (self.supabase_url.clone(), self.service_key.clone());
         let body = json!({
             "p_call_id": call_id,

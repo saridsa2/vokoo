@@ -68,7 +68,7 @@ impl Handovers {
 
 /// KooKoo parses the response as XML, so a stray `&` or `<` in a message
 /// somebody typed into the composer would truncate it silently.
-fn escape(text: &str) -> String {
+pub fn escape(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 

@@ -26,6 +26,27 @@ pub enum NodeAction<'a> {
     /// there is no outcome to wait for. The agent has nothing left to decide;
     /// the carrier decides when the call is over.
     Monitor { node: &'a FlowNode, timeout_seconds: u64 },
+    /// Ask the caller to press a key, and come back with which one.
+    ///
+    /// Unlike the two above, this suspends the walk *without* a pipeline: the
+    /// carrier plays the prompt and collects the key itself, between streams,
+    /// and answers on a new HTTP request. That is the whole reason a menu is a
+    /// node and not a tool — the language a caller picks has to be known before
+    /// an engine connects, because the transcriber and the voice take their
+    /// language when their sockets open.
+    CollectDigits {
+        node: &'a FlowNode,
+        prompt: String,
+        /// What the carrier speaks the prompt in, which is not what the call
+        /// will be conducted in — the menu has to be understood by someone who
+        /// has not chosen yet.
+        language: String,
+        /// One per key offered, as `(key, what it means)`.
+        keys: Vec<(String, String)>,
+        /// How many times to repeat before giving up and taking `timeout`.
+        attempts: u32,
+        timeout_seconds: u64,
+    },
     /// The call is over. The string is why, for the call log.
     Finished(String),
 }
@@ -34,6 +55,27 @@ pub enum NodeAction<'a> {
 /// This bounds a mis-wired one to something a caller might sit through rather
 /// than an unbounded spin.
 const MAX_STEPS: usize = 64;
+
+/// Nodes the IVR webhook may evaluate before the call has a stream.
+///
+/// The webhook walks the flow for one reason: to find out whether the first
+/// thing it wants is a menu, because `<collectdtmf>` can only be answered
+/// before a stream opens. The WebSocket handler then walks the *same* flow for
+/// real. So anything the webhook runs would run twice — and half these nodes
+/// dial a number, transfer the call or hang it up.
+///
+/// A whitelist rather than a list of things to skip: a node type added later is
+/// then refused by default, instead of being silently executed twice by a walk
+/// nobody remembered to teach about it.
+/// Triggers are matched by prefix here for the same reason `run_immediate`
+/// matches them that way: a new trigger type should be a catalogue row, not a
+/// code change. Every flow starts on one, so leaving them out stopped every
+/// preview on the first node and no menu was ever reached.
+const PREVIEWABLE: &[&str] = &["business_hours"];
+
+fn previewable(implementation: &str) -> bool {
+    implementation.starts_with("trigger.") || PREVIEWABLE.contains(&implementation)
+}
 
 /// One node the call passed through.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -56,11 +98,58 @@ pub struct FlowRunner<'a> {
     /// call that mentioned it.
     pub trail: Vec<Step>,
     steps: usize,
+    /// Why the flow's trigger fired, when the event has more than one cause.
+    ///
+    /// `call.answered` has one way in and never sets this. `call.ended` has
+    /// two — the caller hung up, or we did — and only the caller of the runner
+    /// knows which, because by then the carrier has said so on a webhook the
+    /// runner never sees.
+    started_by: Option<Outcome>,
+    /// Menus this call has already answered, as node id -> key pressed.
+    ///
+    /// The flow is walked more than once per call — once on the webhook that
+    /// decides what XML to return, again when the stream opens — and a menu
+    /// already answered must not stop the walk a second time. With this, the
+    /// second pass records the same outcome and carries straight on.
+    answered: std::collections::HashMap<String, String>,
+    /// Walking to see what the flow wants, not to do it.
+    preview: bool,
 }
 
 impl<'a> FlowRunner<'a> {
     pub fn new(flow: &'a Flow, control: &'a CallControl) -> Self {
-        Self { flow, control, current: Some(flow.start.clone()), trail: Vec::new(), steps: 0 }
+        Self {
+            flow,
+            control,
+            current: Some(flow.start.clone()),
+            trail: Vec::new(),
+            steps: 0,
+            started_by: None,
+            answered: std::collections::HashMap::new(),
+            preview: false,
+        }
+    }
+
+    /// Walk without touching the carrier.
+    ///
+    /// Stops at the first node that would do something rather than running it,
+    /// so the webhook can discover a menu without dialling anybody. The real
+    /// walk happens later, when the stream is open.
+    pub fn preview(mut self) -> Self {
+        self.preview = true;
+        self
+    }
+
+    /// Supply the keys this call has already pressed.
+    pub fn already_answered(mut self, answered: std::collections::HashMap<String, String>) -> Self {
+        self.answered = answered;
+        self
+    }
+
+    /// Name the cause the trigger fired for, before walking.
+    pub fn started_by(mut self, outcome: impl Into<Outcome>) -> Self {
+        self.started_by = Some(outcome.into());
+        self
     }
 
     /// Run until the flow needs the bridge, or the call is over.
@@ -103,6 +192,92 @@ impl<'a> FlowRunner<'a> {
                 return NodeAction::Monitor { node, timeout_seconds: timeout };
             }
 
+            if self.preview
+                && node.implementation != "kookoo.collect_digits"
+                && !previewable(&node.implementation)
+            {
+                // Not a menu and not safe to evaluate without a call in hand.
+                // The caller of a preview reads this as "nothing to ask".
+                return NodeAction::Finished(format!("preview stopped at {}", node.implementation));
+            }
+
+            if node.implementation == "kookoo.collect_digits" {
+                // Answered on an earlier webhook: record the same outcome and
+                // walk on, so the second pass reaches the agent rather than
+                // asking the caller to choose a language twice.
+                if let Some(key) = self.answered.get(&node_id).cloned() {
+                    // A key the menu does not offer is not an answer. Ending
+                    // the flow here is what a caller who pressed 5 on a
+                    // two-option menu got: no agent, so no pipeline, so
+                    // silence, and the carrier hung up on them. `timeout` is
+                    // the branch this node already declares for "nobody chose
+                    // anything", and it is wired, so it is where an unoffered
+                    // key belongs.
+                    //
+                    // Re-asking would be kinder still and is what the unused
+                    // `attempts` field is for. It needs a count that survives
+                    // the round trip, which this map does not carry.
+                    let outcome = if self.flow.next(&node_id, &key).is_some() {
+                        key
+                    } else {
+                        log::warn!(
+                            "[flow] {} was sent key {key}, which it does not offer — \
+                             taking the no-keypress branch",
+                            node.name
+                        );
+                        "timeout".to_string()
+                    };
+
+                    self.record(node, &outcome);
+                    match self.follow(&node_id, &outcome) {
+                        Some(next) => {
+                            self.current = Some(next);
+                            continue;
+                        }
+                        // Nothing wired to `timeout` either. The composer lets
+                        // you draw this, so say which node stranded the call
+                        // rather than reporting a bare dead end.
+                        None => {
+                            return NodeAction::Finished(format!(
+                                "{} has no path for {outcome}",
+                                node.name
+                            ))
+                        }
+                    }
+                }
+
+                let keys = node.config_branches("digits");
+                if keys.is_empty() {
+                    // Nothing to press. Asking would strand the caller in a
+                    // menu with no exits, so take the fallback the type
+                    // declares and keep the call moving.
+                    log::warn!("[flow] {} offers no keys — taking timeout", node.name);
+                    self.record(node, "timeout");
+                    match self.follow(&node_id, "timeout") {
+                        Some(next) => {
+                            self.current = Some(next);
+                            continue;
+                        }
+                        None => return NodeAction::Finished("menu with no keys".into()),
+                    }
+                }
+
+                let timeout = node
+                    .config_i64("timeout_seconds")
+                    .or_else(|| self.flow.definition(node).and_then(|d| d.default_timeout_seconds))
+                    .unwrap_or(8)
+                    .max(1) as u64;
+
+                return NodeAction::CollectDigits {
+                    node,
+                    prompt: node.config_str("prompt").unwrap_or_default().to_string(),
+                    language: node.config_str("language").unwrap_or("en-IN").to_string(),
+                    keys,
+                    attempts: node.config_i64("attempts").unwrap_or(1).clamp(1, 5) as u32,
+                    timeout_seconds: timeout,
+                };
+            }
+
             let outcome = self.run_immediate(node).await;
             self.record(node, &outcome);
 
@@ -124,6 +299,18 @@ impl<'a> FlowRunner<'a> {
             self.record(node, outcome);
         }
         self.current = self.follow(node_id, outcome);
+    }
+
+    /// Report which key the caller pressed and continue from there.
+    ///
+    /// The digit is the outcome, because the composer writes one branch per key
+    /// and keys the transition on the key itself.
+    pub fn digits_collected(&mut self, node_id: &str, key: &str) {
+        if let Some(node) = self.flow.node(node_id) {
+            self.record(node, key);
+        }
+        self.answered.insert(node_id.to_string(), key.to_string());
+        self.current = self.follow(node_id, key);
     }
 
     /// Note that the call was handed to a listener, and stop walking.
@@ -250,6 +437,20 @@ impl<'a> FlowRunner<'a> {
                 .await
                 .outcome
             }
+
+            // The flow's entry point. There is nothing to run: the event
+            // already happened, and the runner is only walking because it did.
+            // The node exists so the canvas can name what started the flow and
+            // so a flow can branch on which cause fired — which is why it is a
+            // node with outcomes rather than a label drawn on the board.
+            //
+            // Matched by prefix so a new trigger type is a catalogue row and
+            // nothing else. Without this arm a graph carrying one would reach
+            // the catch-all below and fail the call on its first node.
+            trigger if trigger.starts_with("trigger.") => self
+                .started_by
+                .clone()
+                .unwrap_or_else(|| "started".into()),
 
             // `condition`, `loop` and `code` all need an expression language,
             // and what an expression *is* has not been decided. Rather than

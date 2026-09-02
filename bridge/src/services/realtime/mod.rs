@@ -203,6 +203,7 @@ pub struct RealtimeProcessor {
     greeting: Option<String>,
     /// Where a flow waits to hear how the agent node finished.
     outcomes: Option<tokio::sync::mpsc::Sender<(String, serde_json::Value)>>,
+    transcript: Option<tokio::sync::mpsc::Sender<(String, String)>>,
     tools: Option<ToolDispatch>,
     /// Listening rather than talking.
     ///
@@ -240,6 +241,7 @@ impl RealtimeProcessor {
             started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             greeting: None,
             outcomes: None,
+            transcript: None,
             tools: None,
             speaking: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             spoken: Arc::new(tokio::sync::Notify::new()),
@@ -285,6 +287,19 @@ impl RealtimeProcessor {
         self
     }
 
+    /// Where the conversation is written down, as `(speaker, text)`.
+    ///
+    /// A channel rather than a database handle, for the same reason outcomes
+    /// are: this layer owns audio sockets and should not also own a connection.
+    ///
+    /// Until now only the listen-only path recorded anything, so every
+    /// conversation this system has held has gone unrecorded — `calls.transcript`
+    /// has been empty on all fourteen calls.
+    pub fn with_transcript(mut self, tx: tokio::sync::mpsc::Sender<(String, String)>) -> Self {
+        self.transcript = Some(tx);
+        self
+    }
+
     /// Text sent on connect to make the agent open the conversation.
     pub fn with_greeting(mut self, prompt: impl Into<String>) -> Self {
         self.greeting = Some(prompt.into());
@@ -299,6 +314,7 @@ impl RealtimeProcessor {
     async fn spawn_event_pump(&self, processor: FrameProcessor) {
         let pipeline_rate = self.pipeline_rate;
         let outcomes = self.outcomes.clone();
+        let transcript = self.transcript.clone();
         let tools = self.tools.clone();
         let speaking = self.speaking.clone();
         let spoken = self.spoken.clone();
@@ -383,6 +399,12 @@ impl RealtimeProcessor {
                         t_user_end = Some(std::time::Instant::now());
                         replied = false;
                         log::info!("[realtime][turn={turn}] t0 caller: {text}");
+                        if let Some(tx) = transcript.as_ref() {
+                            // The final transcript for this fragment. Interims
+                            // are dropped: they are the same words arriving
+                            // twice, and a record of both is not a record.
+                            let _ = tx.send(("caller".to_string(), text.clone())).await;
+                        }
                         continue;
                     }
                     RealtimeEvent::UserTurnEnd => {
@@ -432,6 +454,13 @@ impl RealtimeProcessor {
                                 }
                             }
                         }
+                        if let Some(tx) = transcript.as_ref() {
+                            let said = turn_text.trim();
+                            if !said.is_empty() {
+                                let _ = tx.send(("agent".to_string(), said.to_string())).await;
+                            }
+                        }
+
                         turn_text.clear();
                         called_this_turn = false;
                         continue;

@@ -16,6 +16,11 @@ async fn main() {
         voice,
         instructions: "You are a clinic receptionist. One short sentence.".into(),
         functions: Vec::new(),
+        // The rest from `Default`, so a field added to the config later does
+        // not break this binary — and with it every test in the crate, since a
+        // test target is all-or-nothing. That is exactly how `cargo test` went
+        // dead once already; this is the second time, on a different file.
+        ..Default::default()
     })
     .await
     {
