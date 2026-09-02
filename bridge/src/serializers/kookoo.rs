@@ -132,7 +132,7 @@ impl KooKooStart {
 
 /// Little-endian PCM16 bytes → normalized f32, which is what
 /// [`StreamResampler`] operates on.
-fn pcm_bytes_to_f32(pcm: &[u8]) -> Vec<f32> {
+pub(crate) fn pcm_bytes_to_f32(pcm: &[u8]) -> Vec<f32> {
     pcm.chunks_exact(2)
         .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
         .collect()
@@ -140,7 +140,7 @@ fn pcm_bytes_to_f32(pcm: &[u8]) -> Vec<f32> {
 
 /// Normalized f32 → i16, clamped rather than wrapped so a hot signal distorts
 /// instead of inverting.
-fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
+pub(crate) fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
     samples
         .iter()
         .map(|s| (s.clamp(-1.0, 1.0) * 32767.0).round() as i16)

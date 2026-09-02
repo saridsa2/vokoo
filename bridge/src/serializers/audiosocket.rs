@@ -24,6 +24,17 @@
 //! `apps/kookoo-bridge/src/audiosocket.ts` speaks this to the same Asterisk 18
 //! box WhatsApp terminates on.
 
+use async_trait::async_trait;
+
+use crate::audio_process::resamplers::ResamplerQuality;
+use crate::frames::{ControlFrame, DataFrame, Frame, FrameInner, SystemFrame};
+
+use super::{FrameSerializer, SerializedInput, SerializedOutput};
+
+/// Telephony audio is narrowband; the same balanced preset the KooKoo and
+/// Twilio serializers use.
+const RESAMPLER_QUALITY: ResamplerQuality = ResamplerQuality::Medium;
+
 /// What a frame is.
 ///
 /// Kept as a plain `u8` match rather than a derived enum conversion: an unknown
@@ -154,9 +165,299 @@ impl FrameReader {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AudioSocketFrameSerializer
+// ---------------------------------------------------------------------------
+
+/// Samples per outbound audio frame — 160 = 20 ms at 8 kHz, which is what
+/// Asterisk's own channel driver reads and writes.
+///
+/// Same lockstep rule as [`KOOKOO_FRAME_SAMPLES`](super::KOOKOO_FRAME_SAMPLES):
+/// `serialize()` emits at most one frame per call, so the transport must be
+/// built with `audio_out_10ms_chunks = 2`. Hand it more samples than fit and
+/// the remainder is buffered until the next chunk — outbound throughput halves
+/// and the backlog grows for the whole call.
+pub const AUDIOSOCKET_FRAME_SAMPLES: usize = 160;
+
+/// The rate AudioSocket carries. Not configurable: `chan_audiosocket` is
+/// specified as 8 kHz signed linear, and a different value here would not
+/// change what arrives — it would only mislabel it.
+pub const AUDIOSOCKET_SAMPLE_RATE: u32 = 8000;
+
+/// Audio in and out of an AudioSocket connection, at the pipeline's rate.
+///
+/// The split against [`AudioSocketTransport`](crate::transport::audiosocket) is
+/// deliberate and follows the KooKoo pair: **the transport owns the wire, the
+/// serializer owns the audio**. So the transport does the framing — it holds
+/// the [`FrameReader`], acts on `terminate` itself and hands over only an audio
+/// frame's payload — and this resamples, buffers and re-frames.
+///
+/// One difference from KooKoo is worth stating rather than discovering: there
+/// is **no command channel**. KooKoo takes `clearBuffer` and `callDisconnect`
+/// as JSON on the same socket; AudioSocket has four frame types and none of
+/// them says "stop playing". Barge-in is therefore whatever we can do locally —
+/// drop what has not been written yet — and nothing more.
+pub struct AudioSocketFrameSerializer {
+    /// The pipeline's rate, learned in `setup`.
+    sample_rate: u32,
+    /// 8 kHz → pipeline. `None` when the pipeline already runs at 8 kHz.
+    input_resampler: Option<crate::audio_process::resamplers::StreamResampler>,
+    /// pipeline → 8 kHz, rebuilt if a frame arrives at a rate we have not seen.
+    output_resampler: Option<(u32, crate::audio_process::resamplers::StreamResampler)>,
+    /// Resampled outbound audio waiting to fill a 20 ms frame.
+    out_pending: Vec<i16>,
+    /// Terminate is sent once. A second one after the socket is closing is at
+    /// best ignored and at worst an error in the Asterisk log.
+    terminate_sent: bool,
+}
+
+impl Default for AudioSocketFrameSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioSocketFrameSerializer {
+    pub fn new() -> Self {
+        Self {
+            sample_rate: AUDIOSOCKET_SAMPLE_RATE,
+            input_resampler: None,
+            output_resampler: None,
+            out_pending: Vec::new(),
+            terminate_sent: false,
+        }
+    }
+
+    /// Resample an outbound chunk to 8 kHz and append it to `out_pending`.
+    fn push_output_audio(&mut self, pcm: &[u8], from_rate: u32) {
+        let f32_in = super::kookoo::pcm_bytes_to_f32(pcm);
+        if f32_in.is_empty() {
+            return;
+        }
+
+        if from_rate == AUDIOSOCKET_SAMPLE_RATE {
+            self.out_pending.extend(super::kookoo::f32_to_i16(&f32_in));
+            return;
+        }
+
+        let needs_rebuild = self.output_resampler.as_ref().map(|(r, _)| *r) != Some(from_rate);
+        if needs_rebuild {
+            self.output_resampler = Some((
+                from_rate,
+                crate::audio_process::resamplers::StreamResampler::new(
+                    from_rate,
+                    AUDIOSOCKET_SAMPLE_RATE,
+                    RESAMPLER_QUALITY,
+                ),
+            ));
+        }
+        if let Some((_, resampler)) = self.output_resampler.as_mut() {
+            let resampled = resampler.process(&f32_in);
+            self.out_pending.extend(super::kookoo::f32_to_i16(&resampled));
+        }
+    }
+
+    /// Pop exactly one 20 ms frame if enough audio has accumulated.
+    ///
+    /// A short frame is never padded with silence: Asterisk plays what it is
+    /// given, so padding stretches every utterance by the size of whatever was
+    /// left over.
+    fn take_frame(&mut self) -> Option<Vec<u8>> {
+        if self.out_pending.len() < AUDIOSOCKET_FRAME_SAMPLES {
+            return None;
+        }
+        Some(
+            self.out_pending
+                .drain(..AUDIOSOCKET_FRAME_SAMPLES)
+                .flat_map(|s| s.to_le_bytes())
+                .collect(),
+        )
+    }
+}
+
+#[async_trait]
+impl FrameSerializer for AudioSocketFrameSerializer {
+    async fn setup(&mut self, audio_in_sample_rate: u32, _audio_out_sample_rate: u32) {
+        self.sample_rate = audio_in_sample_rate;
+        self.input_resampler = if self.sample_rate == AUDIOSOCKET_SAMPLE_RATE {
+            None
+        } else {
+            Some(crate::audio_process::resamplers::StreamResampler::new(
+                AUDIOSOCKET_SAMPLE_RATE,
+                self.sample_rate,
+                RESAMPLER_QUALITY,
+            ))
+        };
+    }
+
+    async fn serialize(&mut self, frame: &Frame) -> Option<SerializedOutput> {
+        let is_end_or_cancel = matches!(
+            &frame.inner,
+            FrameInner::Control(ControlFrame::End { .. })
+                | FrameInner::System(SystemFrame::Cancel { .. })
+        );
+        if is_end_or_cancel && !self.terminate_sent {
+            self.terminate_sent = true;
+            return Some(SerializedOutput::Binary(AudioSocketFrame::terminate().encode()));
+        }
+
+        match &frame.inner {
+            // Barge-in. Everything queued was going to be spoken over the
+            // caller, so it is dropped. What Asterisk has already been handed
+            // is gone — there is no frame type that recalls it — so a long
+            // buffer here is heard as the agent talking past the interruption.
+            // That is the argument for keeping `out_pending` at one frame.
+            FrameInner::System(SystemFrame::Interruption) => {
+                self.out_pending.clear();
+                None
+            }
+
+            FrameInner::Data(DataFrame::OutputAudioRaw(audio)) => {
+                self.push_output_audio(&audio.audio, audio.sample_rate);
+                Some(SerializedOutput::Binary(
+                    AudioSocketFrame::audio(self.take_frame()?).encode(),
+                ))
+            }
+
+            _ => None,
+        }
+    }
+
+    /// One audio frame's payload → one input frame.
+    ///
+    /// The transport hands over the payload of a `0x10` frame and nothing else.
+    /// Text never arrives on this socket, so it is refused rather than parsed:
+    /// AudioSocket is binary throughout, and a text message here would mean
+    /// something is wrong upstream, not that there is audio to salvage.
+    async fn deserialize(&mut self, data: &SerializedInput) -> Option<Frame> {
+        let pcm = match data {
+            SerializedInput::Binary(bytes) => bytes,
+            SerializedInput::Text(_) => return None,
+        };
+
+        let f32_in = super::kookoo::pcm_bytes_to_f32(pcm);
+        if f32_in.is_empty() {
+            return None;
+        }
+
+        let out = match self.input_resampler.as_mut() {
+            Some(r) => r.process(&f32_in),
+            None => f32_in,
+        };
+        if out.is_empty() {
+            return None;
+        }
+
+        let pcm: Vec<u8> = super::kookoo::f32_to_i16(&out)
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        Some(Frame::input_audio(pcm, self.sample_rate, 1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A serializer set up for a 16 kHz pipeline — what a real call uses.
+    async fn serializer() -> AudioSocketFrameSerializer {
+        let mut s = AudioSocketFrameSerializer::new();
+        s.setup(16_000, 16_000).await;
+        s
+    }
+
+    /// `n` samples of PCM16 — a sawtooth, kept well inside i16 so the test
+    /// exercises the resampler rather than an overflow in its own fixture.
+    fn pcm(n: usize) -> Vec<u8> {
+        (0..n).flat_map(|i| (((i % 64) as i16) * 100).to_le_bytes()).collect()
+    }
+
+    #[tokio::test]
+    async fn eight_kilohertz_in_becomes_the_pipeline_rate() {
+        let mut s = serializer().await;
+
+        // The resampler primes before it produces anything, so the first 20 ms
+        // frame yields no audio — worth pinning rather than working around,
+        // because it means a call loses its opening frame and not that the
+        // path is broken.
+        assert!(s.deserialize(&SerializedInput::Binary(pcm(160))).await.is_none());
+
+        let mut got = None;
+        for _ in 0..5 {
+            if let Some(frame) = s.deserialize(&SerializedInput::Binary(pcm(160))).await {
+                got = Some(frame);
+                break;
+            }
+        }
+
+        match got.expect("audio within five frames").inner {
+            // Input audio is a *system* frame in rustvani, not a data one — it
+            // is carried out of band so a stalled pipeline cannot back it up.
+            FrameInner::System(SystemFrame::InputAudioRaw(audio)) => {
+                assert_eq!(audio.sample_rate, 16_000);
+                assert!(!audio.audio.is_empty());
+            }
+            other => panic!("expected input audio, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn output_leaves_as_twenty_millisecond_frames() {
+        let mut s = serializer().await;
+        // 640 samples at 16 kHz = 40 ms = two frames at 8 kHz. The first
+        // serialize returns one; the rest stays buffered.
+        let out = s
+            .serialize(&Frame::output_audio(pcm(640), 16_000, 1))
+            .await
+            .expect("a frame");
+        let SerializedOutput::Binary(bytes) = out else { panic!("audio is binary") };
+
+        let mut reader = FrameReader::new();
+        let frames = reader.feed(&bytes);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].kind, FrameKind::Audio);
+        assert_eq!(frames[0].payload.len(), AUDIOSOCKET_FRAME_SAMPLES * 2);
+    }
+
+    #[tokio::test]
+    async fn a_partial_frame_waits_rather_than_being_padded() {
+        let mut s = serializer().await;
+        // 80 samples at 16 kHz is 40 at 8 kHz — a quarter of a frame. Padding
+        // it to 160 would stretch the utterance by 15 ms of silence.
+        assert!(s.serialize(&Frame::output_audio(pcm(80), 16_000, 1)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_barge_in_drops_what_has_not_been_written() {
+        let mut s = serializer().await;
+        // Buffer most of a frame, interrupt, then send a little more. If the
+        // buffer had survived, the leftovers would complete a frame and the
+        // caller would hear the tail of an utterance they cut off.
+        assert!(s.serialize(&Frame::output_audio(pcm(280), 16_000, 1)).await.is_none());
+        assert!(s.serialize(&Frame::interruption()).await.is_none());
+        assert!(s.serialize(&Frame::output_audio(pcm(40), 16_000, 1)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ending_the_call_sends_terminate_once() {
+        let mut s = serializer().await;
+        let end = Frame::end();
+        let first = s.serialize(&end).await.expect("terminate");
+        assert_eq!(
+            first,
+            SerializedOutput::Binary(AudioSocketFrame::terminate().encode()),
+        );
+        // A second End — the pipeline sends one per direction — must not put
+        // another terminate on a socket that is already closing.
+        assert!(s.serialize(&end).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn text_on_this_socket_is_not_audio() {
+        let mut s = serializer().await;
+        assert!(s.deserialize(&SerializedInput::Text("{}".into())).await.is_none());
+    }
 
     #[test]
     fn an_audio_frame_is_type_length_payload() {

@@ -14,7 +14,10 @@ pub mod g711;
 pub mod kookoo;
 pub mod twilio;
 
-pub use audiosocket::{AudioSocketFrame, FrameKind, FrameReader};
+pub use audiosocket::{
+    AUDIOSOCKET_FRAME_SAMPLES, AUDIOSOCKET_SAMPLE_RATE, AudioSocketFrame,
+    AudioSocketFrameSerializer, FrameKind, FrameReader,
+};
 pub use kookoo::{CallCapture, KOOKOO_FRAME_SAMPLES, KooKooFrameSerializer, KooKooInputParams, KooKooStart};
 pub use twilio::{TwilioFrameSerializer, TwilioInputParams, TwilioStart};
 
