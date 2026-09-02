@@ -11,7 +11,13 @@
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-/** A caller is mid-sentence on a live call; a flow step is not. */
+/**
+ * A caller is mid-sentence on a live call; a flow step is not.
+ *
+ * Exceeding a budget is not a failure of the work — the request carries on
+ * under `waitUntil` and records what it did. It is a statement about what can
+ * be said yet, and the answer at that moment is "not finished".
+ */
 const BUDGET_MS: Record<string, number> = { live: 2_000, flow: 30_000 };
 
 type Body = {
@@ -93,6 +99,76 @@ function trace(row: Record<string, unknown>) {
   );
 }
 
+/**
+ * Run a tool that was pushed with the SDK.
+ *
+ * Two hops: read the live version's code, then hand it to `run`. The code is
+ * read here because this function has the service key and `run` deliberately has
+ * nothing — an isolate that evaluates somebody's handler must not also be able
+ * to reach the database.
+ *
+ * `run` answers 200 with `ok: false` for a tool that threw or timed out, because
+ * that is the tool's answer rather than a transport failure. Its shape is mapped
+ * onto this dispatcher's, so a flow node and the model see one contract however
+ * a tool happens to be implemented.
+ */
+async function runStoredFunction(
+  row: { id: string; name: string },
+  args: Record<string, unknown>,
+  call_id: string | null,
+  org_id: string,
+  variables: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; payload: Record<string, unknown> }> {
+  try {
+    const tools = await rest("tools", `id=eq.${row.id}&select=current_version&limit=1`);
+    const version = (tools[0] as { current_version?: number } | undefined)?.current_version ?? 0;
+    if (version === 0) {
+      return { ok: false, status: 0, payload: { message: `${row.name} has no pushed version` } };
+    }
+
+    const versions = await rest(
+      "tool_versions",
+      `tool_id=eq.${row.id}&version=eq.${version}&select=code,snapshot&limit=1`,
+    );
+    const stored = versions[0] as { code?: string; snapshot?: { timeoutSeconds?: number } } | undefined;
+    if (!stored?.code) {
+      return { ok: false, status: 0, payload: { message: `${row.name} v${version} has no code` } };
+    }
+
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/run`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("VOKOO_RUN_SECRET") ?? ""}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        name: row.name,
+        version,
+        code: stored.code,
+        args,
+        timeoutSeconds: stored.snapshot?.timeoutSeconds ?? 10,
+        // A real call, so the handler gets the call's state. Secrets stay empty
+        // until there is a vault path that does not put them in a bundle.
+        ctx: { callId: call_id, orgId: org_id, variables, secrets: {} },
+      }),
+    });
+
+    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    return {
+      ok: body.ok === true,
+      status: response.status,
+      // `result` is what the tool returned; the rest is why it did not.
+      payload: body.ok === true
+        ? { result: body.result, logs: body.logs }
+        // `error` is carried so the trace records what the tool did — `threw`,
+        // `timed_out` — rather than the HTTP status of the isolate that ran it.
+        : { message: body.message ?? body.error, error: body.error, logs: body.logs },
+    };
+  } catch (error) {
+    return { ok: false, status: 0, payload: { message: String(error) } };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return fail("method_not_allowed", "POST only", 405);
 
@@ -167,28 +243,34 @@ Deno.serve(async (req) => {
   const invalid = validate(row.schema ?? {}, effectiveArgs);
   if (invalid) return fail("invalid_arguments", invalid);
 
-  if (row.kind !== "http" || !row.endpoint_url) {
-    return fail("unsupported_kind", `tool ${tool} is kind ${row.kind}, which this dispatcher does not run yet`);
-  }
-
   const budget = BUDGET_MS[invocation] ?? BUDGET_MS.flow;
 
-  // The upstream call is started once and then raced against the budget, rather
-  // than aborted at it. EdgeRuntime.waitUntil is available on this runtime
-  // (verified on edge-runtime 1.74.0), so exceeding the budget does not have to
-  // mean abandoning the work: the caller gets an answer inside their budget and
-  // the request carries on in the background, writing its result when it lands.
-  const inflight = fetch(row.endpoint_url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ args: effectiveArgs, call_id, org_id }),
-  })
-    .then(async (upstream) => ({
-      ok: upstream.ok,
-      status: upstream.status,
-      payload: await upstream.json().catch(() => ({})),
-    }))
-    .catch((e) => ({ ok: false, status: 0, payload: { message: String(e) } }));
+  // Started once and then raced against the budget, rather than aborted at it.
+  // EdgeRuntime.waitUntil is available on this runtime (verified on
+  // edge-runtime 1.74.0), so exceeding the budget does not mean abandoning the
+  // work: it carries on and records its result when it lands.
+  let inflight: Promise<{ ok: boolean; status: number; payload: Record<string, unknown> }>;
+
+  if (row.kind === "function") {
+    // Pushed with the SDK. The code lives in `tool_versions` and runs in the
+    // `run` isolate, which has an empty environment — this function has the
+    // service key and that one must not.
+    inflight = runStoredFunction(row, effectiveArgs, call_id, org_id, callVariables);
+  } else if (row.kind === "http" && row.endpoint_url) {
+    inflight = fetch(row.endpoint_url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ args: effectiveArgs, call_id, org_id }),
+    })
+      .then(async (upstream) => ({
+        ok: upstream.ok,
+        status: upstream.status,
+        payload: (await upstream.json().catch(() => ({}))) as Record<string, unknown>,
+      }))
+      .catch((e) => ({ ok: false, status: 0, payload: { message: String(e) } }));
+  } else {
+    return fail("unsupported_kind", `tool ${tool} is kind ${row.kind}, which this dispatcher does not run yet`);
+  }
 
   const OVERDUE = Symbol("overdue");
   const raced = await Promise.race([
@@ -216,19 +298,40 @@ Deno.serve(async (req) => {
         });
       }),
     );
+    // `ok: false`. The earlier version of this answered `ok: true` with
+    // `result: {status:"working"}`, and `call_live` hands the whole envelope to
+    // the model as its function response — so the model was told the tool had
+    // succeeded. A model that believes a booking succeeded tells the caller so.
+    //
+    // The work is not abandoned: it finishes under `waitUntil` above and writes
+    // its own `ok_late` row. What changes is only what the model is told now,
+    // which is the truth — it has not finished.
+    //
+    // The flow path reads `error` and routes `timed_out` to its `working`
+    // outcome, which is where "still running" belongs: a graph can branch on
+    // it, and a sentence to a caller cannot.
     return json(200, {
-      ok: true,
+      ok: false,
+      error: "timed_out",
+      message: "still running; there is no result yet",
       result: { status: "working" },
-      outcome: null,
-      // The agent needs something true to say. It has not failed, and it is not
-      // done — saying either would be a lie to the caller.
-      speak: "I'm getting that sorted for you.",
       duration_ms: duration,
     });
   }
 
   const { ok, status, payload } = raced;
-  const error = ok ? null : status ? `upstream_${status}` : "upstream_unreachable";
+  // A tool that reported its own failure names it. Only a transport problem
+  // gets a status-derived label — a handler that threw was recorded as
+  // `upstream_200`, which describes the isolate answering successfully and says
+  // nothing about the tool.
+  const reported = (payload as { error?: unknown }).error;
+  const error = ok
+    ? null
+    : typeof reported === "string" && reported
+      ? reported
+      : status
+        ? `upstream_${status}`
+        : "upstream_unreachable";
   const duration = Date.now() - started;
 
   if (call_id) {
