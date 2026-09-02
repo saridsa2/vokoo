@@ -1,0 +1,14 @@
+{
+    "name": "@vokoo/cli",
+    "version": "0.1.0",
+    "description": "Write, test and ship the functions your agents call.",
+    "type": "module",
+    "bin": { "vokoo": "src/cli.ts" },
+    "files": ["src", "README.md"],
+    "scripts": {
+        "test": "node --test src/*.test.ts",
+        "typecheck": "tsc --noEmit -p tsconfig.json"
+    },
+    "license": "UNLICENSED",
+    "engines": { "node": ">=22.6" }
+}

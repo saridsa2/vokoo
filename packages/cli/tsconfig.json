@@ -1,0 +1,19 @@
+{
+    "compilerOptions": {
+        "target": "ES2023",
+        "lib": ["ES2023", "DOM"],
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        // Imports name the real file. Node 22 strips types and resolves the
+        // `.ts` it is given; it does not rewrite `.js` to `.ts` the way a
+        // bundler does, so writing `.js` here would typecheck and fail to run.
+        "allowImportingTsExtensions": true,
+        "noEmit": true,
+        "strict": true,
+        "noUncheckedIndexedAccess": true,
+        "exactOptionalPropertyTypes": false,
+        "skipLibCheck": true,
+        "types": ["node"]
+    },
+    "include": ["src/**/*.ts"]
+}
