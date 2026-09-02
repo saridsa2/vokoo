@@ -37,6 +37,30 @@ realtime mode — provider=gemini model=models/gemini-2.5-flash-native-audio-lat
 session established
 ```
 
+## A second way in: WhatsApp, through Asterisk
+
+The phone is no longer the only wire. Asterisk 22 runs on the same VPS, takes
+WhatsApp Business calls over SIP/TLS on 5061, and hands the audio to the bridge
+over **AudioSocket** on `127.0.0.1:9092`. `docs/whatsapp-calling.md` is the
+record; the short version is that `handle_call` now takes an `Incoming` —
+a KooKoo WebSocket or an Asterisk TCP stream — and everything after the
+handshake is one implementation.
+
+Proven on a local call, not a WhatsApp one: the flow resolved, the agent node
+was reached, **the Sarvam relay built and spoke**, and `VAD server: → Speaking
+(confidence=1.000)` held for 71 seconds off audio arriving over the socket. This
+file's "no relay has answered a real call" still stands — a Local channel is not
+a caller — but the relay is no longer unexercised end to end.
+
+**The lesson worth carrying:** AudioSocket is a *clocked* stream. The first
+version wrote a frame only when the pipeline produced one, which is what the
+WebSocket transport does, and every call ended after two seconds with
+`app_audiosocket.c: Reached timeout after 2000 ms of no activity`. Silence has
+to be sent. A 20 ms interval writes a frame every tick — queued audio if there
+is any, 320 zero bytes if not. The same mistake is available to anyone adding a
+third transport: **ask whether the wire is clocked before mirroring one that
+isn't.**
+
 ## The four processes
 
 | | Language | Where | State |
@@ -1721,6 +1745,11 @@ inside the network. Nothing stops a flow author pointing it at `localhost`.
   **The check, when you want to know whether they have drifted:** md5 each file
   under `bridge/src` against `/opt/vokoo/rustvani/src`, both directions. Editing
   locally and `scp`-ing up keeps them equal; editing on the server does not.
+  Re-run on 2 September: every file matches except
+  `src/services/tts/elevenlabs/client.rs`, which is in the repo and **not on the
+  VPS** — an orphan of the ElevenLabs vendoring, since the crate builds from
+  `elevenlabs_api/`. It compiles nowhere and is safe to delete once somebody
+  confirms that.
 - ~~`vokoo-console` has **no git commits**.~~ **Wrong, and it was wrong here for
   a while.** The repo is at `/Users/.../Projects/vokoo`, branch
   `console-and-canvas`, remote `github.com/saridsa2/vokoo`, with a real history.
