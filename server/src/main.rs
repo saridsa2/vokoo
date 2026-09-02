@@ -28,6 +28,15 @@ struct AppState {
 struct Config {
     supabase_url: String,
     supabase_anon_key: String,
+    /// The secret PostgREST verifies tokens with. An API key is exchanged for a
+    /// short-lived token signed with this, so a key reaches the database as a
+    /// member and RLS stays the single place the organisation boundary is
+    /// enforced.
+    supabase_jwt_secret: String,
+    /// Shared with the `run` edge function. Not the service role key: a process
+    /// holding that can read every table in every organisation, and the
+    /// executor needs to read nothing at all.
+    run_secret: String,
     bind: SocketAddr,
     cors_origin: HeaderValue,
 }
@@ -36,6 +45,8 @@ impl Config {
     fn from_env() -> Result<Self, ApiError> {
         let supabase_url = required_env("SUPABASE_URL")?;
         let supabase_anon_key = required_env("SUPABASE_ANON_KEY")?;
+        let supabase_jwt_secret = required_env("SUPABASE_JWT_SECRET")?;
+        let run_secret = required_env("VOKOO_RUN_SECRET")?;
         let port = env::var("CONTROLPLANE_PORT")
             .unwrap_or_else(|_| "8081".into())
             .parse::<u16>()
@@ -48,6 +59,8 @@ impl Config {
         Ok(Self {
             supabase_url,
             supabase_anon_key,
+            supabase_jwt_secret,
+            run_secret,
             bind: SocketAddr::from(([0, 0, 0, 0], port)),
             cors_origin,
         })
@@ -56,6 +69,26 @@ impl Config {
     fn anonymous_client(&self) -> Result<Client, ApiError> {
         Client::new(&self.supabase_url, &self.supabase_anon_key)
             .map_err(|error| ApiError::upstream(error.to_string()))
+    }
+
+    /// A client carrying a token this process minted.
+    ///
+    /// Deliberately does not call `set_auth`, which round-trips to GoTrue to
+    /// validate a session. There is no session here — the token was signed a
+    /// moment ago against the same secret PostgREST verifies with, and the
+    /// database layer reads the Authorization header rather than the auth
+    /// module. See the note in `user_client`.
+    fn token_client(&self, jwt: &str) -> Result<Client, ApiError> {
+        let mut config = SupabaseConfig {
+            url: self.supabase_url.clone(),
+            key: self.supabase_anon_key.clone(),
+            ..Default::default()
+        };
+        config
+            .http_config
+            .default_headers
+            .insert("Authorization".to_string(), format!("Bearer {jwt}"));
+        Client::new_with_config(config).map_err(|error| ApiError::upstream(error.to_string()))
     }
 
     async fn user_client(&self, bearer: &str) -> Result<Client, ApiError> {
@@ -108,6 +141,10 @@ enum ApiError {
     NotFound(String),
     #[error("invalid request: {0}")]
     BadRequest(String),
+    /// The request is well formed and disagrees with what is already stored.
+    /// Distinct from BadRequest because retrying it unchanged will not help.
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("Supabase request failed: {0}")]
     Upstream(String),
 }
@@ -134,6 +171,7 @@ impl IntoResponse for ApiError {
             Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::Upstream(_) => (StatusCode::BAD_GATEWAY, "supabase_error"),
         };
         (status, Json(json!({ "error": { "code": code, "message": self.to_string() } })))
@@ -153,6 +191,12 @@ struct ListQuery {
     offset: Option<u32>,
 }
 
+
+#[derive(Debug, Deserialize)]
+struct TestCredentialRequest {
+    /// The key as typed. Never stored by this handler, and never logged.
+    secret: String,
+}
 
 #[derive(Debug, Deserialize)]
 struct SetCredentialRequest {
@@ -179,25 +223,61 @@ struct ApiResponse<T> {
 struct Resource {
     route: &'static str,
     table: &'static str,
+    /// What a list selects. `"*"` for almost everything.
+    ///
+    /// A phone number's real binding lives in `number_flows`, not in the legacy
+    /// `flow_id` column the console was reading — so the list said "Unassigned"
+    /// for a number that was answering calls, and somebody fixing that would
+    /// have assigned an agent and been wrong. An embed is the difference
+    /// between a row and the answer to the question the screen is asking.
+    select: &'static str,
+    /// The column a list is ordered by, newest first. Most tables carry
+    /// `updated_at`; an append-only one has only `created_at`, and ordering by
+    /// a column that is not there fails the whole request with 42703.
+    order_by: &'static str,
 }
 
 const RESOURCES: &[Resource] = &[
-    Resource { route: "agents", table: "agents" },
-    Resource { route: "squads", table: "squads" },
-    Resource { route: "tools", table: "tools" },
-    Resource { route: "phone-numbers", table: "phone_numbers" },
-    Resource { route: "voice-library", table: "voices" },
-    Resource { route: "flows", table: "flows" },
-    Resource { route: "files", table: "files" },
-    Resource { route: "test-suites", table: "test_suites" },
-    Resource { route: "evals", table: "evaluations" },
-    Resource { route: "issues", table: "issues" },
-    Resource { route: "monitors", table: "monitors" },
-    Resource { route: "notifiers", table: "notifiers" },
-    Resource { route: "boards", table: "boards" },
-    Resource { route: "call-logs", table: "calls" },
-    Resource { route: "chat-logs", table: "chats" },
-    Resource { route: "structured-outputs", table: "structured_outputs" },
+    Resource { route: "agents", table: "agents", order_by: "updated_at", select: "*" },
+    // `squads` had no rows and no reader. `skills` is what decides which tools
+    // an agent may call, and had no route at all.
+    Resource { route: "skills", table: "skills", order_by: "updated_at", select: "*" },
+    Resource { route: "tools", table: "tools", order_by: "updated_at", select: "*" },
+    Resource {
+        route: "phone-numbers",
+        table: "phone_numbers",
+        order_by: "updated_at",
+        select: "*,number_flows(trigger_event,flows(id,name))",
+    },
+    // An engine is the chain a call runs through, of which the voice is one
+    // step. `voices` remains for the voices themselves, unreferenced until
+    // something needs to list them.
+    Resource { route: "engines", table: "engines", order_by: "updated_at", select: "*" },
+    Resource { route: "flows", table: "flows", order_by: "updated_at", select: "*" },
+    Resource { route: "files", table: "files", order_by: "updated_at", select: "*" },
+    Resource { route: "test-suites", table: "test_suites", order_by: "updated_at", select: "*" },
+    Resource { route: "evals", table: "evaluations", order_by: "updated_at", select: "*" },
+    Resource { route: "issues", table: "issues", order_by: "updated_at", select: "*" },
+    Resource { route: "monitors", table: "monitors", order_by: "updated_at", select: "*" },
+    Resource { route: "notifiers", table: "notifiers", order_by: "updated_at", select: "*" },
+    Resource { route: "boards", table: "boards", order_by: "updated_at", select: "*" },
+    Resource { route: "call-logs", table: "calls", order_by: "updated_at", select: "*" },
+    // The steps inside a call, including every tool invocation. `call-logs` is
+    // the call; this is what happened during it.
+    Resource { route: "call-events", table: "call_events", order_by: "created_at", select: "*" },
+    // What a call consumed, priced. A view, not a table: the numbers are
+    // derived from the usage ledger and the rate card on every read, so a rate
+    // corrected today reprices every call already taken rather than leaving
+    // history frozen at whatever was configured when it happened.
+    Resource { route: "call-costs", table: "call_costs", order_by: "started_at", select: "*" },
+    // The question the whole exercise is for: what each engine costs to run.
+    // No timestamp of its own — it is an aggregate — so it orders by name.
+    Resource { route: "engine-costs", table: "engine_costs", order_by: "engine_name", select: "*" },
+    // The rate card. Editable, because nobody can price a call until somebody
+    // enters what the vendors charge.
+    Resource { route: "vendor-rates", table: "catalogue_vendor_rates", order_by: "updated_at", select: "*" },
+    Resource { route: "chat-logs", table: "chats", order_by: "updated_at", select: "*" },
+    Resource { route: "structured-outputs", table: "structured_outputs", order_by: "updated_at", select: "*" },
 ];
 
 fn resource_for(route: &str) -> Result<Resource, ApiError> {
@@ -219,12 +299,141 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, ApiError> {
         .ok_or_else(|| ApiError::unauthorized("Authorization must use the Bearer scheme"))
 }
 
+/// How long a token minted for an API key lives.
+///
+/// Short because it is minted per request and never handed out: nothing needs
+/// to refresh it, and a leaked one expires before it is useful. Long enough
+/// that clock skew between this process and PostgREST cannot reject it.
+const KEY_TOKEN_TTL_SECONDS: i64 = 300;
+
+/// The visible half of a key, used to find the row before verifying the secret.
+const KEY_PREFIX_LEN: usize = 11; // "vk_live_" + 3
+
+#[derive(serde::Serialize)]
+struct KeyClaims {
+    sub: String,
+    role: &'static str,
+    aud: &'static str,
+    exp: i64,
+    iat: i64,
+}
+
+/// A newly minted key. The secret exists in this struct and nowhere else.
+struct MintedKey {
+    secret: String,
+    prefix: String,
+    hash: String,
+}
+
+fn mint_key() -> MintedKey {
+    use rand::Rng;
+    // 32 bytes of entropy rendered in an alphabet with no look-alike characters,
+    // because these get copied out of terminals and into CI settings by hand.
+    const ALPHABET: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut rng = rand::thread_rng();
+    let body: String = (0..43).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect();
+    let secret = format!("vk_live_{body}");
+    MintedKey {
+        prefix: secret[..KEY_PREFIX_LEN].to_string(),
+        hash: hash_key(&secret),
+        secret,
+    }
+}
+
+/// A key is 32 bytes of entropy, so there is no dictionary to attack and a slow
+/// KDF would buy nothing while adding its cost to every request.
+fn hash_key(secret: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(secret.as_bytes()))
+}
+
+fn looks_like_api_key(bearer: &str) -> bool {
+    bearer.starts_with("vk_live_") && bearer.len() > KEY_PREFIX_LEN
+}
+
+/// Exchange a presented API key for a token that reaches the database as the
+/// key's machine user.
+///
+/// The lookup runs through `resolve_api_key`, a `security definer` function, so
+/// this process never needs the service role key. A process holding that key
+/// can read every table in every organisation; this one can ask exactly one
+/// question and gets back only the principal to act as.
+async fn exchange_api_key(state: &AppState, presented: &str) -> Result<String, ApiError> {
+    let client = state.config.anonymous_client()?;
+    let rows: Value = client
+        .database()
+        .rpc(
+            "resolve_api_key",
+            Some(json!({
+                "p_prefix": &presented[..KEY_PREFIX_LEN],
+                "p_hash": hash_key(presented),
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+
+    // An unknown, revoked or expired key all come back the same way: no row.
+    // Saying which would tell someone probing keys that they had found a real
+    // prefix.
+    let principal = rows
+        .as_array()
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("user_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::unauthorized("that API key is not valid"))?;
+
+    let now = chrono::Utc::now().timestamp();
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &KeyClaims {
+            sub: principal.to_string(),
+            role: "authenticated",
+            aud: "authenticated",
+            iat: now,
+            exp: now + KEY_TOKEN_TTL_SECONDS,
+        },
+        &jsonwebtoken::EncodingKey::from_secret(state.config.supabase_jwt_secret.as_bytes()),
+    )
+    .map_err(|error| ApiError::upstream(error.to_string()))
+}
+
+/// The client a request acts through, however it authenticated.
+///
+/// A browser presents a Supabase session; the CLI presents `vk_live_…`. Both
+/// end up as a JWT PostgREST verifies, so RLS is the only place the
+/// organisation boundary is decided and there is no second copy of that rule in
+/// this process to drift from it.
+async fn authed_client(state: &AppState, headers: &HeaderMap) -> Result<Client, ApiError> {
+    let bearer = bearer_token(headers)?;
+    if looks_like_api_key(bearer) {
+        let jwt = exchange_api_key(state, bearer).await?;
+        return state.config.token_client(&jwt);
+    }
+    state.config.user_client(bearer).await
+}
+
 fn org_id(headers: &HeaderMap) -> Result<&str, ApiError> {
     headers
         .get("x-org-id")
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| ApiError::Forbidden("x-org-id is required".into()))
+}
+
+/// A refusal by row-level security is the caller's problem, not the database's.
+///
+/// `42501` reaching the client as a 502 sends the reader to check whether
+/// Supabase is up, when what happened is that they may not do this. It is the
+/// expected answer when a key — whose machine user is a `developer` — tries to
+/// mint another key, and that path is a defence, so it has to read like one.
+fn denied_or_upstream<E: std::fmt::Display>(error: E) -> ApiError {
+    let text = error.to_string();
+    if text.contains("42501") || text.contains("row-level security") {
+        return ApiError::Forbidden(
+            "this credential may not manage API keys — minting requires an owner or admin".into(),
+        );
+    }
+    ApiError::upstream(text)
 }
 
 /// Translate a failure from `publish_agent` into the right status.
@@ -346,7 +555,7 @@ async fn me(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let user = client
         .current_user()
         .await
@@ -360,7 +569,7 @@ async fn metrics(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc(
@@ -392,7 +601,7 @@ async fn publish_agent(
     // not chosen an organisation, matching every other data route.
     org_id(&headers)?;
 
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc(
@@ -417,7 +626,7 @@ async fn restore_agent_version(
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     org_id(&headers)?;
 
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc(
@@ -440,7 +649,7 @@ async fn list_agent_versions(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
 
     let rows = client
         .database()
@@ -482,7 +691,7 @@ async fn publish_flow(
     Json(payload): Json<Value>,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     org_id(&headers)?;
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc("publish_flow", Some(json!({ "p_flow_id": id, "p_graph": payload })))
@@ -491,13 +700,590 @@ async fn publish_flow(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "flows", "action": "publish" }) }))
 }
 
+#[derive(serde::Deserialize)]
+struct SkillToolsRequest {
+    tool_ids: Vec<String>,
+}
+
+/// The tools a skill grants.
+///
+/// This link is the boundary the whole system leans on: `compose_agent_tools`
+/// walks agent → skills → tools, and a tool that is not reachable that way is
+/// one the model is never declared. Until now it could only be edited in SQL.
+async fn list_skill_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let rows = client
+        .database()
+        .from("skill_tools")
+        .select("id,tool_id,sort_order")
+        .eq("org_id", &org)
+        .eq("skill_id", &id)
+        .order("sort_order", supabase::types::OrderDirection::Ascending)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "skills", "skill": id }) }))
+}
+
+/// Replace the set of tools a skill grants.
+///
+/// The whole set rather than add and remove, because that is what the screen
+/// knows: a list of checkboxes has a final state, not a history of clicks.
+///
+/// One RPC rather than a delete and an insert. Those cannot share a transaction
+/// through PostgREST, and the first save from the console proved what that
+/// costs — the delete landed, the insert did not, and the skill was left
+/// granting nothing.
+async fn set_skill_tools(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SkillToolsRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    org_id(&headers)?;
+    let client = authed_client(&state, &headers).await?;
+
+    let data: Value = client
+        .database()
+        .rpc(
+            "set_skill_tools",
+            Some(json!({ "p_skill_id": id, "p_tool_ids": body.tool_ids })),
+        )
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "skills", "action": "set-tools" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct AgentSkillsRequest {
+    skill_ids: Vec<String>,
+}
+
+/// The skills an agent has.
+///
+/// The last link in the chain, and the one that decides everything upstream:
+/// `compose_agent_prompt` and `compose_agent_tools` both start here, so an agent
+/// with no skills is told nothing and declared nothing.
+async fn list_agent_skills(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let rows = client
+        .database()
+        .from("agent_skills")
+        .select("id,skill_id,sort_order")
+        .eq("org_id", &org)
+        .eq("agent_id", &id)
+        .order("sort_order", supabase::types::OrderDirection::Ascending)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "agents", "agent": id }) }))
+}
+
+async fn set_agent_skills(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AgentSkillsRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    org_id(&headers)?;
+    let client = authed_client(&state, &headers).await?;
+
+    let data: Value = client
+        .database()
+        .rpc(
+            "set_agent_skills",
+            Some(json!({ "p_agent_id": id, "p_skill_ids": body.skill_ids })),
+        )
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "agents", "action": "set-skills" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct NumberBindingRequest {
+    trigger_event: String,
+    /// Absent or null unbinds this event.
+    #[serde(default)]
+    flow_id: Option<String>,
+}
+
+/// Which flow answers which event on a number.
+///
+/// A call is the durable thing and flows are handlers bound to events on it, so
+/// a number has one binding per event rather than one flow. `resolve_for_event`
+/// reads exactly this.
+async fn list_number_flows(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let rows = client
+        .database()
+        .from("number_flows")
+        .select("id,trigger_event,flow_id")
+        .eq("org_id", &org)
+        .eq("phone_number_id", &id)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "phone-numbers", "number": id }) }))
+}
+
+async fn set_number_flow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<NumberBindingRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    org_id(&headers)?;
+    let client = authed_client(&state, &headers).await?;
+
+    let data: Value = client
+        .database()
+        .rpc(
+            "set_number_flow",
+            Some(json!({
+                "p_phone_number_id": id,
+                "p_trigger_event": body.trigger_event,
+                "p_flow_id": body.flow_id,
+            })),
+        )
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "phone-numbers", "action": "bind" }) }))
+}
+
+/// What happened the last times this tool ran on a call.
+///
+/// Its own endpoint because the generic list takes a limit and nothing else, and
+/// a filter passed to it is dropped in silence — which is how `vokoo logs` first
+/// shipped showing every tool's events under one tool's name.
+///
+/// Only real calls appear. A test run writes nothing: it has no call to belong
+/// to, and putting it in the same timeline as a caller's steps would make the
+/// trace a record of two different things.
+async fn list_tool_runs(
+    State(state): State<AppState>,
+    Query(query): Query<ToolRunQuery>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let mut request = client
+        .database()
+        .from("call_events")
+        .select("id,call_id,implementation,outcome,duration_ms,detail,created_at")
+        .eq("org_id", &org);
+
+    // Named, the runs of one tool. Unnamed, every tool's — which is the run
+    // history for the workspace, and the reason this is not nested under a tool.
+    request = match query.tool.as_deref().filter(|name| !name.is_empty()) {
+        Some(name) => request.eq("implementation", &format!("tool.{name}")),
+        None => request.like("implementation", "tool.%"),
+    };
+
+    let rows = request
+        .order("created_at", supabase::types::OrderDirection::Descending)
+        .limit(query.limit.unwrap_or(100).clamp(1, 500))
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "tool-runs", "tool": query.tool }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct ToolRunQuery {
+    tool: Option<String>,
+    limit: Option<u32>,
+}
+
+/// Every version of one tool, newest first.
+///
+/// Its own endpoint rather than a filter on the generic list: that handler takes
+/// a limit and nothing else, and a filter passed to it is dropped in silence.
+/// `code` is left out — it is the stripped copy the executor runs, and a reader
+/// wants the source they wrote.
+async fn list_tool_versions(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let tools = client
+        .database()
+        .from("tools")
+        .select("id")
+        .eq("org_id", &org)
+        .eq("name", &name)
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    let tool_id = tools
+        .first()
+        .and_then(|row| row.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::NotFound(format!("no tool named {name} in this workspace")))?
+        .to_string();
+
+    let rows = client
+        .database()
+        .from("tool_versions")
+        .select("version,checksum,source,snapshot,created_at")
+        .eq("tool_id", &tool_id)
+        .order("version", supabase::types::OrderDirection::Descending)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "functions", "tool": name }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct RunFunctionRequest {
+    #[serde(default)]
+    args: Value,
+    /// Which version to run. Absent means the live one; a past call is
+    /// reproduced by naming the version it pinned.
+    #[serde(default)]
+    version: Option<i64>,
+}
+
+/// Run one tool and report what it did.
+///
+/// The version is read here, through row-level security as the caller, and the
+/// code is sent to the executor. The executor holds no database client on
+/// purpose: every function isolate on this deployment carries the service role
+/// key and cannot drop it, so the way to bound what running a tool can reach is
+/// to give that function nothing worth reaching.
+async fn run_function(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<RunFunctionRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let tools = client
+        .database()
+        .from("tools")
+        .select("id,name,current_version,schema")
+        .eq("org_id", &org)
+        .eq("name", &name)
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    let tool = tools
+        .first()
+        .ok_or_else(|| ApiError::NotFound(format!("no tool named {name} in this workspace")))?;
+    let tool_id = tool.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let wanted = body
+        .version
+        .or_else(|| tool.get("current_version").and_then(Value::as_i64))
+        .unwrap_or(0);
+
+    if wanted == 0 {
+        return Err(ApiError::BadRequest(format!(
+            "{name} has no pushed version — it was made in the console rather than with the SDK"
+        )));
+    }
+
+    let versions = client
+        .database()
+        .from("tool_versions")
+        .select("version,code,snapshot")
+        .eq("tool_id", &tool_id)
+        .eq("version", &wanted.to_string())
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+
+    let version = versions
+        .first()
+        .ok_or_else(|| ApiError::NotFound(format!("{name} has no version {wanted}")))?;
+    let code = version.get("code").and_then(Value::as_str).unwrap_or_default();
+    if code.is_empty() {
+        return Err(ApiError::BadRequest(format!(
+            "{name} version {wanted} was pushed before the executor existed — push again"
+        )));
+    }
+    let timeout = version
+        .get("snapshot")
+        .and_then(|s| s.get("timeoutSeconds"))
+        .and_then(Value::as_i64)
+        .unwrap_or(10);
+
+    let http = reqwest::Client::builder()
+        // Above the executor's own budget, so the answer comes from the
+        // executor — which knows whether the tool timed out or threw — rather
+        // than from us giving up first.
+        .timeout(std::time::Duration::from_secs((timeout as u64).saturating_add(15)))
+        .build()
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+
+    let reply = http
+        .post(format!("{}/functions/v1/run", state.config.supabase_url))
+        .header("Authorization", format!("Bearer {}", state.config.run_secret))
+        .json(&json!({
+            "name": name,
+            "version": wanted,
+            "code": code,
+            "args": body.args,
+            "timeoutSeconds": timeout,
+            // No call, so no variables and no secrets. `vokoo run` is a tool on
+            // its own, which is what makes it a test rather than a rehearsal.
+            "ctx": { "callId": null, "orgId": org, "variables": {}, "secrets": {} },
+        }))
+        .send()
+        .await
+        .map_err(|error| ApiError::upstream(format!("the executor did not answer: {error}")))?;
+
+    let mut data: Value = reply
+        .json()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    if let Some(object) = data.as_object_mut() {
+        object.insert("version".into(), json!(wanted));
+    }
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "functions", "action": "run", "tool": name }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct PushFunctionsRequest {
+    #[serde(default)]
+    functions: Vec<Value>,
+    /// Named schemas from the same push. Optional, so a CLI that predates them
+    /// keeps working and a project with only tools sends nothing.
+    #[serde(default)]
+    schemas: Vec<Value>,
+}
+
+/// Receive a push from the SDK.
+///
+/// The work is one transaction over `tools` and `tool_versions`, so it belongs
+/// in `push_functions` rather than here: a push that created three tools and
+/// failed on the fourth would otherwise leave a workspace half-updated, and the
+/// CLI has no way to know which half.
+///
+/// This runs as the caller — the API key's machine user — so row-level security
+/// decides what may be written and there is no second copy of the organisation
+/// rule in this process.
+async fn push_functions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<PushFunctionsRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+
+    if body.functions.is_empty() && body.schemas.is_empty() {
+        return Err(ApiError::BadRequest("nothing in this push".into()));
+    }
+
+    // Checked with the same care and for the same reason as the functions
+    // below: the message is for somebody holding a terminal.
+    for (index, entry) in body.schemas.iter().enumerate() {
+        for field in ["id", "name"] {
+            if entry.get(field).and_then(Value::as_str).filter(|v| !v.is_empty()).is_none() {
+                return Err(ApiError::BadRequest(format!(
+                    "schema {index} is missing {field} — push with a current vokoo CLI"
+                )));
+            }
+        }
+        if entry.get("schema").filter(|value| value.is_object()).is_none() {
+            return Err(ApiError::BadRequest(format!(
+                "schema {index} has no compiled schema — push with a current vokoo CLI"
+            )));
+        }
+    }
+
+    // Checked here rather than in SQL because the message is for somebody
+    // holding a terminal, and plpgsql has no idea which entry it is reading.
+    for (index, entry) in body.functions.iter().enumerate() {
+        for field in ["id", "name", "checksum", "source"] {
+            if entry.get(field).and_then(Value::as_str).filter(|v| !v.is_empty()).is_none() {
+                return Err(ApiError::BadRequest(format!(
+                    "function {index} is missing {field} — push with a current vokoo CLI"
+                )));
+            }
+        }
+    }
+
+    let client = authed_client(&state, &headers).await?;
+
+    // Two calls rather than one, because they are two transactions over
+    // different tables. A schema push that succeeds beside a tool push that
+    // fails leaves a schema nothing yet points at, which is harmless — whereas
+    // folding them into one function would put a tool's code path and a
+    // declaration's in the same rollback for no benefit.
+    let mut data = json!({});
+    if !body.functions.is_empty() {
+        data["functions"] = client
+            .database()
+            .rpc(
+                "push_functions",
+                Some(json!({ "p_org_id": &org, "p_functions": body.functions })),
+            )
+            .await
+            .map_err(push_conflict_or_denied)?;
+    }
+    if !body.schemas.is_empty() {
+        data["schemas"] = client
+            .database()
+            .rpc(
+                "push_schemas",
+                Some(json!({ "p_org_id": &org, "p_schemas": body.schemas })),
+            )
+            .await
+            .map_err(push_conflict_or_denied)?;
+    }
+
+    // The tool result stays at the top level, so a CLI that predates schemas
+    // reads `created`/`updated` where it always did.
+    if let Some(functions) = data.get("functions").cloned() {
+        if let Some(object) = functions.as_object() {
+            for (key, value) in object {
+                data[key] = value.clone();
+            }
+        }
+    }
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "functions", "action": "push" }) }))
+}
+
+/// A push that collides with a tool this caller cannot see.
+///
+/// An id identifies one tool everywhere, so an id already used by another
+/// organisation is invisible under row-level security and reaches the primary
+/// key instead. Reported as a conflict naming the cause, because the alternative
+/// — a duplicate key error — sends the reader to look for a bug in their own
+/// database.
+fn push_conflict_or_denied<E: std::fmt::Display>(error: E) -> ApiError {
+    let text = error.to_string();
+    if text.contains("23505") || text.contains("duplicate key") {
+        if text.contains("tools_org_id_name_key") {
+            return ApiError::Conflict(
+                "a different tool in this workspace already has that name — the model calls a tool by name, so it has to be unique".into(),
+            );
+        }
+        return ApiError::Conflict(
+            "one of these ids already belongs to a different workspace — give the tool its own id".into(),
+        );
+    }
+    denied_or_upstream(text)
+}
+
+#[derive(serde::Deserialize)]
+struct MintKeyRequest {
+    name: String,
+    #[serde(default)]
+    expires_at: Option<String>,
+}
+
+/// Mint an API key for this organisation.
+///
+/// The secret is returned exactly once, in this response, and is not
+/// recoverable: only its SHA-256 and its visible prefix are stored. Losing it
+/// means minting another.
+///
+/// Writing to `api_keys` requires `is_org_admin` (migration 0032), so this
+/// refuses for a member without that role — and refuses for a request that
+/// authenticated with an API key, since a key's machine user is a `developer`.
+/// A leaked key must not be able to issue its own replacement.
+async fn mint_api_key(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<MintKeyRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let org = org_id(&headers)?.to_string();
+    let client = authed_client(&state, &headers).await?;
+
+    let principal: Value = client
+        .database()
+        .rpc("machine_user_for_org", Some(json!({ "p_org_id": &org })))
+        .await
+        // The function refuses a caller who is not an admin of this
+        // organisation, before it writes anything. That refusal is the caller's
+        // answer, not a database fault.
+        .map_err(denied_or_upstream)?;
+    let principal = principal
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| principal.as_array().and_then(|r| r.first()).and_then(Value::as_str).map(str::to_owned))
+        .ok_or_else(|| ApiError::upstream("could not resolve the machine user for this organisation"))?;
+
+    let minted = mint_key();
+    let mut row = json!({
+        "org_id":   &org,
+        "user_id":  principal,
+        "name":     body.name,
+        "prefix":   minted.prefix,
+        "key_hash": minted.hash,
+    });
+    if let Some(expires) = body.expires_at.filter(|value| !value.trim().is_empty()) {
+        row["expires_at"] = Value::String(expires);
+    }
+
+    let mut created = client
+        .database()
+        .insert("api_keys")
+        .values(row)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        // The hash is deliberately not returned. It is not the secret, but it
+        // is the only stored thing a stolen backup could check a guess against.
+        .returning("id,org_id,name,prefix,scopes,expires_at,created_at")
+        .execute::<Value>()
+        .await
+        .map_err(denied_or_upstream)?;
+    let created = created
+        .pop()
+        .ok_or_else(|| ApiError::upstream("Supabase returned no inserted key"))?;
+
+    Ok(Json(ApiResponse {
+        // `key` appears here and never again. The console must say so where it
+        // is shown, because the reader has one chance to copy it.
+        data: json!({ "key": minted.secret, "created": created }),
+        meta: json!({ "resource": "api-keys", "action": "mint", "shown_once": true }),
+    }))
+}
+
 async fn restore_flow_version(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, i32)>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     org_id(&headers)?;
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc("restore_flow_version", Some(json!({ "p_flow_id": id, "p_version": version })))
@@ -512,7 +1298,7 @@ async fn list_flow_versions(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let rows = client
         .database()
         .from("flow_versions")
@@ -533,7 +1319,7 @@ async fn capability_catalogue(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc("capability_catalogue", None)
@@ -560,7 +1346,7 @@ async fn list_my_organizations(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let user = client
         .current_user()
         .await
@@ -612,7 +1398,7 @@ async fn list_credentials(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc("list_vendor_credentials", Some(json!({ "p_org_id": organization })))
@@ -638,7 +1424,7 @@ async fn set_credential(
         return Err(ApiError::BadRequest("a key is required".into()));
     }
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
 
     let data = client
         .database()
@@ -660,13 +1446,194 @@ async fn set_credential(
     }))
 }
 
+/// Does this key actually work?
+///
+/// Tested at the moment it is typed, against what was typed — never against a
+/// stored one. `resolve_vendor_secret` is `service_role` only (migration 0046)
+/// and this process holds no service key by design, so it *cannot* read a
+/// stored secret. That is the property worth keeping: the only thing that ever
+/// decrypts a key is the media bridge, when it places a call.
+///
+/// Typing is also when a wrong key is worth catching. A key that authenticates
+/// here and fails later has been rotated at the provider, which no amount of
+/// checking at rest would have predicted.
+///
+/// One cheap, read-only request per vendor — a listing endpoint in every case.
+/// Nothing is created and nothing is charged. Vendors whose probe is not known
+/// return `supported: false` rather than a test that always passes, which would
+/// be worse than no test at all.
+/// Would this engine work, and what does each provider currently offer?
+///
+/// Both are the bridge's to answer: they need a provider key, and after
+/// migration 0046 `resolve_vendor_secret` is `service_role` only — this process
+/// holds no service key by design and cannot read one.
+///
+/// So this gates on the caller's organisation, which the bridge has no way to
+/// check, and forwards with a shared secret. The two halves each do the part
+/// only they can.
+async fn call_bridge(
+    state: &AppState,
+    headers: &HeaderMap,
+    path: &str,
+    body: Value,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let _ = org_id(headers)?;
+    let _ = authed_client(state, headers).await?;
+
+    let (base, token) = (
+        std::env::var("BRIDGE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
+        std::env::var("BRIDGE_INTERNAL_TOKEN").unwrap_or_default(),
+    );
+    if token.is_empty() {
+        return Err(ApiError::Configuration(
+            "BRIDGE_INTERNAL_TOKEN is not set, so the bridge cannot be asked".into(),
+        ));
+    }
+
+    let client = reqwest::Client::builder()
+        // Pre-flight opens real provider connections and waits on them, so this
+        // is deliberately longer than an ordinary API call.
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let response = client
+        .post(format!("{base}{path}"))
+        .header("x-vokoo-internal", token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| ApiError::Upstream(format!("could not reach the bridge: {error}")))?;
+
+    let status = response.status();
+    let data: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(ApiError::Upstream(format!("the bridge answered {status}")));
+    }
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
+}
+
+async fn preflight_engine(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    call_bridge(&state, &headers, "/engine/preflight", json!({ "engine_id": id })).await
+}
+
+/// Walk a flow against a finished call, changing nothing.
+///
+/// What the node view's Input and Output panes show. Gated here on the caller's
+/// organisation and forwarded with the shared secret, like pre-flight — the
+/// bridge answers because reading a transcript needs a provider key and it is
+/// the only process allowed to hold one.
+#[derive(serde::Deserialize)]
+struct DryRunBody {
+    /// A finished call to run against. Its transcript is the test data.
+    ucid: String,
+}
+
+async fn dry_run_flow(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<DryRunBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    call_bridge(&state, &headers, "/flow/dryrun", json!({ "flow_id": id, "ucid": body.ucid })).await
+}
+
+async fn refresh_catalogue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    call_bridge(&state, &headers, "/catalogue/refresh", json!({ "org_id": organization })).await
+}
+
+async fn test_credential(
+    State(state): State<AppState>,
+    Path(vendor): Path<String>,
+    headers: HeaderMap,
+    Json(payload): Json<TestCredentialRequest>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    // Behind the same gate as everything else: this makes an outbound request
+    // on the operator's behalf, so it is not for anonymous callers.
+    let _ = org_id(&headers)?;
+    let _ = authed_client(&state, &headers).await?;
+
+    let secret = payload.secret.trim().to_owned();
+    if secret.is_empty() {
+        return Err(ApiError::BadRequest("a key is required".into()));
+    }
+
+    let probe = match vendor.as_str() {
+        "openai" => Some(("https://api.openai.com/v1/models", "bearer")),
+        "gemini" => Some(("https://generativelanguage.googleapis.com/v1beta/models", "goog")),
+        "deepgram" => Some(("https://api.deepgram.com/v1/projects", "token")),
+        _ => None,
+    };
+
+    let Some((url, scheme)) = probe else {
+        return Ok(Json(ApiResponse {
+            data: json!({ "supported": false }),
+            meta: json!({ "resource": "vendors", "action": "test" }),
+        }));
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|error| ApiError::Upstream(error.to_string()))?;
+
+    let request = match scheme {
+        "bearer" => client.get(url).header("Authorization", format!("Bearer {secret}")),
+        "token" => client.get(url).header("Authorization", format!("Token {secret}")),
+        // Google takes the key in its own header, not in Authorization.
+        _ => client.get(url).header("x-goog-api-key", secret.as_str()),
+    };
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        // A network failure is not a bad key, and saying so would send somebody
+        // to rotate one that is fine.
+        Err(error) => {
+            return Ok(Json(ApiResponse {
+                data: json!({
+                    "supported": true,
+                    "ok": false,
+                    "reason": format!("could not reach {vendor}: {error}"),
+                }),
+                meta: json!({ "resource": "vendors", "action": "test" }),
+            }))
+        }
+    };
+
+    let status = response.status();
+    let ok = status.is_success();
+    Ok(Json(ApiResponse {
+        data: json!({
+            "supported": true,
+            "ok": ok,
+            "status": status.as_u16(),
+            "reason": if ok {
+                Value::Null
+            } else if matches!(status.as_u16(), 401 | 403) {
+                json!(format!("{vendor} rejected this key"))
+            } else {
+                json!(format!("{vendor} answered {status}"))
+            },
+        }),
+        meta: json!({ "resource": "vendors", "action": "test" }),
+    }))
+}
+
 async fn delete_credential(
     State(state): State<AppState>,
     Path(vendor): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     client
         .database()
         .rpc(
@@ -683,7 +1650,7 @@ async fn get_organization(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let row = client
         .database()
         .from("organizations")
@@ -709,7 +1676,7 @@ async fn create_organization(
             "organization name and slug are required".into(),
         ));
     }
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let data = client
         .database()
         .rpc(
@@ -750,7 +1717,7 @@ async fn update_organization(
             "organization updates support name and settings".into(),
         ));
     }
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let mut rows = client
         .database()
         .update("organizations")
@@ -775,7 +1742,7 @@ async fn list_members(
     headers: HeaderMap,
 ) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let rows = client
         .database()
         .from("memberships")
@@ -798,15 +1765,15 @@ async fn list_resources(
 ) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
     let resource = resource_for(&route)?;
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let limit = query.limit.unwrap_or(50).clamp(1, 100);
     let offset = query.offset.unwrap_or(0);
     let rows = client
         .database()
         .from(resource.table)
-        .select("*")
+        .select(resource.select)
         .eq("org_id", &organization)
-        .order("updated_at", supabase::types::OrderDirection::Descending)
+        .order(resource.order_by, supabase::types::OrderDirection::Descending)
         .limit(limit)
         .offset(offset)
         .execute::<Value>()
@@ -825,7 +1792,7 @@ async fn get_resource(
 ) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let resource = resource_for(&route)?;
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let row = client
         .database()
         .from(resource.table)
@@ -860,7 +1827,7 @@ async fn create_resource(
     let resource = resource_for(&route)?;
     let organization = org_id(&headers)?.to_owned();
     let body = mutable_payload(payload, &organization)?;
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let mut rows = client
         .database()
         .insert(resource.table)
@@ -883,7 +1850,7 @@ async fn update_resource(
     let resource = resource_for(&route)?;
     let organization = org_id(&headers)?.to_owned();
     let body = mutable_payload(payload, &organization)?;
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let mut rows = client
         .database()
         .update(resource.table)
@@ -906,7 +1873,7 @@ async fn delete_resource(
 ) -> Result<StatusCode, ApiError> {
     let resource = resource_for(&route)?;
     let organization = org_id(&headers)?.to_owned();
-    let client = state.config.user_client(bearer_token(&headers)?).await?;
+    let client = authed_client(&state, &headers).await?;
     let rows = client
         .database()
         .delete(resource.table)
@@ -928,7 +1895,10 @@ async fn delete_resource(
 fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
         .allow_origin(state.config.cors_origin.clone())
-        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE, Method::OPTIONS])
+        // PUT was missing, so every preflight for one was rejected and the browser
+        // reported it as the API being unreachable — which sends the reader to
+        // check the server rather than the method list.
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE, Method::OPTIONS])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::HeaderName::from_static("x-org-id")]);
 
     Router::new()
@@ -947,6 +1917,14 @@ fn app(state: AppState) -> Router {
         // Registered before the generic `/{resource}` routes so these specific
         // paths are not swallowed by the catch-all.
         .route("/api/v1/agents/{id}/publish", post(publish_agent))
+        .route("/api/v1/functions", post(push_functions))
+        .route("/api/v1/functions/{name}/run", post(run_function))
+        .route("/api/v1/functions/{name}/versions", get(list_tool_versions))
+        .route("/api/v1/tool-runs", get(list_tool_runs))
+        .route("/api/v1/skills/{id}/tools", get(list_skill_tools).put(set_skill_tools))
+        .route("/api/v1/agents/{id}/skills", get(list_agent_skills).put(set_agent_skills))
+        .route("/api/v1/phone-numbers/{id}/flows", get(list_number_flows).put(set_number_flow))
+        .route("/api/v1/api-keys", post(mint_api_key))
         .route("/api/v1/flows/{id}/publish", post(publish_flow))
         .route("/api/v1/flows/{id}/versions", get(list_flow_versions))
         .route(
@@ -966,6 +1944,10 @@ fn app(state: AppState) -> Router {
             "/api/v1/settings/vendors/{vendor}",
             delete(delete_credential),
         )
+        .route("/api/v1/settings/vendors/{vendor}/test", post(test_credential))
+        .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
+        .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
+        .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
         .route("/api/v1/settings/members", get(list_members))
         .route("/api/v1/{resource}", get(list_resources).post(create_resource))
         .route(

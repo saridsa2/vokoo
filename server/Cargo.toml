@@ -9,6 +9,12 @@ chrono = { version = "0.4.42", features = ["serde"] }
 dotenvy = "0.15.7"
 hex = "0.4.3"
 http = "1.3.1"
+# Minting the short-lived token an API key acts with. The same JWT_SECRET
+# PostgREST verifies against, so a key-authenticated request reaches RLS as a
+# real member rather than bypassing it with the service role key.
+jsonwebtoken = "9.3"
+rand = "0.8"
+sha2 = "0.10"
 # Used only for the token-refresh call. supabase-lib-rs's refresh_session()
 # reads a session held on the client, which this server does not keep — every
 # request builds a fresh client, so there is nothing to refresh from.
