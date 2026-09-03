@@ -2628,7 +2628,39 @@ async fn main() {
     // must never cross a network — which is the reason Asterisk runs on this
     // machine rather than beside the rest of the telephony.
     let audiosocket_bind = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
-    tokio::spawn(audiosocket_listener(audiosocket_bind, state.clone()));
+    tokio::spawn(audiosocket_listener(audiosocket_bind.clone(), state.clone()));
+
+    // The switch. Absent ARI configuration the bridge behaves exactly as it
+    // did — a call reaches the pipeline directly — so this is additive rather
+    // than a cutover.
+    match rustvani::vokoo::ari::Ari::from_env() {
+        Some(ari) => match ari.ping().await {
+            Ok(entity) => {
+                log::info!("[stasis] ari ok ({entity}) — running {}", rustvani::vokoo::stasis::APP);
+                let board = rustvani::vokoo::stasis::Switchboard::new();
+                tokio::spawn(async move {
+                    // Reconnects for the life of the process: Asterisk
+                    // restarting must not leave the switch quietly dead, which
+                    // would strand every later caller in a bridge with nothing
+                    // in it.
+                    loop {
+                        if let Err(e) = rustvani::vokoo::stasis::run(
+                            ari.clone(),
+                            board.clone(),
+                            audiosocket_bind.clone(),
+                        )
+                        .await
+                        {
+                            log::warn!("[stasis] {e} — reconnecting in 5s");
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                });
+            }
+            Err(e) => log::error!("[stasis] ari configured but not answering: {e}"),
+        },
+        None => log::info!("[stasis] no ARI_URL — calls go straight to the pipeline"),
+    }
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
