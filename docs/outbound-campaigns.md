@@ -114,6 +114,65 @@ whose lease has expired. Without it, a bridge that restarts mid-campaign dials
 people twice, which for a healthcare list is worse than dialling them not at
 all.
 
+## The KooKoo adapter, proven on 3 September
+
+Six calls to a real handset. The mechanics, measured rather than assumed:
+
+```
+GET http://in1-cpaas.ozonetel.com/outbound/outbound.php
+    api_key, phone_no, caller_id, outbound_version=2,
+    url | extra_data, callback_url
+->  <response><status>queued</status><message>SID</message></response>
+```
+
+**`extra_data` is the inline XML, not metadata.** The docs' own example is
+`extra_data=<response><playtext>..</playtext><hangup/></response>`. Passing a
+campaign label there cost five calls: KooKoo took the label as the XML to run,
+found it invalid, and tore the call down the instant it was answered — no
+`NewCall`, `process: none`, `duration: 0`, and nothing in the response saying
+why. `url` and `extra_data` are alternatives, never both.
+
+**`outbound_sid` is how an outbound call announces itself.** It appears in the
+`NewCall` params beside the usual `sid`:
+
+```json
+{"event":"NewCall","called_number":"918040802529","cid":"919949879837",
+ "outbound_sid":"34322178840270491","display_caller_id":"918040802529"}
+```
+
+That matters because `called_number` on an outbound call is **our own DID**, so
+resolving a flow by number finds the *inbound* flow — the first successful test
+answered a campaign call with the language menu. The rule is therefore: if
+`outbound_sid` is present, resolve the campaign by that id and ignore the
+number's binding entirely.
+
+It is also the correlation key back to `campaign_contacts`, and the only one:
+`extra_data` cannot carry a label, and the queued response returns the same id.
+
+`display_caller_id` confirmed our own DID is presented, so a patient sees a
+number they recognise and can ring back. That was the open question that
+decided whether outbound was viable at all.
+
+## TRAI limits are part of the model, not settings
+
+From the carrier's own documentation, and they are not ours to tune:
+
+| | |
+|---|---|
+| **50 calls a day** | email support for more |
+| **No calls 21:00–09:00** | a hard window |
+| **DND scrubbed automatically** | KooKoo refuses those numbers |
+
+Fifty a day makes a KooKoo campaign a trickle, which is the argument for the
+Asterisk trunk adapter arriving sooner than "when volume demands it". The
+blackout window is why `campaigns` carries a timezone: 21:00 is local, and a
+dialer working from UTC would ring patients at four in the morning.
+
+DND being handled upstream is a genuine gift — the alternative is licensing a
+list and being liable for it — but it means a contact can fail for a reason no
+retry will fix, so `suppressions` records it rather than letting the dialer
+try again tomorrow.
+
 ## Channel adapters, and the order to build in
 
 The campaign, the audience and the dialer are channel-agnostic. Placing a call
