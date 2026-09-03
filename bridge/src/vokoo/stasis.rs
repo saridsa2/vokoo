@@ -160,12 +160,23 @@ async fn on_start(
     let role = args.first().map(String::as_str).unwrap_or("");
     match role {
         // The caller. Build them a bridge and something to talk to.
+        //
+        // Two uuids, and they must differ. `uuid` names the call; `agent_uuid`
+        // names the leg we are about to originate. On a KooKoo pivot BOTH legs
+        // are AudioSocket connections, so one id for both means the caller's
+        // relay claims it and the agent arrives to find nothing — which is
+        // exactly what happened the first time this ran.
         "inbound" => {
             let Some(uuid) = args.get(1).filter(|u| !u.is_empty()) else {
                 log::warn!("[stasis] inbound channel {channel} carries no uuid — hanging up");
                 ari.hangup(channel).await;
                 return;
             };
+            let agent_uuid = args
+                .get(2)
+                .filter(|u| !u.is_empty())
+                .cloned()
+                .unwrap_or_else(|| uuid.clone());
 
             let bridge = match ari.create_bridge().await {
                 Ok(b) => b,
@@ -192,7 +203,7 @@ async fn on_start(
             // announced under, so our AudioSocket server matches it to the
             // pending call without a second registry.
             let args = format!("agent,{uuid}");
-            match ari.originate_audiosocket(audiosocket, uuid, APP, &args, None).await {
+            match ari.originate_audiosocket(audiosocket, &agent_uuid, APP, &args, None).await {
                 Ok(agent) => {
                     log::info!("[stasis] {uuid} — caller {channel} bridged, agent {agent} dialing");
                     board.set_agent(uuid, &agent).await;

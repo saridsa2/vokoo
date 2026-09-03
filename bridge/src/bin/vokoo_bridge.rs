@@ -122,6 +122,11 @@ struct AppState {
     /// two-requests-one-fact shape as `keypresses`, because AudioSocket carries
     /// a uuid and no call metadata at all.
     pending: rustvani::vokoo::PendingCalls,
+    /// KooKoo callers waiting for the Asterisk leg that will represent them.
+    relays: rustvani::vokoo::pivot::Relays,
+    /// None when ARI is not configured, in which case KooKoo calls go straight
+    /// to the pipeline exactly as they always have.
+    ari: Option<rustvani::vokoo::ari::Ari>,
 }
 
 struct AgentConfig {
@@ -1334,6 +1339,169 @@ enum Wire {
     Asterisk { stream: tokio::net::TcpStream, handshake: AudioSocketHandshake },
 }
 
+/// Pipe a KooKoo caller onto an Asterisk channel.
+///
+/// No pipeline is built here. The caller becomes a channel and the Stasis
+/// application decides what answers them — the AI today, a person after an
+/// escalation. Both sides are PCM16 at 8 kHz, so this resamples nothing; the
+/// only work is 10 ms packets in and 20 ms frames out.
+async fn relay_kookoo(
+    call: u64,
+    mut socket: WebSocket,
+    start: KooKooStart,
+    ari: rustvani::vokoo::ari::Ari,
+    state: AppState,
+) {
+    use rustvani::serializers::FrameSerializer as _;
+    use rustvani::vokoo::pivot::Reframer;
+
+    let ucid = start.ucid.clone();
+
+    // **A real UUID, not the ucid.** `chan_audiosocket` parses this and
+    // requires the string form of a standard UUID; KooKoo's ucid is a decimal
+    // integer, and Asterisk answers `500 {"error":"Allocation failed"}` — which
+    // says nothing about why. The leg gets its own identity and the ucid stays
+    // the call's.
+    let leg = uuid::Uuid::new_v4().to_string();
+    // The AI's leg needs its own id and its own announcement: it is the one
+    // that builds a pipeline, so it is the one that has to know who is calling.
+    let agent_leg = uuid::Uuid::new_v4().to_string();
+    let mut ends = state.relays.open(&leg).await;
+    state.pending.announce(rustvani::vokoo::PendingCall {
+        uuid: agent_leg.clone(),
+        did: start.did.clone().unwrap_or_default(),
+        caller: start.caller.clone().unwrap_or_default(),
+        channel: "kookoo".into(),
+        wacid: None,
+    });
+
+    let audiosocket = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
+    let args = format!("inbound,{leg},{agent_leg}");
+    if let Err(e) = ari
+        .originate_audiosocket(
+            &audiosocket,
+            &leg,
+            rustvani::vokoo::stasis::APP,
+            &args,
+            start.caller.as_deref(),
+        )
+        .await
+    {
+        // Nothing will answer this caller. Closing the socket is what makes
+        // the carrier end the call rather than leave them in silence.
+        log::error!("[call={call}] no Asterisk leg for {ucid}: {e}");
+        state.relays.close(&leg).await;
+        return;
+    }
+    log::info!("[call={call}] {ucid} — relaying KooKoo to Asterisk as {leg}, agent {agent_leg}");
+    rustvani::vokoo::telemetry::count("sarvathra_calls_total", &[("channel", "kookoo")]);
+
+    // 8 kHz on both sides: `setup` at the wire rate leaves the serializer with
+    // no resampler at all, so this is a re-frame and nothing more.
+    let mut ser = KooKooFrameSerializer::from_start(&start, KooKooInputParams::default());
+    ser.setup(8000, 8000).await;
+    let mut inbound = Reframer::new(160);
+
+    loop {
+        tokio::select! {
+            message = socket.recv() => {
+                let Some(Ok(message)) = message else { break };
+                let input = match message {
+                    Message::Text(t) => rustvani::serializers::SerializedInput::Text(t.to_string()),
+                    Message::Binary(b) => rustvani::serializers::SerializedInput::Binary(b.to_vec()),
+                    Message::Close(_) => break,
+                    _ => continue,
+                };
+                if let Some(frame) = ser.deserialize(&input).await {
+                    if let FrameInner::System(SystemFrame::InputAudioRaw(audio)) = frame.inner {
+                        for chunk in inbound.push(&audio.audio) {
+                            if ends.to_asterisk.send(chunk).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            out = ends.from_asterisk.recv() => {
+                let Some(pcm) = out else { break };
+                // The serializer emits one 80-sample packet per call, so a
+                // 20 ms frame goes in as two 10 ms halves. Handing it 160
+                // samples at once would leave half of every frame buffered
+                // and halve outbound throughput for the whole call.
+                for half in pcm.chunks(160) {
+                    if let Some(serialized) =
+                        ser.serialize(&Frame::output_audio(half.to_vec(), 8000, 1)).await
+                    {
+                        let sent = match serialized {
+                            rustvani::serializers::SerializedOutput::Text(t) =>
+                                socket.send(Message::Text(t.into())).await,
+                            rustvani::serializers::SerializedOutput::Binary(b) =>
+                                socket.send(Message::Binary(b.into())).await,
+                        };
+                        if sent.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!("[call={call}] {ucid} — KooKoo relay closed");
+    state.relays.close(&leg).await;
+}
+
+/// The Asterisk end of a relay: bytes in, bytes out, no pipeline.
+async fn relay_audiosocket(
+    call: u64,
+    stream: tokio::net::TcpStream,
+    handshake: rustvani::transport::audiosocket::AudioSocketHandshake,
+    mut ends: rustvani::vokoo::pivot::RelayEnds,
+) {
+    use rustvani::serializers::{AudioSocketFrame, FrameKind, FrameReader};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut reader: FrameReader = handshake.reader;
+    let (mut rx, mut tx) = stream.into_split();
+    let mut buffer = vec![0u8; 4096];
+
+    // Anything that arrived with the uuid belongs to this call already.
+    for frame in handshake.pending {
+        if frame.kind == FrameKind::Audio && ends.to_kookoo.send(frame.payload).await.is_err() {
+            return;
+        }
+    }
+
+    loop {
+        tokio::select! {
+            read = rx.read(&mut buffer) => {
+                let Ok(n) = read else { break };
+                if n == 0 { break }
+                for frame in reader.feed(&buffer[..n]) {
+                    match frame.kind {
+                        FrameKind::Audio => {
+                            if ends.to_kookoo.send(frame.payload).await.is_err() {
+                                return;
+                            }
+                        }
+                        FrameKind::Terminate => return,
+                        _ => {}
+                    }
+                }
+            }
+
+            out = ends.from_kookoo.recv() => {
+                let Some(pcm) = out else { break };
+                if tx.write_all(&AudioSocketFrame::audio(pcm).encode()).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+    log::info!("[call={call}] relay leg closed");
+}
+
 async fn handle_call(incoming: Incoming, state: AppState) {
     let call = CALL_SEQ.fetch_add(1, Ordering::Relaxed);
     let cfg = state.cfg.clone();
@@ -1366,6 +1534,16 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 }
             };
 
+            // Put the caller on an Asterisk channel instead of straight into a
+            // pipeline, when asked to. KOOKOO_PIVOT=yes is one env var rather
+            // than a deploy, because the direct path has carried every real
+            // call this line has taken.
+            let pivot = env_or("KOOKOO_PIVOT", "no") == "yes";
+            if let (true, Some(ari)) = (pivot, state.ari.clone()) {
+                relay_kookoo(call, socket, start, ari, state.clone()).await;
+                return;
+            }
+
             let arrival = Arrival {
                 id: start.ucid.clone(),
                 did: start.did.clone().unwrap_or_default(),
@@ -1381,6 +1559,15 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 log::warn!("[call={call}] AudioSocket sent no uuid — dropping connection");
                 return;
             };
+
+            // A relay leg carries somebody else's audio and has no pipeline of
+            // its own. Checked first: it is the only case where a uuid we
+            // originated is not a call to answer.
+            if let Some(ends) = state.relays.claim(&handshake.uuid).await {
+                log::info!("[call={call}] relay leg for {}", handshake.uuid);
+                relay_audiosocket(call, stream, handshake, ends).await;
+                return;
+            }
 
             // The uuid is the call's only credential, and one announcement
             // serves one socket. An unannounced uuid is not a call this bridge
@@ -2579,6 +2766,8 @@ async fn main() {
         handovers: rustvani::vokoo::Handovers::new(),
         keypresses: rustvani::vokoo::Keypresses::new(),
         pending: rustvani::vokoo::PendingCalls::new(),
+        relays: rustvani::vokoo::pivot::Relays::new(),
+        ari: rustvani::vokoo::ari::Ari::from_env(),
     };
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 

@@ -28,6 +28,7 @@ pub mod graph;
 pub mod intelligence;
 pub mod handover;
 pub mod keypress;
+pub mod pivot;
 pub mod postcall;
 pub mod record;
 pub mod runner;
