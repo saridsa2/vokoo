@@ -209,8 +209,13 @@ revoke all on function operator_tenants() from public, anon;
 grant execute on function operator_tenants() to authenticated;
 
 -- Change a tenant's plan or suspend it.
+-- **`returns json`, not `void`.** A void function answers PostgREST with an
+-- empty body, and the control plane's client tries to decode one — so the write
+-- succeeded and the console threw "error decoding response body". The failure
+-- looks like the write failing and is the opposite of it, which is the worst
+-- shape a bug takes.
 create or replace function operator_set_tenant(p_org uuid, p_plan text, p_status text)
-returns void
+returns json
 language plpgsql
 security definer
 set search_path = public
@@ -232,6 +237,8 @@ begin
     if not found then
         raise exception 'no such organisation';
     end if;
+
+    return json_build_object('ok', true);
 end;
 $$;
 
@@ -239,10 +246,11 @@ revoke all on function operator_set_tenant(uuid, text, text) from public, anon;
 grant execute on function operator_set_tenant(uuid, text, text) to authenticated;
 
 -- Grant or deny one catalogue item to one tenant, or clear the override.
+-- `returns json` for the same reason as above.
 create or replace function operator_set_entitlement(
     p_org uuid, p_kind text, p_item text, p_allowed boolean
 )
-returns void
+returns json
 language plpgsql
 security definer
 set search_path = public
@@ -258,12 +266,14 @@ begin
         -- the plan.
         delete from organization_entitlements
          where org_id = p_org and kind = p_kind and item_id = p_item;
-        return;
+        return json_build_object('ok', true, 'state', 'inherit');
     end if;
 
     insert into organization_entitlements (org_id, kind, item_id, allowed)
     values (p_org, p_kind, p_item, p_allowed)
     on conflict (org_id, kind, item_id) do update set allowed = excluded.allowed;
+
+    return json_build_object('ok', true, 'state', case when p_allowed then 'grant' else 'deny' end);
 end;
 $$;
 
