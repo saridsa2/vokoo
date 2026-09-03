@@ -227,16 +227,17 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                         data: history.concurrency.map((c) => c.peak),
                         lineStyle: { color: theme.data, width: 2 },
                         itemStyle: { color: theme.data },
+                        // The line, and no label on it. The panel's own note
+                        // already says "Carrier allows 3", so a caption on the
+                        // line said the same thing twice — and being pinned to
+                        // the right edge, it was clipped by the panel. The
+                        // dashed rule plus the note is one statement in the
+                        // place a reader looks first.
                         markLine: {
                             silent: true,
                             symbol: "none",
+                            label: { show: false },
                             lineStyle: { color: theme.limit, type: "dashed", width: 1.5 },
-                            label: {
-                                formatter: `Carrier limit · ${history.capacity}`,
-                                color: theme.limit,
-                                fontSize: 11,
-                                position: "insideEndTop",
-                            },
                             data: [{ yAxis: history.capacity }],
                         },
                     },

@@ -223,7 +223,15 @@ export const base = (theme: ChartTheme) =>
             padding: [8, 12],
             extraCssText: "box-shadow: none;",
             textStyle: { color: theme.text, fontSize: 12 },
-            axisPointer: { type: "shadow" as const, shadowStyle: { color: theme.dataWash } },
+            // A hairline, not a shaded band. ECharts' `shadow` pointer paints a
+            // filled rectangle over the whole category — which is a bar chart's
+            // affordance being used on a line chart, where there is no bar for
+            // it to correspond to, and it reads as a slab dropped on the data.
+            // A vertical rule says the same thing and covers nothing.
+            axisPointer: {
+                type: "line" as const,
+                lineStyle: { color: theme.grid, width: 1 },
+            },
         },
     }) as const;
 
