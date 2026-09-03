@@ -15,6 +15,7 @@
 //! republished mid-call therefore does not change a call in progress: the
 //! caller finishes on the graph they started with.
 
+pub mod ari;
 pub mod asterisk;
 pub mod billing;
 pub mod compare;
