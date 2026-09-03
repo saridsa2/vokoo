@@ -1697,7 +1697,7 @@ async fn dashboard_history(
     let rows = client
         .database()
         .from("calls")
-        .select("started_at,duration_seconds,status,direction")
+        .select("started_at,ended_at,duration_seconds,status,direction")
         .eq("org_id", &organization)
         .gte("started_at", &from_utc.to_rfc3339())
         .execute::<Value>()
@@ -1711,6 +1711,16 @@ async fn dashboard_history(
         .map(|offset| (from + chrono::Duration::days(offset), 0, 0, 0))
         .collect();
     let mut by_hour = [0i64; 24];
+    // Monday..Sunday × 00..23. A flat 24-bar histogram averages Tuesday ten in
+    // the morning together with Sunday ten in the morning and reports a busy
+    // hour that may exist on no actual day.
+    let mut heat = [[0i64; 24]; 7];
+    // How long calls run. Four buckets rather than an average, because an
+    // average of one twenty-second call and one four-minute call is a two-minute
+    // call that never happened.
+    let mut durations = [0i64; 4];
+    // Every start and end in the window, for the concurrency sweep below.
+    let mut edges: Vec<(chrono::DateTime<chrono::Utc>, i64)> = Vec::new();
 
     for row in &rows {
         let Some(started) = row
@@ -1725,10 +1735,60 @@ async fn dashboard_history(
         let finished = row.get("status").and_then(Value::as_str) == Some("ended");
 
         by_hour[local.hour() as usize] += 1;
+        heat[local.weekday().num_days_from_monday() as usize][local.hour() as usize] += 1;
+
+        if finished {
+            durations[match seconds {
+                ..=59 => 0,
+                60..=179 => 1,
+                180..=299 => 2,
+                _ => 3,
+            }] += 1;
+        }
+
+        // An unfinished call contributes nothing to concurrency: its end is
+        // unknown, and assuming it is still up would make every crashed call
+        // from days ago count against today's peak — the same fault as reading
+        // "live now" out of `ended_at is null`.
+        let ends = row
+            .get("ended_at")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|e| e.with_timezone(&chrono::Utc))
+            .or_else(|| {
+                (seconds > 0)
+                    .then(|| started.with_timezone(&chrono::Utc) + chrono::Duration::seconds(seconds))
+            });
+        if let Some(ends) = ends {
+            edges.push((started.with_timezone(&chrono::Utc), 1));
+            edges.push((ends, -1));
+        }
+
         if let Some(bucket) = by_day.iter_mut().find(|(date, ..)| *date == local.date_naive()) {
             bucket.1 += 1;
             bucket.2 += seconds;
             bucket.3 += i64::from(finished);
+        }
+    }
+
+    // How many calls were up at once, at their worst each day.
+    //
+    // A sweep over starts and ends rather than a per-minute scan: the answer is
+    // only ever a running total that changes at an edge, and a scan would be a
+    // choice of resolution that could miss a peak between two samples.
+    //
+    // Ends sort before starts at the same instant, so one call ending as another
+    // begins is not counted as two calls at once.
+    edges.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut peaks: std::collections::HashMap<chrono::NaiveDate, i64> =
+        std::collections::HashMap::new();
+    let mut running = 0i64;
+    for (at, delta) in &edges {
+        running += delta;
+        if *delta > 0 {
+            let day = at.with_timezone(&zone).date_naive();
+            let peak = peaks.entry(day).or_insert(0);
+            *peak = (*peak).max(running);
         }
     }
 
@@ -1754,12 +1814,49 @@ async fn dashboard_history(
         .map(|(hour, calls)| json!({ "hour": hour, "calls": calls }))
         .collect();
 
+    // Flat rather than nested: the console draws a grid, and a grid is a list
+    // of cells. Nesting would make it unpack an array of arrays to do the same.
+    let heat_out: Vec<Value> = heat
+        .iter()
+        .enumerate()
+        .flat_map(|(day, hours)| {
+            hours.iter().enumerate().map(move |(hour, calls)| {
+                json!({ "day": day, "hour": hour, "calls": calls })
+            })
+        })
+        .collect();
+
+    let duration_labels = ["Under 1m", "1–3m", "3–5m", "Over 5m"];
+    let durations_out: Vec<Value> = durations
+        .iter()
+        .enumerate()
+        .map(|(i, calls)| json!({ "label": duration_labels[i], "calls": calls }))
+        .collect();
+
+    let concurrency_out: Vec<Value> = by_day
+        .iter()
+        .map(|(date, ..)| {
+            json!({
+                "label": format!("{} {}", date.day(), month(date.month())),
+                "peak":  peaks.get(date).copied().unwrap_or(0),
+            })
+        })
+        .collect();
+
     Ok(Json(ApiResponse {
         data: json!({
-            "days":     days_out,
-            "hours":    hours_out,
-            "total":    rows.len(),
-            "timezone": zone.name(),
+            "days":        days_out,
+            "hours":       hours_out,
+            "heatmap":     heat_out,
+            "durations":   durations_out,
+            "concurrency": concurrency_out,
+            // The carrier's own limit, so the console does not carry a number
+            // that would silently disagree with the platform if it changed.
+            // Three concurrent calls per extension; a fourth caller gets SIP
+            // 486 and the bridge never sees them.
+            "capacity":    3,
+            "total":       rows.len(),
+            "timezone":    zone.name(),
         }),
         meta: json!({ "resource": "dashboard", "days": days }),
     }))

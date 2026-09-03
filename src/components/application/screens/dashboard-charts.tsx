@@ -8,6 +8,20 @@
  * off a number — a count of twenty says nothing about whether that is a good
  * day or a collapse.
  *
+ * ## Not all of it is a bar chart, and that is the point
+ *
+ * The first version was three bar charts because a bar chart is the easy
+ * answer, not because the questions were the same. Two of these are not:
+ *
+ * - **Busy hours are a heatmap**, not a histogram. A flat twenty-four-bar chart
+ *   averages Tuesday at ten in the morning together with Sunday at ten in the
+ *   morning, and reports a busy hour that may exist on no actual day.
+ * - **Concurrency is a line against a limit.** The carrier allows three
+ *   simultaneous calls per extension; a fourth caller gets SIP 486 Busy and the
+ *   bridge never sees them, so that failure is invisible in every other view we
+ *   have. A line at three turns "we have never hit it" from a belief into
+ *   something you can look at.
+ *
  * ## Data is blue, chrome is marigold, and there is no emphasis colour
  *
  * Arrived at by being wrong twice. Drawn in the achromatic brand ramp the
@@ -15,33 +29,15 @@
  * ink bar for emphasis, that bar read as a rendering fault — and branding the
  * data made the numbers look like decoration.
  *
- * So the data has a hue of its own and the section colour stays on the frame,
- * where it says which part of the product you are in. **One fill per series,
- * no second value inside it**: a differently coloured bar claims the bars are
- * different kinds of thing. The newest day is marked by being last, which the
- * axis already says.
- *
- * Every colour is a token from `vokoo-brand.css`. A hex here could not follow
- * the theme, and there are two themes.
- *
- * ## Every day in the window, including the empty ones
- *
- * The server fills the gaps rather than returning only days that had calls. A
- * chart drawn from the rows that exist draws a straight line through a quiet
- * weekend and reports business as steady.
+ * So the data has a hue of its own and the section colour stays on the frame.
+ * **The capacity line is the one marigold thing inside a chart**, and
+ * deliberately: it is not data. It is a limit imposed from outside, and drawing
+ * it in the data's colour would make it read as a second series.
  */
 
-import {
-    Area,
-    AreaChart,
-    Bar,
-    BarChart,
-    CartesianGrid,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
-} from "recharts";
+import { useMemo } from "react";
+
+import { Chart, axis, base, useChartTheme } from "@/components/application/charts/chart";
 
 export type HistoryDay = {
     date: string;
@@ -55,23 +51,194 @@ export type HistoryDay = {
 export type History = {
     days: HistoryDay[];
     hours: Array<{ hour: number; calls: number }>;
+    heatmap: Array<{ day: number; hour: number; calls: number }>;
+    durations: Array<{ label: string; calls: number }>;
+    concurrency: Array<{ label: string; peak: number }>;
+    capacity: number;
     total: number;
     timezone: string;
 };
 
-const DATA = "var(--chart-1)";
-const DATA_SOFT = "var(--chart-1-soft)";
-const DATA_WASH = "var(--chart-1-wash)";
-/** Chrome only — a panel's top rule. Never inside a chart. */
-const ACCENT = "var(--chart-accent)";
-const GRID = "var(--color-border-secondary)";
-const LABEL = "var(--color-text-tertiary)";
-
-const axis = { stroke: LABEL, fontSize: 11, tickLine: false, axisLine: false } as const;
-const margin = { top: 6, right: 10, bottom: 0, left: -20 } as const;
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const hour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 export const DashboardCharts = ({ history }: { history: History | null }) => {
-    if (!history) {
+    const theme = useChartTheme();
+
+    const options = useMemo(() => {
+        if (!history) return null;
+        const labels = history.days.map((day) => day.label);
+        const b = base(theme);
+        const down = (from: string, to: string) => ({
+            type: "linear" as const,
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+                { offset: 0, color: from },
+                { offset: 1, color: to },
+            ],
+        });
+
+        return {
+            volume: {
+                ...b,
+                xAxis: { type: "category", data: labels, ...axis(theme) },
+                yAxis: { type: "value", minInterval: 1, ...axis(theme, { grid: true }) },
+                series: [
+                    {
+                        type: "bar",
+                        data: history.days.map((day) => day.calls),
+                        barMaxWidth: 26,
+                        // Down the bar rather than across it: a vertical fade
+                        // reads as height, which is what a bar measures.
+                        itemStyle: { color: down(theme.data, theme.dataSoft) },
+                    },
+                ],
+            },
+
+            talk: {
+                ...b,
+                xAxis: { type: "category", boundaryGap: false, data: labels, ...axis(theme) },
+                yAxis: { type: "value", minInterval: 1, ...axis(theme, { grid: true }) },
+                series: [
+                    {
+                        type: "line",
+                        smooth: true,
+                        // No marker on every point — at fourteen days they crowd
+                        // the line, and the shape is what is being read.
+                        showSymbol: false,
+                        data: history.days.map((day) => Math.round(day.seconds / 60)),
+                        lineStyle: { color: theme.data, width: 2 },
+                        itemStyle: { color: theme.data },
+                        areaStyle: {
+                            color: down(fade(theme.data, 0.28), fade(theme.data, 0.02)),
+                        },
+                    },
+                ],
+            },
+
+            heatmap: {
+                ...b,
+                grid: { top: 12, right: 12, bottom: 24, left: 44 },
+                tooltip: {
+                    ...b.tooltip,
+                    trigger: "item" as const,
+                    axisPointer: undefined,
+                    formatter: (p: { value: [number, number, number] }) =>
+                        `${DAYS[p.value[1]]} ${hour(p.value[0])} — ${p.value[2]} calls`,
+                },
+                xAxis: {
+                    type: "category",
+                    data: Array.from({ length: 24 }, (_, h) => hour(h)),
+                    ...axis(theme),
+                    // Every third hour. Twenty-four labels is a smear; a reader
+                    // needs only enough to place a cell in the day.
+                    axisLabel: { color: theme.label, fontSize: 11, interval: 2 },
+                    // ECharts turns `splitArea` on by default for a heatmap's
+                    // category axes, which paints the whole plot area in a
+                    // near-white it chooses itself. Invisible on an eggshell
+                    // ground and a white slab on a dark one — a colour from
+                    // outside the theme, which is exactly what the token system
+                    // exists to prevent.
+                    splitArea: { show: false },
+                },
+                yAxis: { type: "category", data: DAYS, ...axis(theme), splitArea: { show: false } },
+                visualMap: {
+                    min: 0,
+                    max: Math.max(1, ...history.heatmap.map((c) => c.calls)),
+                    show: false,
+                    // Empty is the surface itself, not the palest blue: a quiet
+                    // Sunday should read as nothing happened rather than as a
+                    // faint something.
+                    inRange: { color: [theme.surface, theme.dataSoft, theme.data] },
+                },
+                series: [
+                    {
+                        type: "heatmap",
+                        data: history.heatmap.map((cell) => [cell.hour, cell.day, cell.calls]),
+                        // The gap between cells is the panel showing through,
+                        // which keeps the grid square without drawing a grid.
+                        itemStyle: { borderColor: theme.surface, borderWidth: 2 },
+                        // **Off, or the heatmap paints itself onto a white slab.**
+                        // A heatmap past ECharts' progressive threshold renders
+                        // on a second canvas layer, and that layer is cleared to
+                        // its own opaque background rather than to the option's.
+                        // Invisible on an eggshell ground and a white rectangle
+                        // on a dark one — found by counting canvases, since only
+                        // this chart had two. A hundred and sixty-eight cells
+                        // needs no progressive rendering at all.
+                        progressive: 0,
+                    },
+                ],
+            },
+
+            durations: {
+                ...b,
+                xAxis: {
+                    type: "category",
+                    data: history.durations.map((d) => d.label),
+                    ...axis(theme),
+                },
+                yAxis: { type: "value", minInterval: 1, ...axis(theme, { grid: true }) },
+                series: [
+                    {
+                        type: "bar",
+                        data: history.durations.map((d) => d.calls),
+                        barMaxWidth: 48,
+                        itemStyle: { color: down(theme.data, theme.dataSoft) },
+                    },
+                ],
+            },
+
+            concurrency: {
+                ...b,
+                xAxis: { type: "category", boundaryGap: false, data: labels, ...axis(theme) },
+                yAxis: {
+                    type: "value",
+                    minInterval: 1,
+                    min: 0,
+                    // The limit is always on screen, even on a quiet fortnight.
+                    // A chart scaled to a peak of one would put the line off the
+                    // top and hide the only thing it exists to show.
+                    max: Math.max(
+                        history.capacity + 1,
+                        ...history.concurrency.map((c) => c.peak),
+                    ),
+                    ...axis(theme, { grid: true }),
+                },
+                series: [
+                    {
+                        type: "line",
+                        // Stepped: a peak is what the day reached, not a value
+                        // sliding between two days. A smooth curve would draw
+                        // a concurrency of 2.4 that never happened.
+                        step: "end",
+                        symbol: "circle",
+                        symbolSize: 5,
+                        data: history.concurrency.map((c) => c.peak),
+                        lineStyle: { color: theme.data, width: 2 },
+                        itemStyle: { color: theme.data },
+                        markLine: {
+                            silent: true,
+                            symbol: "none",
+                            lineStyle: { color: theme.accent, type: "dashed", width: 1.5 },
+                            label: {
+                                formatter: `Carrier limit · ${history.capacity}`,
+                                color: theme.accent,
+                                fontSize: 11,
+                                position: "insideEndTop",
+                            },
+                            data: [{ yAxis: history.capacity }],
+                        },
+                    },
+                ],
+            },
+        };
+    }, [history, theme]);
+
+    if (!history || !options) {
         return <Note>Loading.</Note>;
     }
     if (history.total === 0) {
@@ -83,146 +250,64 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
         );
     }
 
-    const days = withMinutes(history.days);
-    // The busiest hour, emphasised rather than left for the reader to find by
-    // comparing twenty-four bars.
-    const peak = history.hours.reduce(
-        (best, row, index) => (row.calls > history.hours[best].calls ? index : best),
-        0,
+    const busiest = history.heatmap.reduce(
+        (best, cell) => (cell.calls > best.calls ? cell : best),
+        history.heatmap[0] ?? { day: 0, hour: 0, calls: 0 },
     );
 
     return (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Panel title="Call Volume" note={`Last ${days.length} days · ${history.timezone}`}>
-                <ResponsiveContainer width="100%" height={210}>
-                    <BarChart data={days} margin={margin}>
-                        <defs>
-                            {/* Down the bar rather than across it: a vertical
-                                fade reads as height, which is what the bar is
-                                measuring. */}
-                            <linearGradient id="bar-data" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={DATA} stopOpacity={1} />
-                                <stop offset="100%" stopColor={DATA_SOFT} stopOpacity={0.9} />
-                            </linearGradient>
-                        </defs>
-                        {/* Horizontal only. Vertical rules over a bar chart draw
-                            a box around every bar and add nothing — the bars
-                            already say where the categories are. */}
-                        <CartesianGrid stroke={GRID} vertical={false} />
-                        <XAxis dataKey="label" {...axis} interval="preserveStartEnd" />
-                        <YAxis {...axis} allowDecimals={false} width={40} />
-                        <Tooltip {...tooltipProps} content={<Card unit="calls" />} />
-                        <Bar dataKey="calls" maxBarSize={26} fill="url(#bar-data)" />
-                    </BarChart>
-                </ResponsiveContainer>
+            <Panel title="Call Volume" note={`Last ${history.days.length} days · ${history.timezone}`}>
+                <Chart option={options.volume} height={210} ariaLabel="Calls per day" />
             </Panel>
 
             <Panel title="Talk Time" note="Minutes per day">
-                <ResponsiveContainer width="100%" height={210}>
-                    <AreaChart data={days} margin={margin}>
-                        <defs>
-                            <linearGradient id="area-data" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={DATA} stopOpacity={0.28} />
-                                <stop offset="100%" stopColor={DATA} stopOpacity={0.02} />
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke={GRID} vertical={false} />
-                        <XAxis dataKey="label" {...axis} interval="preserveStartEnd" />
-                        <YAxis {...axis} allowDecimals={false} width={40} />
-                        <Tooltip {...tooltipProps} content={<Card unit="minutes" />} />
-                        <Area
-                            type="monotone"
-                            dataKey="minutes"
-                            stroke={DATA}
-                            strokeWidth={2}
-                            fill="url(#area-data)"
-                            // No dot on every point — at fourteen days they
-                            // crowd the line, and the shape is what is read.
-                            // The hovered one still appears.
-                            dot={false}
-                            activeDot={{ r: 4, fill: DATA, stroke: "var(--color-bg-primary)", strokeWidth: 2 }}
-                        />
-                    </AreaChart>
-                </ResponsiveContainer>
+                <Chart option={options.talk} height={210} ariaLabel="Minutes on the phone per day" />
             </Panel>
 
             <Panel
-                title="Calls by Hour"
-                note={`Peak ${hour(peak)} · ${history.timezone}`}
+                title="Busy Hours"
+                note={
+                    busiest.calls > 0
+                        ? `Busiest ${DAYS[busiest.day]} ${hour(busiest.hour)} · ${history.timezone}`
+                        : history.timezone
+                }
                 className="xl:col-span-2"
             >
-                <ResponsiveContainer width="100%" height={190}>
-                    <BarChart data={history.hours} margin={margin}>
-                        <CartesianGrid stroke={GRID} vertical={false} />
-                        <XAxis
-                            dataKey="hour"
-                            {...axis}
-                            // Every third hour. Twenty-four labels on a wide
-                            // chart is a smear; a reader needs only enough to
-                            // place a bar in the day.
-                            interval={2}
-                            tickFormatter={hour}
-                        />
-                        <YAxis {...axis} allowDecimals={false} width={40} />
-                        <Tooltip
-                            {...tooltipProps}
-                            content={<Card unit="calls" />}
-                            labelFormatter={(value) => hour(Number(value))}
-                        />
-                        {/* Lighter than the daily chart, because this is the
-                            same measurement cut a second way rather than a
-                            second measurement. */}
-                        <Bar dataKey="calls" maxBarSize={20} fill={DATA} fillOpacity={0.7} />
-                    </BarChart>
-                </ResponsiveContainer>
+                <Chart
+                    option={options.heatmap}
+                    height={220}
+                    ariaLabel="Calls by day of the week and hour of the day"
+                />
+            </Panel>
+
+            <Panel title="Call Length" note="Completed calls">
+                <Chart option={options.durations} height={200} ariaLabel="How long calls last" />
+            </Panel>
+
+            <Panel title="Peak Concurrent Calls" note={`Carrier allows ${history.capacity}`}>
+                <Chart
+                    option={options.concurrency}
+                    height={200}
+                    ariaLabel="Most calls in progress at once each day, against the carrier's limit"
+                />
             </Panel>
         </div>
     );
 };
 
-/** Seconds are what the record holds; minutes are what a person reads. */
-const withMinutes = (days: HistoryDay[]) =>
-    days.map((day) => ({ ...day, minutes: Math.round(day.seconds / 60) }));
-
-const hour = (h: number) => `${String(h).padStart(2, "0")}:00`;
-
-const tooltipProps = {
-    cursor: { fill: DATA_WASH },
-} as const;
-
 /**
- * The tooltip, as a component rather than a pile of style props.
+ * A hex colour at an opacity.
  *
- * Recharts' default is a rounded white card with a hairline border — another
- * project's styling showing through, the same way the borrowed editor's eight
- * radii did. Square, on the app's own surface, with the value carrying the
- * accent so the card belongs to the series it came from.
+ * ECharts gradient stops take a colour string and the tokens resolve to hex.
+ * `color-mix` would be the CSS answer and is not one here: this value goes into
+ * a canvas, not a stylesheet.
  */
-const Card = ({
-    active,
-    payload,
-    label,
-    unit,
-    labelFormatter,
-}: {
-    active?: boolean;
-    payload?: Array<{ value?: number | string; payload?: HistoryDay }>;
-    label?: string | number;
-    unit: string;
-    labelFormatter?: (value: string | number) => string;
-}) => {
-    if (!active || !payload?.length) return null;
-    const point = payload[0];
-    return (
-        <div className="border border-secondary bg-primary px-3 py-2 shadow-lg">
-            <p className="text-xs text-tertiary">
-                {labelFormatter && label !== undefined ? labelFormatter(label) : label}
-            </p>
-            <p className="text-sm font-semibold text-primary tabular-nums">
-                <span style={{ color: DATA }}>{point.value}</span> {unit}
-            </p>
-        </div>
-    );
+const fade = (colour: string, alpha: number) => {
+    const hex = colour.trim();
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return `rgba(${r},${g},${b},${alpha})`;
 };
 
 const Note = ({ children }: { children: React.ReactNode }) => (
@@ -249,7 +334,7 @@ const Panel = ({
 }) => (
     <section
         className={`flex flex-col gap-3 border border-t-2 border-secondary p-4 ${className ?? ""}`}
-        style={{ borderTopColor: ACCENT }}
+        style={{ borderTopColor: "var(--chart-accent)" }}
     >
         <div className="flex items-baseline justify-between gap-3">
             <h3 className="text-sm font-semibold text-primary">{title}</h3>
