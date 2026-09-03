@@ -161,6 +161,44 @@ impl Ari {
         Ok(channel.id)
     }
 
+    /// Originate any endpoint into a Stasis application.
+    ///
+    /// `PJSIP/sarvathra-4001` for a human agent. Separate from
+    /// [`Self::originate_audiosocket`] only because that one builds its
+    /// endpoint string from a host, port and uuid, and getting that shape
+    /// wrong is answered with `Allocation failed` and nothing else.
+    pub async fn originate_endpoint(
+        &self,
+        endpoint: &str,
+        app: &str,
+        args: &str,
+        caller_id: Option<&str>,
+    ) -> Result<String, String> {
+        let mut query: Vec<(&str, String)> = vec![
+            ("endpoint", endpoint.to_string()),
+            ("app", app.to_string()),
+            ("appArgs", args.to_string()),
+        ];
+        if let Some(cid) = caller_id.filter(|c| !c.is_empty()) {
+            query.push(("callerId", cid.to_string()));
+        }
+        let response = self
+            .http
+            .post(self.url("channels"))
+            .basic_auth(&self.user, Some(&self.password))
+            .query(&query)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("originate {endpoint} answered {status}: {body}"));
+        }
+        let channel: ChannelId = response.json().await.map_err(|e| e.to_string())?;
+        Ok(channel.id)
+    }
+
     /// A mixing bridge, which is what puts two channels in the same
     /// conversation.
     pub async fn create_bridge(&self) -> Result<String, String> {

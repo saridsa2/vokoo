@@ -124,6 +124,9 @@ struct AppState {
     pending: rustvani::vokoo::PendingCalls,
     /// KooKoo callers waiting for the Asterisk leg that will represent them.
     relays: rustvani::vokoo::pivot::Relays,
+    /// The calls Asterisk is bridging. Shared with the Stasis task so a flow
+    /// outcome can reach the switch that holds the caller.
+    switchboard: rustvani::vokoo::stasis::Switchboard,
     /// None when ARI is not configured, in which case KooKoo calls go straight
     /// to the pipeline exactly as they always have.
     ari: Option<rustvani::vokoo::ari::Ari>,
@@ -1244,6 +1247,9 @@ async fn asterisk_incoming(
         wacid: form.wacid.filter(|w| !w.is_empty()),
         // A WhatsApp leg *is* the call; there is no carrier id behind it.
         carrier_call_id: None,
+        // On WhatsApp the caller leg is PJSIP and carries the announced uuid,
+        // so the switchboard is keyed by the same id.
+        switch_key: Some(form.uuid.clone()),
     };
 
     log::info!(
@@ -1376,6 +1382,7 @@ async fn relay_kookoo(
         channel: "kookoo".into(),
         wacid: None,
         carrier_call_id: Some(ucid.clone()),
+        switch_key: Some(leg.clone()),
     });
 
     let audiosocket = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
@@ -1536,6 +1543,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
 
     // Each carrier's handshake, and nothing else that differs between them.
     // Everything below this block is one call path.
+    // Set when this call is being bridged by Asterisk, which is what makes an
+    // escalation possible at all.
+    let mut switch_key: Option<String> = None;
     let (arrival, mut wire, capture) = match incoming {
         Incoming::Kookoo(mut socket) => {
             let Some((start, start_raw)) = await_kookoo_start(&mut socket).await else {
@@ -1621,6 +1631,7 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                     "wacid":   pending.wacid,
                 }),
             };
+            switch_key = pending.switch_key.clone();
             // No capture: `CallCapture` logs a JSON wire, and this one is PCM.
             // A recording of a WhatsApp call is Asterisk's `MixMonitor` to
             // start, not this.
@@ -2546,6 +2557,46 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                     "[call={call}] agent finished as {outcome}: {}",
                     args.get("note").and_then(|v| v.as_str()).unwrap_or("")
                 );
+
+                // The caller asked for a person, and this call is one Asterisk
+                // is holding. Swap the leg beside them: they are not moved, not
+                // re-dialled, and never hear a transfer.
+                //
+                // Only when there is somewhere to send them. An escalation to
+                // an agent who is not logged in is a caller listening to
+                // ringing that nobody will answer, which is worse than an agent
+                // saying it cannot help — so a failure here falls through to
+                // the flow's own `wants_human` branch rather than replacing it.
+                if outcome == "wants_human" {
+                    if let (Some(key), Some(ari)) = (switch_key.as_deref(), state.ari.as_ref()) {
+                        let endpoint = env_or("AGENT_ENDPOINT", "PJSIP/sarvathra-4001");
+                        match state
+                            .switchboard
+                            .escalate(ari, key, &endpoint, Some(&caller))
+                            .await
+                        {
+                            Ok(channel) => {
+                                log::info!("[call={call}] handed to {endpoint} on {channel}");
+                                rustvani::vokoo::telemetry::count(
+                                    "sarvathra_escalations_total",
+                                    &[("channel", arrival.channel), ("result", "handed_over")],
+                                );
+                                // The pipeline's work is done — the person has
+                                // the call now. Leaving it running would put
+                                // the AI and the human in the same bridge.
+                                agent_outcome = Some(outcome.to_string());
+                                break;
+                            }
+                            Err(e) => {
+                                log::warn!("[call={call}] could not hand over: {e}");
+                                rustvani::vokoo::telemetry::count(
+                                    "sarvathra_escalations_total",
+                                    &[("channel", arrival.channel), ("result", "failed")],
+                                );
+                            }
+                        }
+                    }
+                }
                 agent_outcome = Some(outcome.to_string());
 
                 // Let the agent finish its sentence before the flow acts on the
@@ -2797,6 +2848,7 @@ async fn main() {
         keypresses: rustvani::vokoo::Keypresses::new(),
         pending: rustvani::vokoo::PendingCalls::new(),
         relays: rustvani::vokoo::pivot::Relays::new(),
+        switchboard: rustvani::vokoo::stasis::Switchboard::new(),
         ari: rustvani::vokoo::ari::Ari::from_env(),
     };
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
@@ -2856,7 +2908,7 @@ async fn main() {
         Some(ari) => match ari.ping().await {
             Ok(entity) => {
                 log::info!("[stasis] ari ok ({entity}) — running {}", rustvani::vokoo::stasis::APP);
-                let board = rustvani::vokoo::stasis::Switchboard::new();
+                let board = state.switchboard.clone();
                 tokio::spawn(async move {
                     // Reconnects for the life of the process: Asterisk
                     // restarting must not leave the switch quietly dead, which

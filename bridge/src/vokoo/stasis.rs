@@ -100,6 +100,45 @@ impl Switchboard {
     }
 }
 
+impl Switchboard {
+    /// Hand the caller to a person.
+    ///
+    /// The caller is never moved, re-dialled or put on hold: they stay in the
+    /// bridge they have been in since the call began, and the channel beside
+    /// them changes. That is the whole reason for routing a working call
+    /// through a switch — `kookoo.transfer` drops the caller and hopes, and on
+    /// a WhatsApp call it cannot work at all.
+    ///
+    /// The AI leg is hung up *after* the human is dialled, not before, so a
+    /// caller whose agent never answers is not left in silence. If the
+    /// originate fails the AI is still there and the flow carries on.
+    pub async fn escalate(
+        &self,
+        ari: &Ari,
+        uuid: &str,
+        endpoint: &str,
+        caller_id: Option<&str>,
+    ) -> Result<String, String> {
+        let call = self.get(uuid).await.ok_or("no such call")?;
+
+        let args = format!("agent,{uuid}");
+        let human = ari
+            .originate_endpoint(endpoint, APP, &args, caller_id)
+            .await
+            .map_err(|e| format!("no human leg: {e}"))?;
+
+        // Only now does the AI go. `on_start` for the human will add it to the
+        // bridge; until that happens the caller still has somebody talking.
+        if let Some(ai) = &call.agent {
+            let _ = ari.remove_from_bridge(&call.bridge, ai).await;
+            ari.hangup(ai).await;
+        }
+        self.set_agent(uuid, &human).await;
+        log::info!("[stasis] {uuid} — escalated to {endpoint} on {human}");
+        Ok(human)
+    }
+}
+
 /// Run the application until the event stream drops, then say so.
 ///
 /// The caller is expected to keep calling this — Asterisk restarting, or the

@@ -50,6 +50,11 @@ pub struct PendingCall {
     /// post-call flow resolves. Filing the call under the leg's uuid meant
     /// saying goodbye and leaving the caller connected.
     pub carrier_call_id: Option<String>,
+    /// Which entry in the switchboard this leg belongs to, when the call is
+    /// being bridged. It is the *caller* leg's uuid — the agent leg is the one
+    /// that runs a pipeline, so it is the one that has to know where to send an
+    /// escalation.
+    pub switch_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -120,6 +125,7 @@ mod tests {
             channel: "whatsapp".into(),
             wacid: Some("wacid-1".into()),
             carrier_call_id: None,
+            switch_key: None,
         }
     }
 
