@@ -113,21 +113,9 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
     },
 ];
 
-/**
- * The platform's own section, appended only for whoever runs it.
- *
- * Separate from `NAV_SECTIONS` rather than filtered out of it, because these
- * are not screens a tenant has that they cannot see — they are screens about
- * *every* tenant, and belong to a different product.
- */
-export const OPERATOR_SECTION: { label: string; items: NavItemType[] } = {
-    label: "Platform",
-    items: [{ label: "Tenants", href: "/operator", icon: IconOrganization }],
-};
-
 /** Flat lookup for page titles and breadcrumbs. */
 export const NAV_TITLES: Record<string, string> = Object.fromEntries(
-    [...NAV_SECTIONS, OPERATOR_SECTION].flatMap((section) => section.items).map((item) => [item.href ?? "", item.label]),
+    NAV_SECTIONS.flatMap((section) => section.items).map((item) => [item.href ?? "", item.label]),
 );
 
 /**

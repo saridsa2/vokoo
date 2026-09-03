@@ -59,13 +59,34 @@ export class ApiError extends Error {
     }
 }
 
+/**
+ * The same token, with the organisation stripped.
+ *
+ * An operator is a member of no tenant, so `x-org-id` on an operator request is
+ * a claim they are acting from inside one. Every route below refuses on its own
+ * and none of them read the header — but sending it would mean an operator
+ * session and a console session were the same thing on the wire, which is
+ * exactly the confusion moving the portal out of the console was meant to end.
+ *
+ * A function rather than a rule somebody remembers: it is one word at each call
+ * site, and a call site that forgets it is visible.
+ */
+function asOperator(context: AccessContext): AccessContext {
+    return { accessToken: context.accessToken, organizationId: "" };
+}
+
 async function request<T>(path: string, init: RequestInit = {}, context?: AccessContext): Promise<ApiEnvelope<T>> {
     const headers = new Headers(init.headers);
     headers.set("content-type", "application/json");
 
     if (context) {
         headers.set("authorization", `Bearer ${context.accessToken}`);
-        headers.set("x-org-id", context.organizationId);
+        // Only when there is one. An empty organisation is a platform request —
+        // an operator is a member of no tenant — and sending `x-org-id: ""`
+        // would be claiming an organisation whose id is the empty string.
+        if (context.organizationId) {
+            headers.set("x-org-id", context.organizationId);
+        }
     }
 
     let response: Response;
@@ -279,6 +300,7 @@ export const api = {
 
     /* ---------------------------------------------------------- operator */
 
+
     /**
      * Whoever runs the platform, as distinct from whoever uses it.
      *
@@ -289,10 +311,11 @@ export const api = {
      * console protects the console and the functions are reachable by anything
      * holding a token.
      */
-    operatorMe: <T>(context: AccessContext) => request<T>("/api/v1/operator/me", {}, context),
+    operatorMe: <T>(context: AccessContext) =>
+        request<T>("/api/v1/operator/me", {}, asOperator(context)),
 
     operatorTenants: <T>(context: AccessContext) =>
-        request<T[]>("/api/v1/operator/tenants", {}, context),
+        request<T[]>("/api/v1/operator/tenants", {}, asOperator(context)),
 
     operatorSetTenant: (
         id: string,
@@ -302,11 +325,11 @@ export const api = {
         request<unknown>(
             `/api/v1/operator/tenants/${id}`,
             { method: "POST", body: JSON.stringify(change) },
-            context,
+            asOperator(context),
         ),
 
     operatorEntitlements: <T>(id: string, context: AccessContext) =>
-        request<T[]>(`/api/v1/operator/tenants/${id}/entitlements`, {}, context),
+        request<T[]>(`/api/v1/operator/tenants/${id}/entitlements`, {}, asOperator(context)),
 
     /** `allowed: null` clears the override and returns the tenant to its plan. */
     operatorSetEntitlement: (
@@ -317,7 +340,7 @@ export const api = {
         request<unknown>(
             `/api/v1/operator/tenants/${id}/entitlements`,
             { method: "POST", body: JSON.stringify(change) },
-            context,
+            asOperator(context),
         ),
 
     /** Set your own name in this workspace. Empty clears it. */

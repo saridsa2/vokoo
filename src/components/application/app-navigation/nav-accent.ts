@@ -38,10 +38,6 @@ export const SECTION_ACCENTS: Record<string, NavAccent> = {
     // Where you land. Warm and closest to the brand's own ink, because this is
     // the console reporting on itself rather than a kind of work.
     Overview: { primary: "#B45309", secondary: "#FDE3C0" },
-    // The platform itself, not a tenant. Deliberately unlike every section
-    // above it, so an operator can see at a glance that they have left the
-    // workspace and are looking at all of them.
-    Platform: { primary: "#7A2E8F", secondary: "#E7CFEE" },
 };
 
 /**
