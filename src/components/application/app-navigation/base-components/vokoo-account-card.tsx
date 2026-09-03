@@ -13,7 +13,7 @@ import { useSession } from "@/hooks/use-session";
  * ("Caitlyn King") and offers no way to sign out.
  */
 export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
-    const { session, signOut } = useSession();
+    const { session, signOut, organizations, switchOrganization } = useSession();
 
     if (!session) return null;
 
@@ -45,16 +45,46 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
         );
     }
 
+    // Only when there is somewhere to switch to. A picker over one workspace is
+    // a control that cannot do anything, which is the kind of thing this
+    // console keeps deleting.
+    const here = organizations.find((org) => org.id === session.organizationId);
+    const canSwitch = organizations.length > 1;
+
     return (
-        <div className="flex items-center gap-3 rounded-xl p-3 ring-1 ring-secondary">
-            <Avatar size="md" initials={initials} alt={session.email} />
+        <div className="flex flex-col gap-2">
+            {canSwitch ? (
+                <label className="flex flex-col gap-1">
+                    <span className="sr-only">Workspace</span>
+                    <select
+                        value={session.organizationId}
+                        onChange={(event) => switchOrganization(event.target.value)}
+                        className="w-full bg-primary px-3 py-2 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand"
+                    >
+                        {organizations.map((org) => (
+                            <option key={org.id} value={org.id}>
+                                {org.name}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+            ) : null}
 
-            <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-primary capitalize">{displayName}</p>
-                <p className="truncate text-xs text-tertiary">{session.email}</p>
+            <div className="flex items-center gap-3 rounded-xl p-3 ring-1 ring-secondary">
+                <Avatar size="md" initials={initials} alt={session.email} />
+
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-primary capitalize">{displayName}</p>
+                    {/* The workspace, when there is only one — a person who
+                        belongs to several picks above, and a person who belongs
+                        to one should still be able to see which. */}
+                    <p className="truncate text-xs text-tertiary">
+                        {canSwitch ? session.email : (here?.name ?? session.email)}
+                    </p>
+                </div>
+
+                <ButtonUtility size="xs" color="tertiary" tooltip="Sign out" icon={LogOut01} onClick={signOut} />
             </div>
-
-            <ButtonUtility size="xs" color="tertiary" tooltip="Sign out" icon={LogOut01} onClick={signOut} />
         </div>
     );
 }

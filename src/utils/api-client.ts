@@ -267,6 +267,16 @@ export const api = {
 
     organization: <T>(context: AccessContext) => request<T>("/api/v1/settings/organization", {}, context),
 
+    /**
+     * The organizations this user belongs to.
+     *
+     * **The one route that does not need `x-org-id`**, and it has to be: after
+     * signing in the console knows a token and nothing else, so any route that
+     * demanded an organisation first could never be the one that found it.
+     */
+    myOrganizations: <T>(accessToken: string) =>
+        request<T[]>("/api/v1/me/organizations", {}, { accessToken, organizationId: "" }),
+
     members: <T>(context: AccessContext) => request<T[]>("/api/v1/settings/members", {}, context),
 
     /**
