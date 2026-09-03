@@ -17,19 +17,23 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
 
     if (!session) return null;
 
-    // No display name is stored — the account is created directly in Supabase
-    // Auth with an email only — so derive initials from the local part rather
-    // than showing a blank avatar.
-    //
-    // Split on separators instead of taking the first two characters:
-    // "s.satya.suman" would otherwise render as "S." rather than "SS".
-    const localPart = session.email.split("@")[0] ?? "";
-    const words = localPart.split(/[._-]+/).filter(Boolean);
-    const initials =
-        (words.length > 1 ? words[0][0] + words[words.length - 1][0] : localPart.slice(0, 2)).toUpperCase() || "VK";
+    const here = organizations.find((org) => org.id === session.organizationId);
 
-    // Same reason: show "satya suman", not the raw "s.satya.suman".
-    const displayName = words.join(" ") || localPart;
+    // **Their name, when the workspace knows one.** Deriving from the email is
+    // a fallback and a poor one: `hello@…` produced a user called "Hello",
+    // which read as a greeting rather than as a person. `memberships.display_name`
+    // is where a real name lives, and it is per-organisation because the same
+    // person can be "Priya" in one and "Dr Nair" in another.
+    //
+    // Split on anything that is not a letter or a number, rather than on a list
+    // of separators: "s.satya.suman" gives "SS", and "Satya (work)" gives "SW"
+    // instead of "S(" — a bracket is not an initial.
+    const localPart = session.email.split("@")[0] ?? "";
+    const words = (here?.member_name ?? localPart).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const initials =
+        (words.length > 1 ? words[0][0] + words[words.length - 1][0] : words[0]?.slice(0, 2) ?? "VK").toUpperCase();
+
+    const displayName = here?.member_name || words.join(" ") || localPart;
 
     if (iconOnly) {
         // Sign out stays reachable rather than being hidden behind expanding
@@ -48,11 +52,18 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
     // Only when there is somewhere to switch to. A picker over one workspace is
     // a control that cannot do anything, which is the kind of thing this
     // console keeps deleting.
-    const here = organizations.find((org) => org.id === session.organizationId);
     const canSwitch = organizations.length > 1;
 
     return (
         <div className="flex flex-col gap-2">
+            {/* Which workspace, above who you are. Two different facts, and
+                they were briefly sharing one line — a name over an
+                organisation reads as a greeting. */}
+            {here && !canSwitch ? (
+                <p className="truncate px-1 text-xs font-medium text-tertiary uppercase">
+                    {here.name}
+                </p>
+            ) : null}
             {canSwitch ? (
                 <label className="flex flex-col gap-1">
                     <span className="sr-only">Workspace</span>
@@ -75,12 +86,11 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
 
                 <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-primary capitalize">{displayName}</p>
-                    {/* The workspace, when there is only one — a person who
-                        belongs to several picks above, and a person who belongs
-                        to one should still be able to see which. */}
-                    <p className="truncate text-xs text-tertiary">
-                        {canSwitch ? session.email : (here?.name ?? session.email)}
-                    </p>
+                    {/* The email, always. This card answers "who am I signed
+                        in as", and replacing that with the workspace name —
+                        which the line above it already carries — took away the
+                        one thing it existed to say. */}
+                    <p className="truncate text-xs text-tertiary">{session.email}</p>
                 </div>
 
                 <ButtonUtility size="xs" color="tertiary" tooltip="Sign out" icon={LogOut01} onClick={signOut} />

@@ -1370,7 +1370,10 @@ async fn list_my_organizations(
     let rows = client
         .database()
         .from("memberships")
-        .select("role,org_id,organizations(id,name,slug,plan)")
+        // `display_name` too: it is the only place a person's actual name
+        // lives. Without it the console derives one from the email, and
+        // `hello@…` becomes a user called "Hello".
+        .select("role,display_name,org_id,organizations(id,name,slug,plan)")
         .eq("user_id", &user_id)
         .execute::<Value>()
         .await
@@ -1388,6 +1391,13 @@ async fn list_my_organizations(
             }
             let mut merged = organization.as_object()?.clone();
             merged.insert("role".into(), row.get("role").cloned().unwrap_or(Value::Null));
+            // What this member is called *in this organisation*. A person can
+            // be "Priya" in one and "Dr Nair" in another, so it travels with
+            // the membership rather than with the account.
+            merged.insert(
+                "member_name".into(),
+                row.get("display_name").cloned().unwrap_or(Value::Null),
+            );
             Some(Value::Object(merged))
         })
         .collect::<Vec<_>>();

@@ -34,7 +34,19 @@ import { clearSession, readSession, writeSession, type StoredSession } from "@/u
  */
 const PREFERRED_ORG_ID = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID ?? "";
 
-export type Organization = { id: string; name: string; slug: string; role: string };
+export type Organization = {
+    id: string;
+    name: string;
+    slug: string;
+    role: string;
+    /**
+     * What this person is called in this organisation.
+     *
+     * On the membership rather than the account, because it can differ: the
+     * same person is "Priya" in one workspace and "Dr Nair" in another.
+     */
+    member_name: string | null;
+};
 
 type SessionContextValue = {
     session: StoredSession | null;
