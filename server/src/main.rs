@@ -2032,6 +2032,128 @@ async fn monitor_call(
     .await
 }
 
+/// Add a member, and optionally give them an extension.
+///
+/// **One action, because they are one person.** A membership was previously a
+/// fact about an *account* — `user_id` was `not null` — so nobody could be added
+/// before they had signed in, and the "Invite Member" button did nothing because
+/// there was no row shape for the state it wanted to create.
+///
+/// The extension is the point for most of them. A receptionist needs a number
+/// and the desktop app; their job never touches the console, so requiring an
+/// auth account first was requiring a thing they will never use. `membership_id`
+/// carries the link, and `user_id` fills itself in from `claim_membership()`
+/// the day they do sign in.
+///
+/// The SIP password is generated here and returned **once**. It cannot be
+/// hashed — digest authentication needs the plaintext to compute a response —
+/// so it is a credential rather than a field, and no route returns it again.
+#[derive(serde::Deserialize)]
+struct AddMemberBody {
+    /// What to call them. Shown to a caller when they are brought onto a call.
+    name: String,
+    /// Where they will sign in, when they do. Optional: somebody who only ever
+    /// answers the phone may never need one.
+    email: Option<String>,
+    role: String,
+    /// Three to six digits, or nothing if they do not take calls.
+    extension: Option<String>,
+}
+
+async fn add_member(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AddMemberBody>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+
+    if body.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("a member needs a name".into()));
+    }
+    if !matches!(body.role.as_str(), "admin" | "developer" | "viewer" | "agent") {
+        // `owner` is deliberately absent. There is one, it is whoever created
+        // the workspace, and handing it out from an add form is not a thing to
+        // discover you have done.
+        return Err(ApiError::BadRequest(format!("'{}' is not a role", body.role)));
+    }
+
+    let mut membership = client
+        .database()
+        .insert("memberships")
+        .values(json!({
+            "org_id":        organization,
+            "role":          body.role,
+            "display_name":  body.name.trim(),
+            "invited_email": body.email.as_deref().map(str::trim).filter(|e| !e.is_empty()),
+        }))
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        .returning("id,role,display_name,invited_email")
+        .execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    let person = membership
+        .pop()
+        .ok_or_else(|| ApiError::upstream("the membership was not created"))?;
+    let membership_id = person.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
+
+    let Some(extension) = body.extension.as_deref().map(str::trim).filter(|e| !e.is_empty())
+    else {
+        return Ok((StatusCode::CREATED, Json(ApiResponse {
+            data: json!({ "person": person }),
+            meta: json!({ "resource": "members" }),
+        })));
+    };
+
+    let password = sip_password();
+    let mut rows = client
+        .database()
+        .insert("agent_extensions")
+        .values(json!({
+            "org_id":        organization,
+            "membership_id": membership_id,
+            "display_name":  body.name.trim(),
+            "extension":     extension,
+            "sip_password":  password,
+            "status":        "active",
+        }))
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        // `endpoint` is derived by the database from the org's slug, so it is
+        // read back rather than composed here: the caller must be shown the
+        // name Asterisk will actually know.
+        .returning("id,extension,endpoint")
+        .execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+
+    let Some(row) = rows.pop() else {
+        // The member exists; only the extension failed. Said plainly rather
+        // than rolled back, because deleting somebody just created
+        // is a worse surprise than telling them to add the number again.
+        return Err(ApiError::upstream(
+            "the member was added but the extension was not — that number may already be taken",
+        ));
+    };
+
+    Ok((StatusCode::CREATED, Json(ApiResponse {
+        data: json!({ "person": person, "extension": row, "sip_password": password }),
+        meta: json!({ "resource": "members" }),
+    })))
+}
+
+/// A SIP password, from the OS's own randomness.
+///
+/// Generated server-side for this route so the browser is not the source of a
+/// credential it then posts back — and with the same alphabet the console uses,
+/// which excludes characters that break a `key=value` line or read ambiguously
+/// when somebody copies them by hand.
+fn sip_password() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::thread_rng();
+    (0..24).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2508,7 +2630,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
-        .route("/api/v1/settings/members", get(list_members))
+        .route("/api/v1/settings/members", get(list_members).post(add_member))
         .route("/api/v1/{resource}", get(list_resources).post(create_resource))
         .route(
             "/api/v1/{resource}/{id}",

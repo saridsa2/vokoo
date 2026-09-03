@@ -35,6 +35,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Input } from "@/components/base/input/input";
+import { Select } from "@/components/base/select/select";
 import { SipCredentials } from "@/components/application/screens/sip-credentials";
 import { api } from "@/utils/api-client";
 import { generateSipPassword } from "@/utils/sip-password";
@@ -54,6 +55,8 @@ type Person = {
     extension_id: string | null;
     agent_status: string | null;
     is_service: boolean;
+    /** Added, and has not signed in. Not the same as having no name. */
+    is_pending: boolean;
 };
 
 type Orphan = {
@@ -86,6 +89,7 @@ export const TeamScreen = () => {
      * it is would be inventing a fact about a person.
      */
     const [orphans, setOrphans] = useState<Orphan[]>([]);
+    const [adding, setAdding] = useState(false);
 
     // The same stream the dashboard reads. Duty is a registration in Asterisk's
     // memory, so it cannot be fetched with the roster — and opening a second
@@ -118,6 +122,9 @@ export const TeamScreen = () => {
                         phone.
                     </p>
                 </div>
+                <Button size="sm" onClick={() => setAdding(true)}>
+                    Add Member
+                </Button>
             </header>
 
             {error ? <p className="text-sm text-error-primary">{error}</p> : null}
@@ -126,7 +133,7 @@ export const TeamScreen = () => {
                 <table className="w-full min-w-[52rem] border-collapse text-sm">
                     <thead>
                         <tr className="border-b border-secondary bg-secondary text-left">
-                            <Th>Person</Th>
+                            <Th>Member</Th>
                             <Th>Role</Th>
                             <Th>Extension</Th>
                             <Th>Duty</Th>
@@ -161,9 +168,11 @@ export const TeamScreen = () => {
                                 <Td muted>
                                     {person.is_service
                                         ? "—"
-                                        : person.extension
-                                          ? DUTY[stateOf(person.endpoint)]
-                                          : "no extension"}
+                                        : person.is_pending
+                                          ? "not signed in"
+                                          : person.extension
+                                            ? DUTY[stateOf(person.endpoint)]
+                                            : "no extension"}
                                 </Td>
                                 <Td align="right">
                                     {person.is_service ? (
@@ -235,9 +244,177 @@ export const TeamScreen = () => {
             {giving ? (
                 <GiveExtension person={giving} onClose={() => setGiving(null)} />
             ) : null}
+
+            {adding ? <AddMember onClose={() => setAdding(false)} /> : null}
         </div>
     );
 };
+
+/**
+ * Add a member.
+ *
+ * **One step, because they are one person.** This used to be impossible: a
+ * membership required an auth account, so nobody could be added before they had
+ * signed in, and the button that promised it did nothing.
+ *
+ * The extension is optional and in the same form, because for most of the
+ * people added here it is the whole reason — a receptionist needs a number and
+ * the desktop app, and their job never touches this console.
+ *
+ * The email is optional too, for the same reason. It is where they will sign in
+ * *if* they ever do; `claim_membership()` attaches them to this row when they
+ * do, along with the extension held for them.
+ */
+const AddMember = ({ onClose }: { onClose: () => void }) => {
+    const { context } = useSession();
+    const [name, setName] = useState("");
+    const [email, setEmail] = useState("");
+    const [role, setRole] = useState("agent");
+    const [extension, setExtension] = useState("");
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [done, setDone] = useState<{ endpoint: string; password: string } | null>(null);
+
+    const extensionOk = extension.trim() === "" || /^[0-9]{3,6}$/.test(extension.trim());
+    const valid = name.trim().length > 0 && extensionOk;
+
+    const submit = async () => {
+        if (!context || !valid) return;
+        setSaving(true);
+        setError(null);
+        try {
+            const { data } = await api.addMember<{
+                extension?: { endpoint: string };
+                sip_password?: string;
+            }>(
+                {
+                    name: name.trim(),
+                    email: email.trim() || undefined,
+                    role,
+                    extension: extension.trim() || undefined,
+                },
+                context,
+            );
+            if (data?.sip_password && data.extension) {
+                setDone({ endpoint: data.extension.endpoint, password: data.sip_password });
+            } else {
+                window.location.reload();
+            }
+        } catch (problem) {
+            setError(problem instanceof Error ? problem.message : "Could not add them");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <ModalOverlay isOpen onOpenChange={(open) => !open && (done ? window.location.reload() : onClose())}>
+            <Modal className="max-w-lg">
+                <Dialog>
+                    <div className="flex w-full flex-col rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
+                        {done ? (
+                            <>
+                                <h2 className="text-lg font-semibold text-primary">
+                                    {name.trim()} is on the team
+                                </h2>
+                                <p className="mt-1 text-sm text-tertiary">
+                                    These are the credentials for their softphone. The password is
+                                    shown now and cannot be shown again.
+                                </p>
+                                <SipCredentials endpoint={done.endpoint} password={done.password} />
+                                <div className="mt-6 flex justify-end">
+                                    <Button size="sm" onClick={() => window.location.reload()}>
+                                        Done
+                                    </Button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <h2 className="text-lg font-semibold text-primary">Add a member</h2>
+                                <p className="mt-1 text-sm text-tertiary">
+                                    Somebody who works here. Give them an extension if they answer
+                                    the phone.
+                                </p>
+                                <div className="mt-5 flex flex-col gap-4">
+                                    <Input
+                                        label="Name"
+                                        placeholder="Priya Nair"
+                                        value={name}
+                                        onChange={setName}
+                                        isRequired
+                                        autoFocus
+                                    />
+                                    <Input
+                                        label="Email"
+                                        placeholder="priya@clinic.in"
+                                        value={email}
+                                        onChange={setEmail}
+                                        hint="Where they would sign in. Optional — somebody who only answers the phone never needs to."
+                                    />
+                                    {/* The meaning goes under the field, not
+                                        beside the value. As `supportingText` it
+                                        rendered inside the trigger and squeezed
+                                        the role's own name to "A…" — the label
+                                        losing to its own explanation. */}
+                                    <Select
+                                        label="Role"
+                                        selectedKey={role}
+                                        onSelectionChange={(key) => setRole(String(key))}
+                                        items={ROLES}
+                                        hint={ROLES.find((r) => r.id === role)?.means}
+                                    >
+                                        {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                    </Select>
+                                    <Input
+                                        label="Extension"
+                                        placeholder="4002"
+                                        value={extension}
+                                        onChange={setExtension}
+                                        hint={
+                                            extension && !extensionOk
+                                                ? "Three to six digits."
+                                                : "Optional. Give them one and they can take calls the AI hands over."
+                                        }
+                                        isInvalid={Boolean(extension) && !extensionOk}
+                                    />
+                                </div>
+                                {error ? (
+                                    <p className="mt-4 text-sm text-error-primary">{error}</p>
+                                ) : null}
+                                <div className="mt-6 flex justify-end gap-3">
+                                    <Button size="sm" color="secondary" onClick={onClose}>
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        isDisabled={!valid}
+                                        isLoading={saving}
+                                        onClick={submit}
+                                    >
+                                        Add member
+                                    </Button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </Dialog>
+            </Modal>
+        </ModalOverlay>
+    );
+};
+
+/**
+ * What each role means, said where it is chosen.
+ *
+ * `owner` is absent: there is one, it is whoever created the workspace, and
+ * handing it out from an add form is not a thing to discover you have done.
+ */
+const ROLES = [
+    { id: "agent", label: "Agent", means: "Answers the phone. Sees only their own credentials." },
+    { id: "admin", label: "Admin", means: "Configures everything, and can listen to live calls." },
+    { id: "developer", label: "Developer", means: "Holds API keys and pushes tools." },
+    { id: "viewer", label: "Viewer", means: "Reads the console and changes nothing." },
+];
 
 /**
  * Give somebody an extension.

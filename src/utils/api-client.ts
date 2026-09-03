@@ -269,6 +269,23 @@ export const api = {
 
     members: <T>(context: AccessContext) => request<T[]>("/api/v1/settings/members", {}, context),
 
+    /**
+     * Add a member, and optionally give them an extension.
+     *
+     * One request, because they are one person. The SIP password comes back
+     * once and is never returned again — digest authentication needs the
+     * plaintext, so it cannot be hashed and is treated as a credential.
+     */
+    addMember: <T>(
+        person: { name: string; email?: string; role: string; extension?: string },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            "/api/v1/settings/members",
+            { method: "POST", body: JSON.stringify(person) },
+            context,
+        ),
+
 
     /**
      * Vendor keys — what is connected, never what it is.
