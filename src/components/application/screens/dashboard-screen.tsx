@@ -265,12 +265,25 @@ const Live = ({ connected, error }: { connected: boolean; error: string | null }
     <span className="flex items-center gap-2 text-sm text-tertiary">
         <span
             aria-hidden="true"
-            className={`size-2 rounded-full ${connected ? "bg-fg-success-secondary" : "bg-fg-quaternary"}`}
+            className="size-2 rounded-full"
+            style={{
+                background: connected ? "var(--chart-accent)" : "var(--color-fg-quaternary)",
+            }}
         />
         {connected ? "live" : (error ?? "connecting")}
     </span>
 );
 
+/**
+ * One number, on a card that belongs to this section.
+ *
+ * The rule along the top is the dashboard's own accent — the same logic the node
+ * cards follow, where an element that belongs to something takes that thing's
+ * colour. Four bordered boxes without it read as a spreadsheet.
+ *
+ * The number itself stays ink. A figure is read, not admired, and colouring it
+ * would put the accent on the part that already has the most weight.
+ */
 const Figure = ({
     label,
     value,
@@ -280,7 +293,10 @@ const Figure = ({
     value: number | string | null;
     note?: string;
 }) => (
-    <div className="flex flex-col gap-1 border border-secondary p-4">
+    <div
+        className="flex flex-col gap-1 border border-t-2 border-secondary p-4"
+        style={{ borderTopColor: "var(--chart-accent)" }}
+    >
         <span className="text-sm text-tertiary">{label}</span>
         <span className="text-display-sm font-semibold text-primary tabular-nums">
             {value ?? "—"}
@@ -289,16 +305,25 @@ const Figure = ({
     </div>
 );
 
+/**
+ * Present, busy, absent — in the same three values the charts use.
+ *
+ * Not a red/amber/green: none of these is a fault. Somebody off duty at six in
+ * the evening is a person who has gone home, and painting that as a warning
+ * would make the roster read as a list of problems.
+ */
 const Dot = ({ state }: { state: RosterAgent["state"] }) => (
     <span
         aria-hidden="true"
-        className={`size-2 rounded-full ${
-            state === "online"
-                ? "bg-fg-success-secondary"
-                : state === "on_call"
-                  ? "bg-fg-warning-secondary"
-                  : "bg-fg-quaternary"
-        }`}
+        className="size-2 rounded-full"
+        style={{
+            background:
+                state === "online"
+                    ? "var(--chart-accent)"
+                    : state === "on_call"
+                      ? "var(--chart-emphasis)"
+                      : "var(--color-fg-quaternary)",
+        }}
     />
 );
 

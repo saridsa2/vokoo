@@ -185,6 +185,42 @@
  * Surfaces stack eggshell → taupe → stone; Untitled UI would otherwise derive
  * them from its neutral ramp and land pure white at the top.
  */
+/* ---- chart ink ----
+ *
+ * The brand ramp is achromatic, which is right for controls and wrong for data:
+ * a chart drawn in it is a grey chart, and the dashboard read as bland because
+ * of exactly that. The console already has a real accent system — one saturated
+ * pair per navigation section, borrowed from Sarvam's console — so the data
+ * takes the colour of the section it belongs to rather than a palette invented
+ * for charts.
+ *
+ * The dashboard is Overview, which is marigold. **One hue, several weights**:
+ * a second hue on the same screen would say two things are different when they
+ * are the same measurement seen two ways.
+ *
+ * Tokens rather than hexes in the component, because this file is where a
+ * colour decision lives — a component with a literal in it cannot follow the
+ * theme, and there are two of those.
+ */
+:root {
+    --chart-accent: #b45309;
+    --chart-accent-soft: #e9a961;
+    --chart-accent-wash: #fdf0dc;
+    /* The one bar worth looking at — today, or the busiest hour. Ink, so it
+     * reads as emphasis against the accent rather than as another category. */
+    --chart-emphasis: var(--color-ink, #000000);
+}
+
+:root.dark-mode,
+.dark-mode {
+    /* Marigold at full saturation disappears into a warm dark ground, so the
+     * dark variant is lifted rather than the same value reused. */
+    --chart-accent: #e8973f;
+    --chart-accent-soft: #a86a2c;
+    --chart-accent-wash: #2e2318;
+    --chart-emphasis: var(--color-eggshell);
+}
+
 :root:not(.dark-mode),
 .light-mode {
     --color-bg-primary: var(--color-eggshell);

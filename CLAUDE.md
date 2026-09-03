@@ -416,11 +416,28 @@ Rust cannot have that bug at all.
 only from days that had calls draws a straight line through a quiet weekend and
 reports business as steady.
 
-**Chart colour is `var(--color-fg-brand-primary)`, never a hex.** This system is
-achromatic: the accent is ink on light and eggshell on dark, so a literal would
-give a chart invisible in one of the two modes. Recharts takes `var()` for every
-colour prop. Its default tooltip is a rounded white card — another project's
-styling, like the borrowed editor's eight radii — so it is restyled square.
+**The data is marigold, and the first version was not.** Drawn in the brand
+ramp it read as bland, correctly: an achromatic ramp is right for controls and
+wrong for data. The console already had the answer — one saturated pair per
+navigation section — so the data takes the colour of the section it belongs to,
+and the axes, grid and labels stay neutral.
+
+**One hue at several weights, never two.** A second colour on the same screen
+claims two things are different when they are one measurement seen two ways.
+The only other value is ink, spent on exactly one bar per chart: today, and the
+busiest hour. `--chart-accent`, `--chart-accent-soft`, `--chart-accent-wash` and
+`--chart-emphasis` live in `vokoo-brand.css` with a lifted dark variant, because
+marigold at full saturation disappears into a warm dark ground. A hex in the
+component could not follow either theme.
+
+The stat cards and chart panels wear a 2px rule in that accent — the same rule
+the node cards already follow, that an element belonging to something takes its
+colour. Four bordered boxes without it read as a spreadsheet.
+
+Recharts' default tooltip is a rounded white card — another project's styling,
+like the borrowed editor's eight radii — so it is a component now, square, on
+the app's own surface. `<Cell>` is deprecated in Recharts 3 and gone in 4; the
+per-bar fill is a `shape` function.
 
 **History is a plain GET, refetched when the day's count moves** — which is to
 say, when a call ends, which is exactly what the stream announces. Same event,
@@ -512,9 +529,11 @@ the day at half past five in the morning for an Indian clinic, and there is no
 `organizations.timezone` to consult — worth adding the day two people in
 different places need to agree on the number.
 
-**Unverified: the push half in a browser.** Nine tests cover the registries, ARI
-was read against the real switch, and the first frame arrives on connect. Nobody
-has yet watched a row flip from off duty to on duty without a refresh.
+**Proven in a browser on 3 September.** A real call appeared in *Happening now*
+as `+919949879837 · Reception (English) · kookoo` with no page load, the day's
+count moved to 21, and the timer ran 0:41 → 0:55 with no request — the registry,
+the stream and the local clock, all three. Still unwatched: an agent's row
+flipping from off duty to on duty, which needs somebody to open the desktop app.
 
 ## The console shows what exists
 
