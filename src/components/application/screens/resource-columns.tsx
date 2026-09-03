@@ -59,6 +59,30 @@ const statusCell = (field = "status") =>
 const updated = (field = "updated_at") => (row: Row) => timeAgo(row[field] as string);
 
 export const RESOURCE_VIEWS: Record<string, ResourceView> = {
+    "agent-extensions": {
+        // "Team", not "Agents". An agent here is a person and an agent under
+        // Build is a prompt, and two screens headed the same word leave the
+        // reader working out which one they are on from the columns.
+        title: "Team",
+        description: "The people who take calls the AI hands over.",
+        resource: "agent-extensions",
+        createLabel: "Add Agent",
+        detailHref: (row) => `/team/${row.id}`,
+        emptyTitle: "No agents yet",
+        emptyBody:
+            "An agent is a person with an extension. When a caller asks for somebody, the call is handed to whoever is on duty — the AI stays on the line, muted, and keeps taking notes.",
+        columns: [
+            { id: "display_name", label: "Name", render: text("display_name") },
+            { id: "extension", label: "Extension", render: text("extension") },
+            // What Asterisk knows them as. Shown because it is the name in
+            // every log line and CLI command, so somebody debugging a call
+            // should not have to derive it.
+            { id: "endpoint", label: "Endpoint", render: text("endpoint"), secondary: true },
+            { id: "status", label: "Status", render: statusCell() },
+            { id: "created_at", label: "Added", render: updated("created_at"), secondary: true },
+        ],
+    },
+
     skills: {
         title: "Skills",
         description: "What an agent can do, and the tools each one grants.",

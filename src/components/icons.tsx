@@ -69,6 +69,7 @@ import {
     faFlask,
     faFolder,
     faGaugeHigh,
+    faHeadset,
     faKey,
     faMicrophoneLines,
     faPaperPlane,
@@ -237,7 +238,14 @@ export const XClose = icon(faXmark);
 
 /* VoKoo navigation icons, named for what they represent in this product rather
  * than for the Untitled UI component they replaced. */
+// Where you land: what the line is doing right now. A gauge rather than a
+// chart, because a chart is history and this screen is the present moment.
+export const IconDashboard = icon(faGaugeSimpleHigh);
 export const IconAgents = icon(faUsers);
+// The people who take a call the AI hands over. A headset rather than a second
+// group of figures: Agents already wears `faUsers`, and two nav rows with one
+// icon say nothing about which is which — which is the whole job of the icon.
+export const IconTeam = icon(faHeadset);
 export const IconSquads = icon(faDiagramProject);
 export const IconTools = icon(faWrench);
 export const IconPhoneNumbers = icon(faPhone);

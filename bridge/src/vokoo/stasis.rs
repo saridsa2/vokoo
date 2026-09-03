@@ -193,12 +193,20 @@ pub async fn run(
     ari: Ari,
     board: Switchboard,
     audiosocket: String,
+    presence: crate::vokoo::live::Presence,
 ) -> Result<(), String> {
     let url = ari.events_url(APP);
     let (stream, _) = tokio_tungstenite::connect_async(&url)
         .await
         .map_err(|e| format!("ari events: {e}"))?;
     log::info!("[stasis] {APP} connected");
+
+    // Read the roster once on connect, before waiting for anything to change.
+    // Without it a bridge that started while everybody was already on duty
+    // would show an empty roster until somebody happened to move — and this
+    // runs again on every reconnect, which is exactly when what Asterisk
+    // believes and what we remember are most likely to have diverged.
+    refresh_presence(&ari, &presence).await;
 
     let (_write, mut read) = stream.split();
     while let Some(message) = read.next().await {
@@ -227,11 +235,32 @@ pub async fn run(
                     on_end(&ari, &board, &channel_id).await;
                 });
             }
+            AriEvent::EndpointChanged => {
+                let ari = ari.clone();
+                let presence = presence.clone();
+                // Spawned for the same reason a StasisStart is: a round trip to
+                // Asterisk must not sit in front of another call's events.
+                tokio::spawn(async move {
+                    refresh_presence(&ari, &presence).await;
+                });
+            }
             AriEvent::Other(_) => {}
         }
     }
 
     Err("ari event stream closed".into())
+}
+
+/// Ask Asterisk who is registered, and tell anyone watching if it has changed.
+///
+/// A failure leaves the last known roster standing rather than emptying it.
+/// Reporting everybody offline because one HTTP call failed would say the
+/// switch has nobody on it, which is a worse answer than a few seconds stale.
+async fn refresh_presence(ari: &Ari, presence: &crate::vokoo::live::Presence) {
+    match ari.endpoints().await {
+        Ok(rows) => presence.replace(&rows),
+        Err(problem) => log::warn!("[stasis] could not read endpoints: {problem}"),
+    }
 }
 
 async fn on_start(

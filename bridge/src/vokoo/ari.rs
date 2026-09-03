@@ -47,7 +47,18 @@ pub struct Ari {
     http: reqwest::Client,
 }
 
-/// What happened to a channel, from the event stream.
+/// One endpoint, as Asterisk currently sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Presence {
+    /// The PJSIP endpoint name — `<org slug>-<extension>`.
+    pub endpoint: String,
+    /// Registered and reachable.
+    pub online: bool,
+    /// How many channels this endpoint is on. Non-zero means on a call.
+    pub calls: usize,
+}
+
+/// What happened, from the event stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AriEvent {
     /// A channel entered our Stasis application. `args` are the `appArgs` it
@@ -56,6 +67,16 @@ pub enum AriEvent {
     StasisStart { channel_id: String, args: Vec<String> },
     /// A channel left the application, usually because it hung up.
     StasisEnd { channel_id: String },
+    /// An endpoint's registration changed — somebody went on or off duty.
+    ///
+    /// Deliberately carries no state, only the fact that something moved.
+    /// Asterisk says this three different ways (`PeerStatusChange`,
+    /// `ContactStatusChange`, `EndpointStateChange`) with three different
+    /// payloads and its own rules about which fires when; deriving presence
+    /// from the payload would be a second implementation of what
+    /// `GET /ari/endpoints` already answers, free to disagree with it. So the
+    /// event is a prompt to re-read, and the read is the source of truth.
+    EndpointChanged,
     /// Something else. Carried rather than dropped so a new event type is a
     /// log line instead of a silent gap.
     Other(String),
@@ -114,6 +135,56 @@ impl Ari {
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string())
+    }
+
+    /// Who is registered, and who is on a call.
+    ///
+    /// The only source for this. `agent_extensions.status` is active or
+    /// suspended, which is employment; a registration lives in Asterisk's
+    /// memory and nowhere else, deliberately — migration 0076 leaves
+    /// `ps_contacts` unmapped because a thing that expires in five minutes has
+    /// no business in a database.
+    ///
+    /// Three states rather than two, because `channel_ids` arrives in the same
+    /// response and costs nothing: offline, online, or on a call. The
+    /// difference between the last two is the difference between "nobody is
+    /// available" and "everybody is busy", which are not the same problem.
+    pub async fn endpoints(&self) -> Result<Vec<Presence>, String> {
+        let response = self
+            .http
+            .get(self.url("endpoints"))
+            .basic_auth(&self.user, Some(&self.password))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("ari answered {}", response.status()));
+        }
+        let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
+        Ok(rows
+            .iter()
+            .filter(|row| {
+                row.get("technology").and_then(Value::as_str) == Some("PJSIP")
+            })
+            .filter_map(|row| {
+                let name = row.get("resource").and_then(Value::as_str)?;
+                let calls = row
+                    .get("channel_ids")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                Some(Presence {
+                    endpoint: name.to_string(),
+                    // Asterisk says "online" for an endpoint with a reachable
+                    // contact. Anything else — offline, unknown — is somebody
+                    // who cannot be rung, and telling those apart on a screen
+                    // would be reporting Asterisk's internals as if they were
+                    // facts about a person.
+                    online: row.get("state").and_then(Value::as_str) == Some("online"),
+                    calls,
+                })
+            })
+            .collect())
     }
 
     /// Originate an AudioSocket channel that connects back to us and enters a
@@ -313,6 +384,9 @@ pub fn parse_event(text: &str) -> AriEvent {
                 .unwrap_or_default(),
         },
         "StasisEnd" => AriEvent::StasisEnd { channel_id },
+        "PeerStatusChange" | "ContactStatusChange" | "EndpointStateChange" => {
+            AriEvent::EndpointChanged
+        }
         other => AriEvent::Other(other.to_string()),
     }
 }

@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 
 use axum::{
     extract::{Path, Query, State},
@@ -278,6 +278,16 @@ const RESOURCES: &[Resource] = &[
     Resource { route: "vendor-rates", table: "catalogue_vendor_rates", order_by: "updated_at", select: "*" },
     Resource { route: "chat-logs", table: "chats", order_by: "updated_at", select: "*" },
     Resource { route: "structured-outputs", table: "structured_outputs", order_by: "updated_at", select: "*" },
+    // Human agents. **The SIP password is not selected.** PJSIP digest auth
+    // needs it in plaintext, so it cannot be hashed the way a login password
+    // is — which makes it a credential that must never be listed. Somebody's
+    // own is fetched from `my_agent_extension`, which is scoped to auth.uid().
+    Resource {
+        route: "agent-extensions",
+        table: "agent_extensions",
+        order_by: "created_at",
+        select: "id,org_id,user_id,extension,endpoint,display_name,status,created_at,updated_at",
+    },
 ];
 
 fn resource_for(route: &str) -> Result<Resource, ApiError> {
@@ -1513,6 +1523,135 @@ async fn call_bridge(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
 }
 
+/// The dashboard's stream: what is happening now, and what the day has come to.
+///
+/// Server-Sent Events end to end. The bridge pushes a frame the instant a call
+/// starts, gains a human or ends, and whenever Asterisk says somebody went on or
+/// off duty; this process gates that on the caller's organisation, adds the
+/// day's totals — which only it can count, because it is the one holding a
+/// session that RLS will accept — and forwards.
+///
+/// **Nothing here is on a timer.** The day's figures are recomputed when a
+/// bridge frame arrives, which is exactly when they can have changed: a call
+/// ending is both the reason the live count moved and the reason the day's
+/// count moved. So one push carries both, and neither is ever a poll.
+///
+/// `tz` is the viewer's own timezone, because "today" is a question about the
+/// person reading the screen. UTC would reset the day at half past five in the
+/// morning for an Indian clinic, which is not what anybody means by today, and
+/// there is no `organizations.timezone` to consult — worth adding the day two
+/// people in different places need to agree on the number.
+async fn dashboard_stream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt as _;
+
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let tz = query.get("tz").cloned().unwrap_or_else(|| "UTC".into());
+
+    let (base, token) = (
+        std::env::var("BRIDGE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
+        std::env::var("BRIDGE_INTERNAL_TOKEN").unwrap_or_default(),
+    );
+    if token.is_empty() {
+        return Err(ApiError::Configuration(
+            "BRIDGE_INTERNAL_TOKEN is not set, so the bridge cannot be asked".into(),
+        ));
+    }
+
+    // No timeout. Every other call to the bridge is a request and an answer;
+    // this one is a subscription that should last as long as the screen is
+    // open, and a 30-second timeout would tear it down every 30 seconds.
+    let upstream = reqwest::Client::new()
+        .get(format!("{base}/events/live?org_id={organization}"))
+        .header("x-vokoo-internal", token)
+        .send()
+        .await
+        .map_err(|error| ApiError::Upstream(format!("could not reach the bridge: {error}")))?;
+    if !upstream.status().is_success() {
+        return Err(ApiError::Upstream(format!("the bridge answered {}", upstream.status())));
+    }
+
+    let stream = upstream
+        .bytes_stream()
+        // Each bridge frame is `data: {…}\n\n`. Reassembling arbitrary chunk
+        // boundaries would be a second SSE parser; the bridge writes one frame
+        // per write and the hop is loopback, so a frame arrives whole.
+        .filter_map(move |chunk| {
+            let client = client.clone();
+            let organization = organization.clone();
+            let tz = tz.clone();
+            async move {
+                let text = String::from_utf8(chunk.ok()?.to_vec()).ok()?;
+                let payload = text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))?;
+                let mut value: Value = serde_json::from_str(payload).ok()?;
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("today".into(), today(&client, &organization, &tz).await);
+                }
+                Some(Ok::<_, std::convert::Infallible>(
+                    Event::default().data(value.to_string()),
+                ))
+            }
+        });
+
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+        .into_response())
+}
+
+/// What the day has come to, counted from the call records.
+///
+/// From the database rather than from the bridge, which keeps no history: it
+/// knows what is happening, not what happened. The reverse also holds, which is
+/// why the live half does not come from here — `calls` has three rows still
+/// marked `in-progress` from calls that died days ago, so counting those as
+/// live would give a figure that only ever grows.
+async fn today(client: &Client, organization: &str, tz: &str) -> Value {
+    let zone: chrono_tz::Tz = tz.parse().unwrap_or(chrono_tz::UTC);
+    let midnight = chrono::Utc::now()
+        .with_timezone(&zone)
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| naive.and_local_timezone(zone).earliest())
+        .map(|local| local.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+
+    let rows = client
+        .database()
+        .from("calls")
+        .select("duration_seconds,status")
+        .eq("org_id", organization)
+        .gte("started_at", &midnight.to_rfc3339())
+        .execute::<Value>()
+        .await
+        .unwrap_or_default();
+
+    let seconds: i64 = rows
+        .iter()
+        .filter_map(|row| row.get("duration_seconds").and_then(Value::as_i64))
+        .sum();
+    let finished = rows
+        .iter()
+        .filter(|row| row.get("status").and_then(Value::as_str) == Some("ended"))
+        .count();
+
+    json!({
+        "answered": rows.len(),
+        // Only the finished ones have a length, so the average is over those.
+        // Dividing by every call would fold a call still in progress in as
+        // zero and quietly drag the number down.
+        "finished": finished,
+        "seconds":  seconds,
+        "timezone": zone.name(),
+    })
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1796,7 +1935,13 @@ async fn get_resource(
     let row = client
         .database()
         .from(resource.table)
-        .select("*")
+        // The resource's own column list, not `*`. A resource narrows its
+        // select for a reason — `agent-extensions` leaves out `sip_password`,
+        // which SIP needs in plain text and cannot be hashed — and a narrowing
+        // that applied to the list and not to the detail would put the thing it
+        // was hiding one click away. Every other resource selects `*`, so this
+        // changes nothing for them.
+        .select(resource.select)
         .eq("org_id", &organization)
         .eq("id", &id)
         .single_execute::<Value>()
@@ -1833,7 +1978,9 @@ async fn create_resource(
         .insert(resource.table)
         .values(body)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?
-        .returning("*")
+        // What is written and what is read back are separate questions: a
+        // create may carry `sip_password` up and must not carry it down again.
+        .returning(resource.select)
         .execute::<Value>()
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
@@ -1858,7 +2005,7 @@ async fn update_resource(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?
         .eq("org_id", &organization)
         .eq("id", &id)
-        .returning("*")
+        .returning(resource.select)
         .execute::<Value>()
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
@@ -1945,6 +2092,8 @@ fn app(state: AppState) -> Router {
             delete(delete_credential),
         )
         .route("/api/v1/settings/vendors/{vendor}/test", post(test_credential))
+        // The landing screen's live feed. A GET that never returns, on purpose.
+        .route("/api/v1/dashboard/stream", get(dashboard_stream))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))

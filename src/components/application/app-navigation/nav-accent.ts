@@ -35,6 +35,9 @@ export const SECTION_ACCENTS: Record<string, NavAccent> = {
     Observe: { primary: "#1F6FB2", secondary: "#D3E5F4" },
     // The workspace itself.
     Manage: { primary: "#5052A8", secondary: "#D6D7EE" },
+    // Where you land. Warm and closest to the brand's own ink, because this is
+    // the console reporting on itself rather than a kind of work.
+    Overview: { primary: "#B45309", secondary: "#FDE3C0" },
 };
 
 /**
@@ -46,6 +49,8 @@ export const SECTION_ACCENTS: Record<string, NavAccent> = {
  * entry keeps the resting grey rather than borrowing a neighbour's colour.
  */
 const SECTION_OF: Record<string, keyof typeof SECTION_ACCENTS> = {
+    "/dashboard": "Overview",
+
     "/composer": "Composer",
     "/integrations": "Composer",
 
@@ -63,6 +68,7 @@ const SECTION_OF: Record<string, keyof typeof SECTION_ACCENTS> = {
     "/runs": "Observe",
 
     "/settings/organization": "Manage",
+    "/team": "Manage",
     "/settings/members": "Manage",
 };
 

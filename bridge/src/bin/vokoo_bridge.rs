@@ -130,6 +130,13 @@ struct AppState {
     /// None when ARI is not configured, in which case KooKoo calls go straight
     /// to the pipeline exactly as they always have.
     ari: Option<rustvani::vokoo::ari::Ari>,
+    /// The calls that are up, on any wire. Registered in `handle_call`, which
+    /// every call passes through — the Switchboard sees only the ones Asterisk
+    /// is bridging, and a `calls` query counts every crash as still live.
+    live: rustvani::vokoo::live::LiveCalls,
+    /// Who is registered with Asterisk. Refreshed when Asterisk says somebody
+    /// moved, never on a clock.
+    presence: rustvani::vokoo::live::Presence,
 }
 
 struct AgentConfig {
@@ -744,6 +751,125 @@ async fn flow_dry_run(
         Ok(steps) => (StatusCode::OK, Json(json!({ "ok": true, "steps": steps }))),
         Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
     }
+}
+
+/// What is happening on this organisation's line, pushed.
+///
+/// Server-Sent Events rather than a route the console asks again and again. A
+/// dashboard is a screen somebody leaves open all day: polling it spends a
+/// request per viewer per tick to be told nothing changed, and is still seconds
+/// late when something does. The registries here know the instant a call starts,
+/// gains a human or ends, and Asterisk tells us when somebody goes on duty — so
+/// the only honest design is one where the server speaks first.
+///
+/// One frame is a whole snapshot, not a delta. Reconciling deltas needs the
+/// client to have seen every previous one, which a reconnecting browser has not;
+/// the snapshot is a few hundred bytes and cannot be applied to the wrong state.
+///
+/// The first frame goes out before anything is awaited, so an idle line shows a
+/// dashboard immediately rather than a spinner until the first call arrives.
+async fn live_events(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    let Some(org_id) = query.get("org_id").cloned().filter(|v| !v.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, "org_id is required").into_response();
+    };
+
+    // `unfold` rather than a macro crate: the state is three values and the
+    // step is one `select!`, which is not worth a dependency in the crate that
+    // answers the phone.
+    let watchers = (state.live.watch(), state.presence.watch());
+    let seed = (state, org_id, watchers, true);
+    let stream = futures::stream::unfold(seed, |(state, org_id, mut watch, first)| async move {
+        if !first {
+            // Lagging is not an error here: a subscriber that missed ticks
+            // needs the current snapshot, which is what it is about to be
+            // sent. Only a closed channel ends the stream, and that happens
+            // when the process is going away.
+            let woken = tokio::select! {
+                r = watch.0.recv() => matches!(
+                    r, Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+                ),
+                r = watch.1.recv() => matches!(
+                    r, Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+                ),
+            };
+            if !woken {
+                return None;
+            }
+        }
+        let frame = Event::default().data(operations(&state, &org_id).await.to_string());
+        Some((Ok::<_, std::convert::Infallible>(frame), (state, org_id, watch, false)))
+    });
+
+    // A comment every fifteen seconds. Not a poll — nothing is recomputed and
+    // nothing is read — it exists because an idle SSE connection is
+    // indistinguishable from a dead one to every proxy between here and a
+    // browser, and the one in front of this is Caddy.
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+        .into_response()
+}
+
+/// One snapshot of the line, for one organisation.
+async fn operations(state: &AppState, org_id: &str) -> serde_json::Value {
+    let calls = state.live.snapshot(org_id);
+    let humans = calls.iter().filter(|c| c["human"] == true).count();
+
+    // The roster is the org's own agents, each carrying what Asterisk says
+    // about it. Driven from the database rather than from ARI's list so that
+    // somebody who has never registered still appears — an empty roster and a
+    // roster of people who are all offline are different facts.
+    let agents = rustvani::vokoo::graph::rows(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        "agent_extensions",
+        &[
+            ("select", "display_name,extension,endpoint,status".into()),
+            ("org_id", format!("eq.{org_id}")),
+            ("order", "extension.asc".into()),
+        ],
+    )
+    .await
+    .unwrap_or_default()
+    .iter()
+    .map(|row| {
+        let endpoint = row.get("endpoint").and_then(serde_json::Value::as_str).unwrap_or_default();
+        let suspended =
+            row.get("status").and_then(serde_json::Value::as_str) == Some("suspended");
+        json!({
+            "name":      row.get("display_name"),
+            "extension": row.get("extension"),
+            "endpoint":  endpoint,
+            "suspended": suspended,
+            // A suspended agent whose registration has not expired yet is
+            // genuinely still reachable, and saying otherwise would be a
+            // dashboard that disagrees with the switch.
+            "state":     state.presence.state_of(endpoint),
+        })
+    })
+    .collect::<Vec<_>>();
+
+    json!({
+        "calls":     calls,
+        "live":      calls.len(),
+        // Every live call has an AI on it, including the escalated ones — the
+        // AI stays in the bridge muted, taking notes. So these two overlap on
+        // purpose, and the labels on screen have to say so.
+        "with_human": humans,
+        "agents":    agents,
+    })
 }
 
 async fn engine_preflight(
@@ -1718,6 +1844,17 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         arrival.headers,
     );
 
+    // On the books for the dashboard before anything can go wrong with it, and
+    // held by a guard so every way out of this function — an early return, a
+    // `?`, a panic — takes it off again. The organisation and the agent are not
+    // known yet; they are filled in below, because a call that dies while its
+    // flow is still walking is still a call that was happening.
+    let _live = state.live.register(&arrival.id, rustvani::vokoo::live::arriving(
+        &arrival.did,
+        &arrival.caller,
+        arrival.channel,
+    ));
+
     let t0 = std::time::Instant::now();
     rustvani::vokoo::telemetry::count("sarvathra_calls_total", &[("channel", arrival.channel)]);
     rustvani::vokoo::telemetry::gauge_add(
@@ -1733,6 +1870,11 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     let caller = arrival.caller.clone();
     let flow =
         rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, &did).await;
+
+    // Now the call can be shown to somebody: until the flow resolves we do not
+    // know whose call it is, and a call attributed to a guess is one tenant
+    // seeing another's caller id.
+    state.live.attribute(&arrival.id, flow.as_ref().map(|f| f.org_id.clone()), None);
 
     // The call goes on the books before anything can go wrong with it.
     // Shared: the listener writes transcript lines from its own task for as
@@ -1839,6 +1981,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                     node.name, timeout_seconds
                 );
                 agent_node_id = Some(node.id.clone());
+                // The node's own name — "Reception", "After hours" — which is
+                // what somebody watching a dashboard recognises. The agent row
+                // has a name too, and using it would need a second lookup to
+                // say something less specific: two numbers can point at one
+                // agent through differently named nodes.
+                state.live.attribute(&arrival.id, None, Some(node.name.clone()));
                 // Kept for billing: which agent ran is a dimension a cost
                 // report needs, and by the time the pipeline is built the
                 // flow walk has moved on.
@@ -2679,6 +2827,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                                     "sarvathra_escalations_total",
                                     &[("channel", arrival.channel), ("result", "handed_over")],
                                 );
+                                // Every open dashboard learns this within the
+                                // round trip, because the registry announces
+                                // rather than waiting to be asked.
+                                state.live.mark_human(&arrival.id);
                                 // Muted, not ended. The AI stays in the bridge
                                 // and — because it is a *mixing* bridge — now
                                 // hears the caller and the person both, so the
@@ -2960,6 +3112,8 @@ async fn main() {
         relays: rustvani::vokoo::pivot::Relays::new(),
         switchboard: rustvani::vokoo::stasis::Switchboard::new(),
         ari: rustvani::vokoo::ari::Ari::from_env(),
+        live: rustvani::vokoo::live::LiveCalls::new(),
+        presence: rustvani::vokoo::live::Presence::new(),
     };
     let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
 
@@ -2978,6 +3132,7 @@ async fn main() {
                 )
             }),
         )
+        .route("/events/live", get(live_events))
         .route("/engine/preflight", post(engine_preflight))
         .route("/flow/dryrun", post(flow_dry_run))
         .route("/catalogue/refresh", post(catalogue_refresh))
@@ -3020,6 +3175,7 @@ async fn main() {
             Ok(entity) => {
                 log::info!("[stasis] ari ok ({entity}) — running {}", rustvani::vokoo::stasis::APP);
                 let board = state.switchboard.clone();
+                let presence = state.presence.clone();
                 tokio::spawn(async move {
                     // Reconnects for the life of the process: Asterisk
                     // restarting must not leave the switch quietly dead, which
@@ -3030,6 +3186,7 @@ async fn main() {
                             ari.clone(),
                             board.clone(),
                             audiosocket_bind.clone(),
+                            presence.clone(),
                         )
                         .await
                         {

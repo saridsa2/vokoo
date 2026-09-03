@@ -1,5 +1,6 @@
 import {
     IconAgents,
+    IconDashboard,
     IconCallFlows,
     IconCallLogs,
     IconEvals,
@@ -11,6 +12,7 @@ import {
     IconPhoneNumbers,
     IconShapes,
     IconSquads,
+    IconTeam,
     IconTools,
     IconVoiceLibrary,
 } from "@/components/icons";
@@ -36,6 +38,13 @@ import type { NavItemType } from "./config";
  * entry and its endpoint cannot drift apart.
  */
 export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
+    {
+        // Its own section of one, above everything. What is happening now is
+        // not a kind of work you do — it is where you start, and filing it
+        // under a verb would put it behind one.
+        label: "Overview",
+        items: [{ label: "Dashboard", href: "/dashboard", icon: IconDashboard }],
+    },
     {
         label: "Composer",
         // Two boards, not one list with a filter. A flow answered while
@@ -95,6 +104,11 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         label: "Manage",
         items: [
             { label: "Organization", href: "/settings/organization", icon: IconOrganization },
+            // The people who take calls. Onboarding rather than watching:
+            // adding somebody, suspending them, giving them a new password.
+            // Who is on duty right now is on the dashboard, because that is a
+            // fact about the line and not about the roster.
+            { label: "Team", href: "/team", icon: IconTeam },
             { label: "Members", href: "/settings/members", icon: IconMembers },
         ],
     },
