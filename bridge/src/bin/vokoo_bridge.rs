@@ -1323,6 +1323,67 @@ async fn audiosocket_listener(bind: String, state: AppState) {
     }
 }
 
+/// PJSIP Realtime, answered by us.
+///
+/// Asterisk POSTs `<base>/<family>/single` or `/multi` with form-encoded
+/// criteria and expects percent-encoded `key=value` pairs back, one line per
+/// object. It is the only realtime backend available here — there is no
+/// `res_config_pgsql`, and the Supabase container publishes no port for one to
+/// connect to.
+///
+/// Unauthenticated, and only because it must be: `res_config_curl` sends no
+/// credential and offers nowhere to put one. It is bound to loopback in
+/// `extconfig.conf`, and Caddy publishes only `/ws` from this host — so
+/// reaching it means already being on the box. **That is the whole of the
+/// protection, and it is worth knowing**, because the auth family's answer
+/// contains SIP passwords in plaintext.
+async fn realtime_agents(
+    State(state): State<AppState>,
+    axum::extract::Path((family, op)): axum::extract::Path<(String, String)>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::BTreeMap<String, String>>,
+) -> impl IntoResponse {
+    use rustvani::vokoo::realtime_agents::{Agent, Family, render, wanted_id};
+
+    let Some(family) = Family::parse(&family) else {
+        // A family we do not serve is not an error: Asterisk asks about
+        // several, and answering 404 for the ones we leave in memory would
+        // fill its log with failures that are working as intended.
+        return ([(axum::http::header::CONTENT_TYPE, "text/html")], String::new());
+    };
+
+    let wanted = wanted_id(&form);
+    let mut query: Vec<(&str, String)> = vec![
+        ("select", "endpoint,sip_password,display_name,extension".into()),
+        // A suspended agent keeps their row, their history and their number
+        // and stops being an endpoint. Filtering here rather than in Asterisk
+        // means somebody who has left cannot register at all.
+        ("status", "eq.active".into()),
+    ];
+    match &wanted {
+        Some(id) => query.push(("endpoint", format!("eq.{id}"))),
+        None => query.push(("limit", "500".into())),
+    }
+
+    let rows = rustvani::vokoo::graph::rows(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        "agent_extensions",
+        &query,
+    )
+    .await
+    .unwrap_or_default();
+
+    let body = rows
+        .iter()
+        .filter_map(Agent::from_row)
+        .map(|agent| render(&agent, family))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    log::debug!("[realtime] {op} {:?} -> {} row(s)", wanted, rows.len());
+    ([(axum::http::header::CONTENT_TYPE, "text/html")], body)
+}
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_call(Incoming::Kookoo(socket), state))
 }
@@ -2585,7 +2646,28 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                         // already winding the pipeline down, and the AI leg's
                         // StasisEnd would otherwise be read as the call ending.
                         state.switchboard.mark_escalating(key).await;
-                        let endpoint = env_or("AGENT_ENDPOINT", "PJSIP/sarvathra-4001");
+                        // An agent of *this* organisation. The endpoint name
+                        // carries the org by convention; this is what enforces
+                        // it. AGENT_ENDPOINT remains only for a call that never
+                        // reached a flow and so has no organisation to ask
+                        // about.
+                        let endpoint = match flow.as_ref() {
+                            Some(f) => rustvani::vokoo::realtime_agents::on_duty(
+                                &cfg.supabase_url,
+                                &cfg.service_key,
+                                &f.org_id,
+                            )
+                            .await
+                            .unwrap_or_else(|| env_or("AGENT_ENDPOINT", "")),
+                            None => env_or("AGENT_ENDPOINT", ""),
+                        };
+                        if endpoint.is_empty() {
+                            log::warn!("[call={call}] nobody on duty — the flow's own branch stands");
+                            rustvani::vokoo::telemetry::count(
+                                "sarvathra_escalations_total",
+                                &[("channel", arrival.channel), ("result", "nobody_on_duty")],
+                            );
+                        } else {
                         match state
                             .switchboard
                             .escalate(ari, key, &endpoint, Some(&caller))
@@ -2621,6 +2703,7 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                                     &[("channel", arrival.channel), ("result", "failed")],
                                 );
                             }
+                        }
                         }
                     }
                 }
@@ -2900,6 +2983,7 @@ async fn main() {
         .route("/catalogue/refresh", post(catalogue_refresh))
         .route("/kookoo", any(kookoo_webhook))
         .route("/asterisk/incoming", post(asterisk_incoming))
+        .route("/asterisk/realtime/:family/:op", post(realtime_agents))
         .route("/ws", get(ws_handler))
         .with_state(state.clone());
 

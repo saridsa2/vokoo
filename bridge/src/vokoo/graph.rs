@@ -162,6 +162,25 @@ pub(crate) fn spellings(did: &str) -> Vec<String> {
     out
 }
 
+/// One PostgREST select, for callers outside this module.
+///
+/// The client is built per call rather than shared: this is used by things that
+/// happen once a call or once a registration, not per audio frame, and a
+/// three-second ceiling on a query the caller is waiting behind is worth more
+/// than a pooled connection.
+pub async fn rows(
+    base: &str,
+    key: &str,
+    path: &str,
+    query: &[(&str, String)],
+) -> Result<Vec<Value>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+    get(&client, base, key, path, query).await
+}
+
 async fn get(
     client: &reqwest::Client,
     base: &str,

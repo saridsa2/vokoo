@@ -30,6 +30,7 @@ pub mod handover;
 pub mod keypress;
 pub mod pivot;
 pub mod postcall;
+pub mod realtime_agents;
 pub mod record;
 pub mod runner;
 pub mod setvalues;

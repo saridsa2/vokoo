@@ -36,8 +36,48 @@ $("ext").textContent = CONFIG.user;
 $("host").textContent = new URL(CONFIG.server).host;
 
 let agent;
+// Whether this person is taking calls. Registration is the switch: Asterisk
+// only rings an endpoint that has a contact, so going off duty is
+// unregistering — not a flag we keep and hope the server agrees with.
+let onDuty = false;
+
+async function goOffDuty() {
+  $("connect").disabled = true;
+  try {
+    // The WebSocket is left open. Unregistering is what stops calls arriving,
+    // and keeping the connection makes coming back a round trip rather than a
+    // handshake — the difference between stepping away and logging out.
+    await agent.unregister();
+    onDuty = false;
+    $("connect").textContent = "Go on duty";
+    status("off duty", "down");
+    say("off duty — escalations will not ring here");
+  } catch (error) {
+    say(`could not go off duty: ${error?.message ?? error}`);
+  } finally {
+    $("connect").disabled = false;
+  }
+}
 
 $("connect").onclick = async () => {
+  if (onDuty) {
+    await goOffDuty();
+    return;
+  }
+  // Already connected from an earlier shift: register again rather than
+  // building a second user agent, which would leave the first one holding a
+  // socket Asterisk still believes in.
+  if (agent) {
+    $("connect").disabled = true;
+    try {
+      await agent.register();
+    } catch (error) {
+      say(`could not go on duty: ${error?.message ?? error}`);
+      $("connect").disabled = false;
+    }
+    return;
+  }
+
   if (!CONFIG.pass) {
     say("no VITE_SIP_PASS — copy .env.example to .env.local and set it");
     status("not configured", "down");
@@ -84,18 +124,32 @@ $("connect").onclick = async () => {
       },
       onCallHangup: () => {
         $("call").hidden = true;
-        status("on duty", "up");
+        status(onDuty ? "on duty" : "off duty", onDuty ? "up" : "down");
         say("call ended");
       },
       onRegistered: () => {
+        onDuty = true;
+        $("connect").textContent = "Go off duty";
+        $("connect").disabled = false;
         status("on duty", "up");
-        say("registered — escalations will ring here");
+        say("on duty — escalations will ring here");
       },
-      onUnregistered: () => status("off duty", "down"),
+      onUnregistered: () => {
+        onDuty = false;
+        $("connect").textContent = "Go on duty";
+        $("connect").disabled = false;
+        status("off duty", "down");
+      },
       onServerDisconnect: (error) => {
+        // The registration is gone with the socket, whatever this app thinks.
+        // Saying "on duty" while Asterisk has no contact for you is the one
+        // lie that matters here: a caller would be told a person is coming.
+        onDuty = false;
+        agent = undefined;
+        $("connect").textContent = "Go on duty";
+        $("connect").disabled = false;
         status("disconnected", "down");
         say(`server disconnected${error ? `: ${error.message}` : ""}`);
-        $("connect").disabled = false;
       },
     };
 
