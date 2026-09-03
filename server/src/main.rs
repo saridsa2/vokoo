@@ -2195,6 +2195,124 @@ async fn set_my_name(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "me" }) }))
 }
 
+/* ---------------------------------------------------------------- operator */
+
+/// Routes for whoever runs the platform, as distinct from whoever uses it.
+///
+/// **None of these take `x-org-id`.** An operator belongs to no tenant — every
+/// table gates on `is_org_member`, so RLS shows them nothing — which is exactly
+/// why the work happens inside `security definer` functions guarded by
+/// `is_platform_admin()`. Requiring an organisation header here would be
+/// pretending they act from inside one.
+///
+/// The guard lives in the database rather than here, deliberately: a check in
+/// this process protects this process, and the functions are reachable through
+/// PostgREST by anything holding a token. Putting it on the first line of each
+/// function body is what makes it true for every caller.
+async fn operator_tenants(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_tenants", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "tenants" }) }))
+}
+
+/// Whether the caller runs the platform.
+///
+/// So the console can decide whether to offer the operator navigation at all.
+/// Hiding it is a courtesy, not the control — every route above refuses on its
+/// own, and a menu item is not a permission.
+async fn operator_me(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("is_platform_admin", None)
+        .await
+        .unwrap_or(Value::Bool(false));
+    Ok(Json(ApiResponse {
+        data: json!({ "operator": data == Value::Bool(true) }),
+        meta: json!({ "resource": "operator" }),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct TenantBody {
+    plan: Option<String>,
+    status: Option<String>,
+}
+
+async fn operator_set_tenant(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<TenantBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    client
+        .database()
+        .rpc(
+            "operator_set_tenant",
+            Some(json!({ "p_org": id, "p_plan": body.plan, "p_status": body.status })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data: json!({ "ok": true }), meta: json!({ "resource": "tenants" }) }))
+}
+
+async fn operator_entitlements(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_entitlements", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "entitlements" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct EntitlementBody {
+    kind: String,
+    item_id: String,
+    /// `null` clears the override and returns the tenant to whatever the plan
+    /// says — which is why this is an `Option` rather than a bool.
+    allowed: Option<bool>,
+}
+
+async fn operator_set_entitlement(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<EntitlementBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    client
+        .database()
+        .rpc(
+            "operator_set_entitlement",
+            Some(json!({
+                "p_org": id,
+                "p_kind": body.kind,
+                "p_item": body.item_id,
+                "p_allowed": body.allowed,
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data: json!({ "ok": true }), meta: json!({ "resource": "entitlements" }) }))
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2642,6 +2760,13 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/me", get(me))
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
+        .route("/api/v1/operator/me", get(operator_me))
+        .route("/api/v1/operator/tenants", get(operator_tenants))
+        .route("/api/v1/operator/tenants/{id}", post(operator_set_tenant))
+        .route(
+            "/api/v1/operator/tenants/{id}/entitlements",
+            get(operator_entitlements).post(operator_set_entitlement),
+        )
         .route("/api/v1/catalogue", get(capability_catalogue))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/settings/organizations", post(create_organization))

@@ -277,6 +277,49 @@ export const api = {
     myOrganizations: <T>(accessToken: string) =>
         request<T[]>("/api/v1/me/organizations", {}, { accessToken, organizationId: "" }),
 
+    /* ---------------------------------------------------------- operator */
+
+    /**
+     * Whoever runs the platform, as distinct from whoever uses it.
+     *
+     * **None of these send `x-org-id`.** An operator is a member of no tenant,
+     * so an organisation header would be pretending they act from inside one.
+     * The guard is `is_platform_admin()`, on the first line of every function
+     * these reach — in the database rather than here, because a check in the
+     * console protects the console and the functions are reachable by anything
+     * holding a token.
+     */
+    operatorMe: <T>(context: AccessContext) => request<T>("/api/v1/operator/me", {}, context),
+
+    operatorTenants: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/tenants", {}, context),
+
+    operatorSetTenant: (
+        id: string,
+        change: { plan?: string; status?: string },
+        context: AccessContext,
+    ) =>
+        request<unknown>(
+            `/api/v1/operator/tenants/${id}`,
+            { method: "POST", body: JSON.stringify(change) },
+            context,
+        ),
+
+    operatorEntitlements: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/entitlements`, {}, context),
+
+    /** `allowed: null` clears the override and returns the tenant to its plan. */
+    operatorSetEntitlement: (
+        id: string,
+        change: { kind: string; item_id: string; allowed: boolean | null },
+        context: AccessContext,
+    ) =>
+        request<unknown>(
+            `/api/v1/operator/tenants/${id}/entitlements`,
+            { method: "POST", body: JSON.stringify(change) },
+            context,
+        ),
+
     /** Set your own name in this workspace. Empty clears it. */
     setMyName: (name: string, context: AccessContext) =>
         request<string>(

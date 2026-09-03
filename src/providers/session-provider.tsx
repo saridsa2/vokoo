@@ -60,6 +60,14 @@ type SessionContextValue = {
     organizations: Organization[];
     /** Move this session to another of them. */
     switchOrganization: (id: string) => void;
+    /**
+     * Whether this person runs the platform.
+     *
+     * Decides whether the operator navigation is offered, and nothing else. The
+     * routes refuse on their own — a hidden menu item is a courtesy, not a
+     * permission, and treating it as one is how a screen ends up guarded by CSS.
+     */
+    isOperator: boolean;
 };
 
 /** Renew a little before expiry, so a request never rides an expired token. */
@@ -71,6 +79,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const [session, setSession] = useState<StoredSession | null>(null);
     const [isReady, setIsReady] = useState(false);
     const [organizations, setOrganizations] = useState<Organization[]>([]);
+    const [isOperator, setIsOperator] = useState(false);
 
     // Read after mount, never during render: localStorage does not exist on the
     // server, so reading it during render would make the two passes disagree.
@@ -145,6 +154,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         clearSession();
         setSession(null);
         setOrganizations([]);
+        setIsOperator(false);
     }, []);
 
     /**
@@ -181,6 +191,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         if (!session?.accessToken) return;
         let live = true;
+        api.operatorMe<{ operator: boolean }>({
+            accessToken: session.accessToken,
+            organizationId: session.organizationId,
+        })
+            .then(({ data }) => live && setIsOperator(Boolean(data?.operator)))
+            .catch(() => undefined);
         api.myOrganizations<Organization>(session.accessToken)
             .then(({ data }) => {
                 if (!live) return;
@@ -202,11 +218,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             context: session ? { accessToken: session.accessToken, organizationId: session.organizationId } : null,
             organizations,
             switchOrganization,
+            isOperator,
             isReady,
             signIn,
             signOut,
         }),
-        [session, isReady, signIn, signOut, organizations, switchOrganization],
+        [session, isReady, signIn, signOut, organizations, switchOrganization, isOperator],
     );
 
     return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

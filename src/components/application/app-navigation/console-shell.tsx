@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { SidebarNavigationSectionsSubheadings } from "@/components/application/app-navigation/sidebar-navigation/sidebar-sections-subheadings";
 import { Tooltip } from "@/components/base/tooltip/tooltip";
 import { ChevronLeftDouble, ChevronRightDouble } from "@/components/icons";
-import { isFullScreenRoute, NAV_SECTIONS, SPLIT_SCREEN_ROUTES } from "@/components/application/app-navigation/vokoo-nav";
+import { isFullScreenRoute, NAV_SECTIONS, OPERATOR_SECTION, SPLIT_SCREEN_ROUTES } from "@/components/application/app-navigation/vokoo-nav";
 import { SignInScreen } from "@/components/application/auth/sign-in-screen";
 import { useNavCollapse } from "@/hooks/use-nav-collapse";
 import { useSession } from "@/hooks/use-session";
@@ -19,7 +19,7 @@ import { useSession } from "@/hooks/use-session";
  */
 export function ConsoleShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
-    const { session, isReady } = useSession();
+    const { session, isReady, isOperator } = useSession();
     const nav = useNavCollapse(SPLIT_SCREEN_ROUTES.has(pathname));
 
     // The stored session is only readable after mount. Rendering sign-in during
@@ -47,7 +47,11 @@ export function ConsoleShell({ children }: { children: ReactNode }) {
         <div className="flex h-dvh flex-col overflow-hidden bg-primary lg:flex-row">
             <SidebarNavigationSectionsSubheadings
                 activeUrl={pathname}
-                items={NAV_SECTIONS}
+                // The operator section is appended rather than living in
+                // `NAV_SECTIONS`, so a tenant user never renders it at all —
+                // and the routes refuse on their own regardless, because a
+                // hidden menu item is a courtesy and not a permission.
+                items={isOperator ? [...NAV_SECTIONS, OPERATOR_SECTION] : NAV_SECTIONS}
                 isCollapsed={nav.isCollapsed}
             />
             {/* The divider between the sidebar and the screen, and the handle
