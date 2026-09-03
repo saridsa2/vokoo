@@ -1,21 +1,26 @@
 import { Web } from "sip.js";
 
 /**
- * A spike. The credentials are hard-wired because the question this answers is
- * "can a person on a Mac take a call the AI escalated", not "how should agents
- * authenticate". Real agents will get their SIP credentials from the console
- * after signing in; this file is the throwaway that proves the leg swap works.
+ * A spike: the question it answers is "can a person on a Mac take a call the AI
+ * escalated", not "how should agents authenticate". Real agents will get their
+ * SIP credentials from the console after signing in.
+ *
+ * **The credentials come from `.env.local`, which is gitignored.** They were
+ * hard-wired here at first and committed, which puts a working SIP password in
+ * the history of a repository with a remote — a spike's convenience is not
+ * worth a credential in git, and a password that has been committed is burned
+ * whether or not anyone fetched it.
  */
 const CONFIG = {
   // Through Caddy on 443, not Asterisk's own TLS port. Asterisk's HTTP server
   // carries the SIP WebSocket *and* ARI on one port, and ARI can originate
   // calls and hang people up — so only /ws is published and 8088 stays on
   // loopback.
-  server: "wss://sip.sarvathra.ai/ws",
-  aor: "sip:sarvathra-4001@sip.sarvathra.ai",
-  user: "sarvathra-4001",
-  pass: "16zpbjnxo6XCLAN8PxkzK9",
+  server: import.meta.env.VITE_SIP_SERVER ?? "wss://sip.sarvathra.ai/ws",
+  user: import.meta.env.VITE_SIP_USER ?? "sarvathra-4001",
+  pass: import.meta.env.VITE_SIP_PASS ?? "",
 };
+CONFIG.aor = `sip:${CONFIG.user}@${new URL(CONFIG.server).host}`;
 
 const $ = (id) => document.getElementById(id);
 const say = (message) => {
@@ -33,6 +38,11 @@ $("host").textContent = new URL(CONFIG.server).host;
 let agent;
 
 $("connect").onclick = async () => {
+  if (!CONFIG.pass) {
+    say("no VITE_SIP_PASS — copy .env.example to .env.local and set it");
+    status("not configured", "down");
+    return;
+  }
   $("connect").disabled = true;
   status("connecting", "down");
 
