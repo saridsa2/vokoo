@@ -18,6 +18,7 @@
 //!
 //! 0x00  terminate   the call is over
 //! 0x01  uuid        16 raw bytes, sent once, first — the call's identity
+//! 0x03  dtmf        one ASCII keypad character
 //! 0x10  audio       signed linear 16-bit, mono, little-endian, channel rate
 //! 0xff  error       Asterisk reporting a problem with the stream
 //! ```
@@ -46,6 +47,11 @@ const RESAMPLER_QUALITY: ResamplerQuality = ResamplerQuality::Medium;
 pub enum FrameKind {
     Terminate,
     Uuid,
+    /// A keypad press. `app_audiosocket`'s own summary is "only audio frames
+    /// and DTMF frames will be transmitted" — this is the second of those, and
+    /// leaving it out meant a caller pressing a key while bridged reached
+    /// nothing at all.
+    Dtmf,
     Audio,
     Error,
     /// Something this does not know about. Carried so the reader can skip its
@@ -58,6 +64,7 @@ impl FrameKind {
         match byte {
             0x00 => Self::Terminate,
             0x01 => Self::Uuid,
+            0x03 => Self::Dtmf,
             0x10 => Self::Audio,
             0xff => Self::Error,
             other => Self::Unknown(other),
@@ -68,6 +75,7 @@ impl FrameKind {
         match self {
             Self::Terminate => 0x00,
             Self::Uuid => 0x01,
+            Self::Dtmf => 0x03,
             Self::Audio => 0x10,
             Self::Error => 0xff,
             Self::Unknown(byte) => byte,
@@ -89,6 +97,20 @@ impl AudioSocketFrame {
 
     pub fn terminate() -> Self {
         Self { kind: FrameKind::Terminate, payload: Vec::new() }
+    }
+
+    /// One keypad character, as ASCII.
+    pub fn dtmf(digit: char) -> Self {
+        Self { kind: FrameKind::Dtmf, payload: vec![digit as u8] }
+    }
+
+    /// The digit a `0x03` frame carries.
+    pub fn as_digit(&self) -> Option<char> {
+        if self.kind != FrameKind::Dtmf {
+            return None;
+        }
+        let c = *self.payload.first()? as char;
+        (c.is_ascii_digit() || c == '*' || c == '#').then_some(c)
     }
 
     /// The frame as bytes, ready to write.

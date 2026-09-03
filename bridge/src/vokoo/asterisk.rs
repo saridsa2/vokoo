@@ -41,6 +41,15 @@ pub struct PendingCall {
     /// because it is how a call is found in Meta's tooling, and there is no way
     /// to derive it later.
     pub wacid: Option<String>,
+    /// The carrier's own id for the call, when this leg only *represents* one.
+    ///
+    /// On a KooKoo pivot the leg carries a uuid we minted — `chan_audiosocket`
+    /// insists on a real UUID and a ucid is a decimal integer — but everything
+    /// downstream must still use KooKoo's ucid: it is what `kookoo.hangup`
+    /// sends KICK_CALL for, what the call record is filed under, and what a
+    /// post-call flow resolves. Filing the call under the leg's uuid meant
+    /// saying goodbye and leaving the caller connected.
+    pub carrier_call_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -110,6 +119,7 @@ mod tests {
             caller: "919704665032".into(),
             channel: "whatsapp".into(),
             wacid: Some("wacid-1".into()),
+            carrier_call_id: None,
         }
     }
 

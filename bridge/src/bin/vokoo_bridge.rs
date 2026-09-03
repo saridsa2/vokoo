@@ -1242,6 +1242,8 @@ async fn asterisk_incoming(
         caller: form.from.clone(),
         channel: if form.channel.is_empty() { "asterisk".into() } else { form.channel.clone() },
         wacid: form.wacid.filter(|w| !w.is_empty()),
+        // A WhatsApp leg *is* the call; there is no carrier id behind it.
+        carrier_call_id: None,
     };
 
     log::info!(
@@ -1373,6 +1375,7 @@ async fn relay_kookoo(
         caller: start.caller.clone().unwrap_or_default(),
         channel: "kookoo".into(),
         wacid: None,
+        carrier_call_id: Some(ucid.clone()),
     });
 
     let audiosocket = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
@@ -1413,12 +1416,33 @@ async fn relay_kookoo(
                     _ => continue,
                 };
                 if let Some(frame) = ser.deserialize(&input).await {
-                    if let FrameInner::System(SystemFrame::InputAudioRaw(audio)) = frame.inner {
-                        for chunk in inbound.push(&audio.audio) {
-                            if ends.to_asterisk.send(chunk).await.is_err() {
-                                break;
+                    match frame.inner {
+                        FrameInner::System(SystemFrame::InputAudioRaw(audio)) => {
+                            for chunk in inbound.push(&audio.audio) {
+                                let framed =
+                                    rustvani::serializers::AudioSocketFrame::audio(chunk).encode();
+                                if ends.to_asterisk.send(framed).await.is_err() {
+                                    break;
+                                }
                             }
                         }
+                        // A keypad press mid-conversation. Sent as its own
+                        // AudioSocket frame rather than as audio: KooKoo
+                        // delivers DTMF out of band, and turning it back into
+                        // a tone for the far end to re-detect would throw away
+                        // something we already know for certain.
+                        FrameInner::System(SystemFrame::InputDTMF { button }) => {
+                            let digit = button.as_str();
+                            log::info!("[call={call}] {ucid} — keypad {digit} across the relay");
+                            if let Some(c) = digit.chars().next() {
+                                let framed =
+                                    rustvani::serializers::AudioSocketFrame::dtmf(c).encode();
+                                if ends.to_asterisk.send(framed).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -1473,6 +1497,7 @@ async fn relay_audiosocket(
         }
     }
 
+
     loop {
         tokio::select! {
             read = rx.read(&mut buffer) => {
@@ -1492,8 +1517,11 @@ async fn relay_audiosocket(
             }
 
             out = ends.from_kookoo.recv() => {
-                let Some(pcm) = out else { break };
-                if tx.write_all(&AudioSocketFrame::audio(pcm).encode()).await.is_err() {
+                // Already a complete AudioSocket frame — audio or DTMF. Framed
+                // once, at the source. Wrapping it again here is the shape of
+                // the bug that made the agent's voice arrive as noise.
+                let Some(framed) = out else { break };
+                if tx.write_all(&framed).await.is_err() {
                     break;
                 }
             }
@@ -1582,10 +1610,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             };
 
             let arrival = Arrival {
-                id: pending.uuid.clone(),
+                // The carrier's id when there is one, so hangup, the call
+                // record and any post-call flow all name the same call.
+                id: pending.carrier_call_id.clone().unwrap_or_else(|| pending.uuid.clone()),
                 did: pending.did.clone(),
                 caller: pending.caller.clone(),
-                channel: "whatsapp",
+                channel: if pending.channel == "kookoo" { "kookoo" } else { "whatsapp" },
                 headers: json!({
                     "channel": pending.channel,
                     "wacid":   pending.wacid,

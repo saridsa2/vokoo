@@ -610,6 +610,22 @@ impl AudioSocketTransport {
                 log::warn!("AudioSocketTransport: Asterisk error frame: {:?}", frame.payload);
                 true
             }
+            // A keypad press while bridged. It reaches the pipeline as a
+            // frame rather than as audio, because a DTMF tone rendered into
+            // 8 kHz slin is something a model has to guess at and a machine
+            // should not have to.
+            FrameKind::Dtmf => {
+                if let Some(digit) = frame.as_digit() {
+                    if let Some(entry) = crate::frames::KeypadEntry::from_digit(&digit.to_string()) {
+                        log::info!("AudioSocketTransport: keypad {digit}");
+                        let _ = push_tx
+                            .send((Frame::input_dtmf(entry), FrameDirection::Downstream))
+                            .await;
+                    }
+                }
+                true
+            }
+
             // The uuid is sent once, before the loop. A second one means
             // something is confused; the call is identified either way.
             FrameKind::Uuid => true,
