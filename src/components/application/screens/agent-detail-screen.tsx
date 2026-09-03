@@ -32,14 +32,30 @@ import { generateSipPassword } from "@/utils/sip-password";
 import { useSession } from "@/hooks/use-session";
 
 type Member = {
+    membership_id: string;
     user_id: string | null;
+    /** Their address — real once they sign in, the invited one before that. */
+    email: string | null;
     display_name: string | null;
-    invited_email: string | null;
     role: string;
+    /** The machine API keys act as. Never an owner of an extension. */
+    is_service: boolean;
 };
+
+/**
+ * What to call somebody in a list.
+ *
+ * The old version read `display_name || invited_email || user_id` and fell all
+ * the way through to a uuid — because a member who has signed in has no
+ * `invited_email` (it is cleared when they claim the membership) and may have
+ * no display name either. `org_people` returns their real address; a uuid is
+ * never a name and should not be the last resort.
+ */
+const nameOf = (m: Member) => m.display_name || m.email || "Unnamed member";
 
 type AgentExtension = {
     id: string;
+    membership_id: string | null;
     display_name: string;
     extension: string;
     endpoint: string;
@@ -72,7 +88,8 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
                 if (!live || !data) return;
                 setAgent(data);
                 setName(data.display_name);
-                setMembers((people.data ?? []).filter((m) => m.user_id));
+                // Service accounts excluded: API keys are not somebody who owns a phone.
+                setMembers((people.data ?? []).filter((m) => !m.is_service));
             } catch (problem) {
                 if (live) setError((problem as Error).message);
             }
@@ -169,20 +186,29 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
                         </p>
                         <Select
                             aria-label="Person"
-                            selectedKey={agent.user_id ?? ""}
+                            selectedKey={agent.membership_id ?? ""}
                             isDisabled={busy === "user"}
-                            onSelectionChange={(key) =>
+                            onSelectionChange={(key) => {
+                                const chosen = members.find((m) => m.membership_id === String(key));
                                 void patch(
                                     "user",
-                                    { user_id: String(key) || null },
-                                    String(key) ? "Linked." : "Unlinked.",
-                                )
-                            }
+                                    {
+                                        // The membership is the durable link —
+                                        // it exists from the moment somebody is
+                                        // added. `user_id` follows when they
+                                        // sign in, and is set here too when they
+                                        // already have.
+                                        membership_id: chosen?.membership_id ?? null,
+                                        user_id: chosen?.user_id ?? null,
+                                    },
+                                    chosen ? `Linked to ${nameOf(chosen)}.` : "Unlinked.",
+                                );
+                            }}
                             items={[
                                 { id: "", label: "Nobody" },
                                 ...members.map((m) => ({
-                                    id: m.user_id as string,
-                                    label: m.display_name || m.invited_email || m.user_id!,
+                                    id: m.membership_id,
+                                    label: nameOf(m),
                                 })),
                             ]}
                         >

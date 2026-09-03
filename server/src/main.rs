@@ -286,7 +286,7 @@ const RESOURCES: &[Resource] = &[
         route: "agent-extensions",
         table: "agent_extensions",
         order_by: "created_at",
-        select: "id,org_id,user_id,extension,endpoint,display_name,status,created_at,updated_at",
+        select: "id,org_id,user_id,membership_id,extension,endpoint,display_name,status,created_at,updated_at",
     },
 ];
 
