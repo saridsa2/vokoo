@@ -220,6 +220,8 @@ pub struct AudioSocketTransport {
     audio_in_sample_rate: u32,
     audio_out_sample_rate: u32,
     wire_rate: u32,
+    /// Ends the call from our side. See [`Self::hangup`].
+    hangup: Arc<tokio::sync::Notify>,
 }
 
 impl AudioSocketTransport {
@@ -240,7 +242,26 @@ impl AudioSocketTransport {
             audio_in_sample_rate,
             audio_out_sample_rate,
             wire_rate: params.wire_rate,
+            hangup: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// A handle that ends the call.
+    ///
+    /// **This is what hangs up a WhatsApp caller.** A KooKoo call is ended
+    /// through the carrier's REST API by `kookoo.hangup`; there is no such API
+    /// here, and the equivalent is closing this socket — Asterisk then leaves
+    /// `AudioSocket()` and runs the `Hangup()` on the next dialplan line.
+    ///
+    /// Without it the socket closed only when the call handler returned, which
+    /// is after escalation, billing settle and the call record are written. The
+    /// agent said goodbye and the caller sat listening to silence for ten
+    /// seconds or more, wondering whether to hang up themselves.
+    ///
+    /// `notify_one` rather than `notify_waiters`: the permit is stored, so this
+    /// works whether or not the loop happens to be waiting at that instant.
+    pub fn hangup(&self) -> Arc<tokio::sync::Notify> {
+        self.hangup.clone()
     }
 
     pub fn input(&self) -> FrameProcessor {
@@ -293,6 +314,7 @@ impl AudioSocketTransport {
         // Split so the two arms can read and write at once. A single handle
         // would make an outbound write wait for an inbound read, which at 20 ms
         // is audible.
+        let hangup = self.hangup.clone();
         let (mut rx_half, mut tx_half): (OwnedReadHalf, OwnedWriteHalf) = stream.into_split();
         let mut buffer = vec![0u8; READ_BUFFER];
 
@@ -459,7 +481,15 @@ impl AudioSocketTransport {
                 }
 
                 // ------------------------------------------------------------
-                // Arm 3: the clock. One frame every 20 ms, without exception.
+                // Arm 3: we are ending the call.
+                // ------------------------------------------------------------
+                _ = hangup.notified() => {
+                    log::debug!("AudioSocketTransport: hanging up");
+                    break;
+                }
+
+                // ------------------------------------------------------------
+                // Arm 4: the clock. One frame every 20 ms, without exception.
                 // ------------------------------------------------------------
                 _ = clock.tick() => {
                     // Silence when there is nothing to say. Not an idle state:

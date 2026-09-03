@@ -1161,6 +1161,20 @@ enum CallWire {
 }
 
 impl CallWire {
+    /// A handle that ends the call, where the wire has one.
+    ///
+    /// Only AudioSocket does. A KooKoo call is hung up through the carrier by
+    /// `kookoo.hangup`; closing its WebSocket early would cut across the
+    /// handover mechanism, which relies on the carrier asking for the next
+    /// instruction after the stream ends. On AudioSocket there is no carrier
+    /// API, and closing the socket *is* the hangup.
+    fn hangup(&self) -> Option<std::sync::Arc<tokio::sync::Notify>> {
+        match self {
+            Self::Kookoo { .. } => None,
+            Self::Asterisk { transport, .. } => Some(transport.hangup()),
+        }
+    }
+
     fn input(&self) -> FrameProcessor {
         match self {
             Self::Kookoo { transport, .. } => transport.input(),
@@ -2184,6 +2198,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         });
     }
 
+    // Taken before `run` consumes the wire: this is what ends a WhatsApp call
+    // the moment the flow is done, rather than whenever this function happens
+    // to return.
+    let hangup = transport.hangup();
     let socket_fut = transport.run(push_tx);
     let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode || relay_engine.is_some())
         .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
@@ -2379,6 +2397,26 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     }
     if listening {
         log::info!("[call={call}] listening ended with the call");
+    }
+
+    // End the call now, not when this function returns.
+    //
+    // Everything below — escalation, billing settle, the call record — takes
+    // time a caller spends listening to silence. On KooKoo that never showed,
+    // because `kookoo.hangup` drops the caller through the carrier before any
+    // of it runs. On AudioSocket there is no carrier to ask: closing the socket
+    // is the hangup, and it used to happen only when this scope ended, ten
+    // seconds or more after the agent had said goodbye.
+    //
+    // The future is then polled to completion so the transport can write its
+    // terminate frame and close cleanly. Bounded, because a socket that will
+    // not close must not hold this task open — the caller is gone either way.
+    if let Some(signal) = hangup {
+        signal.notify_one();
+        match tokio::time::timeout(std::time::Duration::from_secs(2), socket_fut).await {
+            Ok(_) => log::info!("[call={call}] call ended, socket closed"),
+            Err(_) => log::warn!("[call={call}] socket did not close in 2s"),
+        }
     }
 
     // The call could not be served. Queue where it goes before this function
