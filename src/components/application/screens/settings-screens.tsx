@@ -243,29 +243,194 @@ export function OrganizationScreen() {
                     </Tabs.List>
                 </Tabs>
 
-                <div className="flex max-w-2xl flex-col gap-5">
-                    <p className="text-sm text-tertiary">{here.asks}</p>
-
-                    {error ? (
-                        <ErrorNote error={error} />
-                    ) : isLoading ? (
-                        <p className="text-sm text-tertiary">Loading…</p>
-                    ) : !data ? (
-                        <p className="text-sm text-tertiary">No organization found.</p>
-                    ) : (
-                        <Pane
-                            section={section}
-                            data={data}
-                            value={value}
-                            set={set}
-                            context={context}
-                        />
-                    )}
-                </div>
+                {error ? (
+                    <ErrorNote error={error} />
+                ) : isLoading ? (
+                    <p className="text-sm text-tertiary">Loading…</p>
+                ) : !data ? (
+                    <p className="text-sm text-tertiary">No organization found.</p>
+                ) : (
+                    // 65/35. The controls are what somebody came to change; the
+                    // prose is what they read once and then never again, so it
+                    // stops sitting between the fields and pushing them apart.
+                    <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[65fr_35fr]">
+                        <div className="flex flex-col gap-5">
+                            <Pane
+                                section={section}
+                                data={data}
+                                value={value}
+                                set={set}
+                                context={context}
+                            />
+                        </div>
+                        <aside className="flex flex-col gap-4 border-l border-secondary pl-6 lg:sticky lg:top-0">
+                            <h2 className="text-sm font-semibold text-primary">{here.asks}</h2>
+                            <Help section={section} />
+                        </aside>
+                    </div>
+                )}
             </div>
         </>
     );
 }
+
+/**
+ * The prose, on the right.
+ *
+ * It used to sit between the fields as hints and notices, which made a form of
+ * four controls three screens tall — and put the thing somebody reads once
+ * permanently between the things they came to change. Fields keep a short hint
+ * where the consequence is not obvious from the label; everything longer is
+ * here.
+ */
+const Help = ({ section }: { section: SectionId }) => {
+    switch (section) {
+        case "identity":
+            return (
+                <>
+                    <P>
+                        The slug is fixed at creation, and not for tidiness:{" "}
+                        <strong className="text-primary">
+                            it is half of every agent&rsquo;s SIP endpoint name
+                        </strong>
+                        . The database re-derives those on write, so renaming it would rename every
+                        endpoint Asterisk knows and break every registration at once.
+                    </P>
+                    <P>
+                        The timezone is the business day. Left empty, anything that says
+                        &ldquo;today&rdquo; falls back to whichever timezone the person reading it
+                        is in — so two people in different places see different numbers and both
+                        are right.
+                    </P>
+                </>
+            );
+
+        case "calls":
+            return (
+                <>
+                    <P>
+                        The escalation number is where a caller goes when the agent breaks and no
+                        exception flow is bound to the number they dialled. Empty means they hear
+                        silence, which is what happens today on a number with neither.
+                    </P>
+                    <P>
+                        A concurrency ceiling is one you impose below the carrier&rsquo;s three —
+                        useful when a busy tone is a better answer than a queue nobody is going to
+                        reach.
+                    </P>
+                    <Note>
+                        Nothing enforces that ceiling yet: the bridge would have to count an
+                        organisation&rsquo;s live calls and refuse above it. The carrier&rsquo;s
+                        own three still applies either way, and a fourth caller gets SIP 486
+                        before the bridge ever sees them.
+                    </Note>
+                </>
+            );
+
+        case "intelligence":
+            return (
+                <>
+                    <P>
+                        This is the model that reads a call after it has ended and fills in a
+                        shape. It must serve the Anthropic Messages API, because the reading is
+                        held to its shape by a forced tool call rather than by parsing a reply —
+                        which is what makes these two interchangeable.
+                    </P>
+                    <P>
+                        One choice for the whole workspace. Four post-call flows would otherwise
+                        carry four copies of it, and changing what reads your calls would mean
+                        opening four boards and hoping you found them all.
+                    </P>
+                    <Note>
+                        MiniMax publishes no models endpoint, so its entry is hand-maintained —
+                        the same situation as Sarvam, which is the provider whose retired model
+                        put silence on a live call. Anthropic publishes one and discovery should
+                        own those. And nothing pre-flights a reader the way it pre-flights an
+                        engine, so a wrong pairing is found when a call ends.
+                    </Note>
+                </>
+            );
+
+        case "data":
+            return (
+                <>
+                    <P>
+                        Retention covers a call&rsquo;s <em>content</em> — transcript, recording,
+                        analysis. The call record itself always stays, because that is what
+                        billing counts.
+                    </P>
+                    <P>
+                        A recording URL expires at the carrier, so the moment it is handed over on
+                        hangup is the only moment it can be kept.
+                    </P>
+                    <Note>
+                        Retention is stored and nothing sweeps on it — nothing has ever been
+                        deleted. Recording is always on: the answering XML includes
+                        &lt;start-record/&gt; unconditionally. Redaction is not implemented, and
+                        belongs before the transcript is written rather than after, because after
+                        is a copy that already existed.
+                    </Note>
+                </>
+            );
+
+        case "compliance":
+            return (
+                <>
+                    <P>
+                        India&rsquo;s TRAI rules for outbound calling: scrub against the national
+                        Do Not Disturb registry, keep inside 09:00&ndash;21:00, and stay under
+                        fifty calls a day per registered sender.
+                    </P>
+                    <Note tone="strong">
+                        <strong className="text-primary">Read-only, on purpose.</strong> This
+                        platform has no outbound path, so nothing here can be enforced. A switch
+                        that stores &ldquo;DND scrubbing: on&rdquo; and changes nothing is not an
+                        empty field — it is a claim of compliance that is untrue, and the
+                        consequence of that one is a fine. They become editable the day there is
+                        a dialer to honour them.
+                    </Note>
+                </>
+            );
+
+        case "billing":
+            return (
+                <>
+                    <P>
+                        What the calls consumed, and what it cost — by engine, so a change of
+                        provider shows up as a change in the bill rather than as a mystery.
+                    </P>
+                    <Note>
+                        Every rate in the card is deliberately null. A figure written from memory
+                        into a table that produces invoices is exactly how a wrong invoice goes
+                        out, so until each is read off a vendor&rsquo;s own page this reports
+                        quantities and refuses to guess. A call nobody has priced and a call that
+                        cost nothing are different facts.
+                    </Note>
+                    <Note>
+                        A relay meters every step. A realtime engine records nothing at all, and
+                        no call has ever emitted the carrier&rsquo;s own charge — so an engine
+                        missing from the table may be unused, or may be unmeasured.
+                    </Note>
+                </>
+            );
+    }
+};
+
+const P = ({ children }: { children: React.ReactNode }) => (
+    <p className="text-sm text-tertiary">{children}</p>
+);
+
+const Note = ({ children, tone }: { children: React.ReactNode; tone?: "strong" }) => (
+    <p
+        className={`p-3 text-sm text-tertiary ${
+            tone === "strong"
+                ? "border border-warning bg-warning-primary"
+                : "border border-dashed border-secondary"
+        }`}
+    >
+        {children}
+    </p>
+);
 
 /** What each section holds. Split out so the screen above stays about layout. */
 const Pane = ({
@@ -290,14 +455,14 @@ const Pane = ({
                         label="Slug"
                         value={data.slug}
                         isDisabled
-                        hint={`Half of every agent's SIP endpoint name — ${data.slug}-4001. Changing it would rename every endpoint Asterisk knows and break every registration, so it is fixed at creation.`}
+                        hint="Fixed at creation."
                     />
                     <Input
                         label="Timezone"
                         value={value("timezone")}
                         onChange={set("timezone")}
                         placeholder="Asia/Kolkata"
-                        hint="The business day. Left empty, anything that says 'today' falls back to whichever timezone the person reading it is in — so two people in different places see different numbers and both are right."
+                        hint="IANA name, like Asia/Kolkata."
                     />
                     <div className="flex items-center justify-between border-t border-secondary pt-4">
                         <div>
@@ -321,20 +486,15 @@ const Pane = ({
                         value={value("escalation_number")}
                         onChange={set("escalation_number")}
                         placeholder="6309248884"
-                        hint="Where a caller is sent when the agent breaks and no exception flow is bound to the number. Empty means they hear silence — which is what happens today on a number with neither."
+                        hint="Empty means the caller hears silence."
                     />
                     <Input
                         label="Concurrent call limit"
                         value={value("max_concurrent_calls")}
                         onChange={set("max_concurrent_calls")}
                         placeholder="Leave empty for the carrier's limit"
-                        hint="A ceiling you impose below the carrier's three. Useful when a busy tone is a better answer than a queue nobody is going to reach."
+                        hint="Empty means the carrier's three is the only limit."
                     />
-                    <Pending>
-                        Nothing enforces this limit yet — the bridge would have to count an
-                        organisation's live calls and refuse above it. The carrier's own three
-                        still applies either way.
-                    </Pending>
                 </Card>
             );
 
@@ -356,47 +516,32 @@ const Pane = ({
                         value={value("retention_days")}
                         onChange={set("retention_days")}
                         placeholder="Leave empty to keep everything"
-                        hint="How long a call's content — transcript, recording, analysis — is kept. The call record itself always stays, because that is what billing counts."
+                        hint="Empty keeps everything."
                     />
                     <Toggle
                         label="Record calls"
                         checked={value("record_calls") === "true"}
                         onChange={(next) => set("record_calls")(String(next))}
-                        hint="The carrier records and hands over a URL when the call ends. The URL expires at the carrier, so the moment it is offered is the only moment it can be kept."
+                        hint="The carrier records and hands over a URL on hangup."
                     />
                     <Toggle
                         label="Redact transcripts"
                         checked={value("redact_transcripts") === "true"}
                         onChange={(next) => set("redact_transcripts")(String(next))}
-                        hint="Strip anything shaped like a card or government id number before the transcript is stored."
+                        hint="Strip card and id numbers before storing."
                     />
-                    <Pending>
-                        Retention is stored and nothing sweeps on it — nothing has ever been
-                        deleted. Recording is always on: `&lt;start-record/&gt;` is in the
-                        answering XML unconditionally. Redaction is not implemented, and belongs
-                        before the transcript is written rather than after, because after is a
-                        copy that already existed.
-                    </Pending>
                 </Card>
             );
 
         case "compliance":
             return (
                 <>
-                    <Pending tone="strong">
-                        <strong className="text-primary">Read-only, on purpose.</strong>{" "}
-                        These are India&rsquo;s TRAI rules for outbound calling, and this platform has no
-                        outbound path — so nothing here can be enforced. A switch that stores
-                        &ldquo;DND scrubbing: on&rdquo; and changes nothing is not an empty field,
-                        it is a claim of compliance that is untrue. They become editable the day
-                        there is a dialer to honour them.
-                    </Pending>
                     <Card>
                         <Toggle
                             label="Scrub against DND"
                             checked={data.dnd_scrubbing}
                             isDisabled
-                            hint="Check the national Do Not Disturb registry before dialling a number."
+                            hint="Check the national registry before dialling."
                         />
                         <div className="grid grid-cols-2 gap-4">
                             <Input
@@ -416,13 +561,13 @@ const Pane = ({
                             label="Daily call cap"
                             value={String(data.daily_call_cap ?? "")}
                             isDisabled
-                            hint="TRAI's own limit is 50 calls a day per registered sender."
+                            hint="TRAI allows 50."
                         />
                         <Toggle
                             label="Announce recording"
                             checked={data.announce_recording}
                             isDisabled
-                            hint="Tell the caller the call is recorded, before the agent speaks. It belongs in the flow's first node."
+                            hint="Before the agent speaks."
                         />
                     </Card>
                 </>
@@ -500,7 +645,7 @@ const Intelligence = ({
                     set("intelligence_model")("");
                 }}
                 items={providers}
-                hint="Must serve the Anthropic Messages API. The reading is held to its shape by a forced tool call rather than by parsing a reply, which is what makes these two interchangeable."
+                hint="Must serve the Anthropic Messages API."
             >
                 {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
             </Select>
@@ -518,18 +663,11 @@ const Intelligence = ({
                           ? "Choose a provider first"
                           : "Choose a model"
                 }
-                hint="One choice for the whole workspace. Four post-call flows would otherwise carry four copies of it, and changing what reads your calls would mean opening four boards and hoping you found them all."
+                hint="One choice for the whole workspace."
             >
                 {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
             </Select>
 
-            <Pending>
-                MiniMax publishes no models endpoint, so its entry is hand-maintained — the same
-                situation as Sarvam, which is the provider whose retired model put silence on a
-                live call. Anthropic publishes one and discovery should own those. And nothing
-                pre-flights a reader the way it pre-flights an engine, so a wrong pairing is
-                found when a call ends.
-            </Pending>
         </Card>
     );
 };
@@ -670,17 +808,7 @@ const Billing = ({
                 )}
             </Card>
 
-            {toPrice.length > 0 ? (
-                <Pending>
-                    <strong className="text-primary">
-                        {toPrice.length} vendor{toPrice.length === 1 ? "" : "s"} still to price:
-                    </strong>{" "}
-                    {toPrice.join(", ")}. Each rate has to be read off that vendor&rsquo;s own
-                    page and entered — until then this reports what was consumed and refuses to
-                    guess what it cost.
-                </Pending>
-            ) : null}
-        </>
+                    </>
     );
 };
 
@@ -707,32 +835,6 @@ const Figure = ({ label, value }: { label: string; value: string }) => (
 
 const Card = ({ children }: { children: React.ReactNode }) => (
     <section className="flex flex-col gap-5 rounded-xl p-5 ring-1 ring-secondary">{children}</section>
-);
-
-/**
- * What is not wired up yet, said where somebody would otherwise assume it was.
- *
- * The alternative was leaving these sections out until their readers existed —
- * which is this project's own rule. Building ahead is a deliberate choice, and
- * this note is the price of it: a field that does nothing has to say so, or the
- * page is a list of settings that quietly are not settings.
- */
-const Pending = ({
-    children,
-    tone,
-}: {
-    children: React.ReactNode;
-    tone?: "strong";
-}) => (
-    <p
-        className={`p-4 text-sm text-tertiary ${
-            tone === "strong"
-                ? "border border-warning bg-warning-primary"
-                : "border border-dashed border-secondary"
-        }`}
-    >
-        {children}
-    </p>
 );
 
 /** A labelled switch, with its explanation under it like every other field. */
