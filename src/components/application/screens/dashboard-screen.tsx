@@ -127,30 +127,35 @@ export const DashboardScreen = () => {
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-6 lg:p-8">
             <header className="flex flex-wrap items-baseline justify-between gap-3">
-                <div>
-                    <h1 className="text-display-xs font-semibold text-primary">Dashboard</h1>
-                    <p className="mt-1 text-sm text-tertiary">
-                        {data?.today
-                            ? `Since midnight, ${data.today.timezone}.`
-                            : "Since midnight."}
-                    </p>
-                </div>
+                {/* No subtitle. "Since midnight" was true of the four cards
+                    and false of everything under them — the table is *now* and
+                    the charts are a fortnight — so each card carries its own
+                    span instead. */}
+                <h1 className="text-display-xs font-semibold text-primary">Dashboard</h1>
                 <Live connected={connected} error={error} />
             </header>
 
             <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                {/* **"1 still open" is gone.** It counted `calls` rows whose
+                    status is not `ended`, which includes every call that died
+                    without its end being written — so it sat beside a live
+                    count of 0 and contradicted it. That is the stale-row trap
+                    the live registry exists to avoid, reintroduced as a
+                    footnote. */}
                 <Figure
                     label="Calls Today"
                     value={data?.today?.answered ?? null}
-                    note={
-                        data?.today && data.today.answered > data.today.finished
-                            ? `${data.today.answered - data.today.finished} still open`
-                            : undefined
-                    }
+                    note={data?.today?.timezone}
                 />
-                <Figure label="Talk Time" value={data?.today ? minutes(data.today.seconds) : null} />
                 <Figure
-                    label="Active Calls"
+                    label="Talk Time Today"
+                    value={data?.today ? minutes(data.today.seconds) : null}
+                />
+                {/* "On a Call Now", not "Active Calls": the section below is
+                    headed Active Calls, and a card and a table with one name
+                    read as the same thing said twice. */}
+                <Figure
+                    label="On a Call Now"
                     value={data ? data.live : null}
                     note={
                         data && data.with_human > 0
@@ -158,10 +163,14 @@ export const DashboardScreen = () => {
                             : undefined
                     }
                 />
+                {/* "On Duty" rather than "Available", because that is the word
+                    the roster underneath uses and the agent app's own button
+                    says. Two vocabularies for one state is how a reader ends up
+                    wondering whether they are different states. */}
                 <Figure
-                    label="Agents Available"
+                    label="Agents On Duty"
                     value={data ? online : null}
-                    note={agents.length ? `of ${agents.length}` : undefined}
+                    note={agents.length ? `${agents.length} in the team` : undefined}
                 />
             </section>
 
@@ -244,7 +253,7 @@ export const DashboardScreen = () => {
                 <div className="flex items-baseline justify-between gap-3">
                     <h2 className="text-lg font-semibold text-primary">Agents</h2>
                     <Button href="/team" color="link-color" size="sm">
-                        Manage
+                        Manage team
                     </Button>
                 </div>
                 {agents.length === 0 ? (
@@ -281,7 +290,19 @@ export const DashboardScreen = () => {
             </div>
 
             <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold text-primary">Reporting</h2>
+                {/* Named for its span. "Reporting" is vague here and takes the
+                    name of the screen that will do it properly. */}
+                <h2 className="flex items-baseline gap-2 text-lg font-semibold text-primary">
+                    Last 14 Days
+                    {history?.timezone ? (
+                        // Once, over all five panels. The span and the zone are
+                        // the same for every one of them, so repeating them on
+                        // each was four restatements of one fact.
+                        <span className="text-xs font-normal text-quaternary">
+                            {history.timezone}
+                        </span>
+                    ) : null}
+                </h2>
                 <DashboardCharts history={history} />
             </section>
 
@@ -301,6 +322,9 @@ const DUTY: Record<RosterAgent["state"], string> = {
  * Worth a line of its own: every number on this screen is only as true as the
  * connection carrying it, and a dashboard frozen on a stale figure looks exactly
  * like a quiet afternoon.
+ *
+ * "connected", not "live". Beside a card reading *On a Call Now*, the word
+ * "live" reads as a statement about the calls rather than about the socket.
  */
 const Live = ({ connected, error }: { connected: boolean; error: string | null }) => (
     <span className="flex items-center gap-2 text-sm text-tertiary">
@@ -311,7 +335,7 @@ const Live = ({ connected, error }: { connected: boolean; error: string | null }
                 background: connected ? "var(--chart-accent)" : "var(--color-fg-quaternary)",
             }}
         />
-        {connected ? "live" : (error ?? "connecting")}
+        {connected ? "connected" : (error ?? "connecting")}
     </span>
 );
 

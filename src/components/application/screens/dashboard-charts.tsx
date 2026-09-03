@@ -265,7 +265,7 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
 
     return (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Panel title="Call Volume" note={`Last ${history.days.length} days · ${history.timezone}`}>
+            <Panel title="Call Volume" note="Calls per day">
                 <Chart option={options.volume} height={210} ariaLabel="Calls per day" />
             </Panel>
 
@@ -277,8 +277,8 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                 title="Busy Hours"
                 note={
                     busiest.calls > 0
-                        ? `Busiest ${DAYS[busiest.day]} ${hour(busiest.hour)} · ${history.timezone}`
-                        : history.timezone
+                        ? `Busiest ${DAYS[busiest.day]} ${hour(busiest.hour)}`
+                        : "Day of the week by hour"
                 }
                 className="xl:col-span-2"
             >
