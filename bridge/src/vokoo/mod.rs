@@ -31,6 +31,7 @@ pub mod postcall;
 pub mod record;
 pub mod runner;
 pub mod setvalues;
+pub mod telemetry;
 pub mod webhook;
 pub mod tools;
 

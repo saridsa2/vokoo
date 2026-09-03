@@ -1421,6 +1421,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     );
 
     let t0 = std::time::Instant::now();
+    rustvani::vokoo::telemetry::count("sarvathra_calls_total", &[("channel", arrival.channel)]);
+    rustvani::vokoo::telemetry::gauge_add(
+        "sarvathra_calls_active",
+        &[("channel", arrival.channel)],
+        1,
+    );
 
     // A number points at a flow. Resolved once, here, and not read again: a flow
     // republished mid-call must not change a call in progress, so the caller
@@ -2202,6 +2208,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // the moment the flow is done, rather than whenever this function happens
     // to return.
     let hangup = transport.hangup();
+    // Whether the wire closed on its own — the caller hung up, or Asterisk
+    // ended the channel. A completed future must never be polled again.
+    let mut socket_done = false;
     let socket_fut = transport.run(push_tx);
     let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode || relay_engine.is_some())
         .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
@@ -2248,7 +2257,11 @@ async fn handle_call(incoming: Incoming, state: AppState) {
 
     loop {
         tokio::select! {
-            r = &mut socket_fut => { log::info!("[call={call}] socket closed: {r:?}"); break }
+            r = &mut socket_fut => {
+                log::info!("[call={call}] socket closed: {r:?}");
+                socket_done = true;
+                break;
+            }
             r = &mut task_fut   => {
                 // A pipeline that ends with an error before the agent has
                 // reported anything is a caller listening to nothing, not a
@@ -2411,7 +2424,13 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // The future is then polled to completion so the transport can write its
     // terminate frame and close cleanly. Bounded, because a socket that will
     // not close must not hold this task open — the caller is gone either way.
-    if let Some(signal) = hangup {
+    //
+    // Only when the wire is still open. Awaiting a future that has already
+    // completed panics with "`async fn` resumed after completion", reported
+    // against the `async fn run` line rather than anywhere useful — which is
+    // what happened to every caller-initiated hangup between adding this and
+    // the metric that caught it.
+    if let (Some(signal), false) = (hangup, socket_done) {
         signal.notify_one();
         match tokio::time::timeout(std::time::Duration::from_secs(2), socket_fut).await {
             Ok(_) => log::info!("[call={call}] call ended, socket closed"),
@@ -2426,6 +2445,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // Nothing is queued if the caller has already hung up; the handover simply
     // expires. Better a wasted lookup than a caller left in silence because we
     // waited to be sure they were still there.
+    // Taken before `fault` is moved into the escalation. `Cause` is four
+    // variants, so its Debug form is a bounded label.
+    let fault_seen: Option<String> = fault.as_ref().map(|c| format!("{c:?}").to_lowercase());
+
     if let Some(cause) = fault {
         rustvani::vokoo::escalate(
             &cfg.supabase_url,
@@ -2476,6 +2499,38 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         )
         .await;
 
+    // The call is over: close the gauge and record how it went. `outcome` is a
+    // bounded set — the flow's four outcomes plus "none" for a call that never
+    // reached an agent — so it is safe as a label.
+    rustvani::vokoo::telemetry::gauge_add(
+        "sarvathra_calls_active",
+        &[("channel", arrival.channel)],
+        -1,
+    );
+    rustvani::vokoo::telemetry::observe_call_duration(t0.elapsed().as_secs_f64());
+    rustvani::vokoo::telemetry::count(
+        "sarvathra_calls_ended_total",
+        &[
+            ("channel", arrival.channel),
+            ("outcome", agent_outcome.as_deref().unwrap_or("none")),
+            ("mode", if relay_engine.is_some() {
+                "relay"
+            } else if realtime_mode {
+                "realtime"
+            } else if agent_mode {
+                "agent"
+            } else {
+                "echo"
+            }),
+        ],
+    );
+    if let Some(cause) = fault_seen.as_deref() {
+        rustvani::vokoo::telemetry::count(
+            "sarvathra_calls_failed_total",
+            &[("channel", arrival.channel), ("cause", cause)],
+        );
+    }
+
     let (media_in, other_in) = capture.as_ref().map(|c| c.counts()).unwrap_or((0, 0));
     log::info!(
         "[call={call}] CALL_SUMMARY {}",
@@ -2507,6 +2562,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // Before anything can panic. A task panic kills one call and nothing else
+    // — deliberately, since calls are independent — but that also makes it
+    // nearly silent, so it is counted rather than left to be found by reading
+    // the log for something else.
+    rustvani::vokoo::telemetry::install_panic_hook();
+
     let cfg = Arc::new(AgentConfig::from_env());
     let state = AppState {
         ws_url: std::env::var("WS_URL")
@@ -2523,6 +2584,19 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
+        // Prometheus. Unauthenticated on purpose: it carries counts and
+        // latencies, never a number, a name or a transcript — the labels are
+        // bounded sets like `channel` and `outcome`. Anything that would
+        // identify a caller belongs in the call record, which is behind RLS.
+        .route(
+            "/metrics",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+                    rustvani::vokoo::telemetry::render(),
+                )
+            }),
+        )
         .route("/engine/preflight", post(engine_preflight))
         .route("/flow/dryrun", post(flow_dry_run))
         .route("/catalogue/refresh", post(catalogue_refresh))

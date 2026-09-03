@@ -361,10 +361,15 @@ impl RealtimeProcessor {
                         if !replied {
                             replied = true;
                             if let Some(t0) = t_user_end {
+                                let seconds = t0.elapsed().as_secs_f64();
                                 log::info!(
-                                    "[realtime][turn={turn}] t1 first agent audio  >>> {:.3}s <<<",
-                                    t0.elapsed().as_secs_f64()
+                                    "[realtime][turn={turn}] t1 first agent audio  >>> {seconds:.3}s <<<"
                                 );
+                                // The number this product is judged on: how
+                                // long the caller waited after finishing their
+                                // sentence. It was already measured and then
+                                // spent on a log line nobody aggregates.
+                                crate::vokoo::telemetry::observe_turn_latency(seconds);
                             }
                         }
                         let bytes = match from_session.as_mut() {
