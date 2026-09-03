@@ -29,6 +29,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
+import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { api } from "@/utils/api-client";
 import { useSession } from "@/hooks/use-session";
@@ -66,6 +68,7 @@ export const OperatorScreen = () => {
     const [tenants, setTenants] = useState<Tenant[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [open, setOpen] = useState<string | null>(null);
+    const [adding, setAdding] = useState(false);
 
     const load = useCallback(() => {
         if (!context) return;
@@ -80,12 +83,17 @@ export const OperatorScreen = () => {
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6 lg:p-8">
-            <header>
-                <h1 className="text-display-xs font-semibold text-primary">Tenants</h1>
-                <p className="mt-1 text-sm text-tertiary">
-                    Every workspace on this platform. What they are sold, what they may reach, and
-                    how much they use — never what their callers said.
-                </p>
+            <header className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h1 className="text-display-xs font-semibold text-primary">Tenants</h1>
+                    <p className="mt-1 text-sm text-tertiary">
+                        Every workspace on this platform. What they are sold, what they may reach,
+                        and how much they use — never what their callers said.
+                    </p>
+                </div>
+                <Button size="sm" onClick={() => setAdding(true)}>
+                    New Workspace
+                </Button>
             </header>
 
             {error ? <p className="text-sm text-error-primary">{error}</p> : null}
@@ -202,6 +210,16 @@ export const OperatorScreen = () => {
                 />
             ) : null}
 
+            {adding ? (
+                <NewTenant
+                    onClose={() => setAdding(false)}
+                    onCreated={() => {
+                        setAdding(false);
+                        load();
+                    }}
+                />
+            ) : null}
+
             <p className="max-w-3xl border border-dashed border-secondary p-4 text-sm text-tertiary">
                 <strong className="text-primary">Suspension is stored and not enforced.</strong>{" "}
                 The bridge has to refuse a call for a suspended organisation, and does not yet —
@@ -210,6 +228,163 @@ export const OperatorScreen = () => {
                 engine composer and the agent editor, and it is the next piece.
             </p>
         </div>
+    );
+};
+
+/**
+ * Create a workspace, and invite whoever will own it.
+ *
+ * **The slug cannot be changed afterwards**, and not for tidiness: it becomes
+ * half of every agent's SIP endpoint name, and the database re-derives those on
+ * write — so renaming it would rename every endpoint Asterisk knows. Said here,
+ * at the only moment it can be chosen.
+ *
+ * The owner may have no account. That is the state migration 0078 exists for:
+ * the membership carries their address, the invitation is an email rather than
+ * a password handed over, and `claim_membership()` attaches them the first time
+ * they sign in.
+ */
+const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) => {
+    const { context } = useSession();
+    const [name, setName] = useState("");
+    const [slug, setSlug] = useState("");
+    const [email, setEmail] = useState("");
+    const [plan, setPlan] = useState("starter");
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [done, setDone] = useState<{ slug: string; sent: boolean; reason?: string } | null>(null);
+
+    // Suggested from the name, and editable — it is permanent, so it should not
+    // be decided silently by a slugifier the operator never saw.
+    const suggested = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 32);
+    const chosen = slug || suggested;
+    const slugOk = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(chosen);
+    const valid = name.trim().length > 0 && slugOk;
+
+    const submit = async () => {
+        if (!context || !valid) return;
+        setSaving(true);
+        setError(null);
+        try {
+            const { data } = await api.operatorCreateTenant<{
+                tenant: { slug: string };
+                invitation: { sent: boolean; reason?: string };
+            }>(
+                {
+                    name: name.trim(),
+                    slug: chosen,
+                    owner_email: email.trim() || undefined,
+                    plan,
+                },
+                context,
+            );
+            setDone({
+                slug: data?.tenant?.slug ?? chosen,
+                sent: Boolean(data?.invitation?.sent),
+                reason: data?.invitation?.reason,
+            });
+        } catch (problem) {
+            setError(problem instanceof Error ? problem.message : "Could not create it");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <ModalOverlay isOpen onOpenChange={(o) => !o && (done ? onCreated() : onClose())}>
+            <Modal className="max-w-lg">
+                <Dialog>
+                    <div className="flex w-full flex-col rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
+                        {done ? (
+                            <>
+                                <h2 className="text-lg font-semibold text-primary">
+                                    {name.trim()} exists
+                                </h2>
+                                <p className="mt-1 text-sm text-tertiary">
+                                    Its agents will register as{" "}
+                                    <span className="font-mono text-primary">{done.slug}-4001</span>{" "}
+                                    and so on.
+                                </p>
+                                <p className="mt-4 text-sm text-tertiary">
+                                    {done.sent
+                                        ? `An invitation is on its way to ${email.trim()}. Following it signs them in and attaches them as the owner.`
+                                        : `No invitation was sent — ${done.reason ?? "no address was given"}. The workspace exists either way; somebody can be invited from its own team screen later.`}
+                                </p>
+                                <div className="mt-6 flex justify-end">
+                                    <Button size="sm" onClick={onCreated}>
+                                        Done
+                                    </Button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <h2 className="text-lg font-semibold text-primary">New workspace</h2>
+                                <p className="mt-1 text-sm text-tertiary">
+                                    A customer of this platform.
+                                </p>
+                                <div className="mt-5 flex flex-col gap-4">
+                                    <Input
+                                        label="Name"
+                                        placeholder="Vayuveda Clinic"
+                                        value={name}
+                                        onChange={setName}
+                                        isRequired
+                                        autoFocus
+                                    />
+                                    <Input
+                                        label="Slug"
+                                        placeholder={suggested || "vayuveda-clinic"}
+                                        value={slug}
+                                        onChange={setSlug}
+                                        hint={
+                                            chosen && !slugOk
+                                                ? "Three to thirty-two characters: lowercase letters, digits and hyphens."
+                                                : `Permanent. It becomes half of every agent's SIP endpoint — ${chosen || "slug"}-4001 — and the database re-derives those on write, so it cannot be changed later.`
+                                        }
+                                        isInvalid={Boolean(chosen) && !slugOk}
+                                    />
+                                    <Input
+                                        label="Owner email"
+                                        placeholder="owner@clinic.in"
+                                        value={email}
+                                        onChange={setEmail}
+                                        hint="They are emailed a link that signs them in and makes them the owner. Optional — a workspace can be created now and claimed later."
+                                    />
+                                    <Select
+                                        label="Plan"
+                                        selectedKey={plan}
+                                        onSelectionChange={(key) => setPlan(String(key))}
+                                        items={PLANS}
+                                    >
+                                        {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                    </Select>
+                                </div>
+                                {error ? (
+                                    <p className="mt-4 text-sm text-error-primary">{error}</p>
+                                ) : null}
+                                <div className="mt-6 flex justify-end gap-3">
+                                    <Button size="sm" color="secondary" onClick={onClose}>
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        isDisabled={!valid}
+                                        isLoading={saving}
+                                        onClick={submit}
+                                    >
+                                        Create workspace
+                                    </Button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </Dialog>
+            </Modal>
+        </ModalOverlay>
     );
 };
 

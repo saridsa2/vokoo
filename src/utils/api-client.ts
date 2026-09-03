@@ -317,6 +317,23 @@ export const api = {
     operatorTenants: <T>(context: AccessContext) =>
         request<T[]>("/api/v1/operator/tenants", {}, asOperator(context)),
 
+    /**
+     * Create a workspace and invite whoever will own it.
+     *
+     * The invitation is reported beside the tenant rather than folded into
+     * success or failure: the workspace exists whether or not the mail server
+     * answered, and a caller needs to know which of the two happened.
+     */
+    operatorCreateTenant: <T>(
+        tenant: { name: string; slug: string; owner_email?: string; plan?: string },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            "/api/v1/operator/tenants",
+            { method: "POST", body: JSON.stringify(tenant) },
+            asOperator(context),
+        ),
+
     operatorSetTenant: (
         id: string,
         change: { plan?: string; status?: string },

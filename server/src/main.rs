@@ -2121,10 +2121,25 @@ async fn add_member(
         .ok_or_else(|| ApiError::upstream("the membership was not created"))?;
     let membership_id = person.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
 
+    // An address means they will sign in, so invite them. Reported beside the
+    // member rather than failing the request: they have been added whether or
+    // not the mail server answered, and a receptionist who never signs in is a
+    // legitimate member with no invitation at all.
+    let invited = match body.email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        None => json!({ "sent": false, "reason": "no address, so nothing to send" }),
+        Some(email) => match send_sign_in_link(email).await {
+            Ok(()) => json!({ "sent": true, "to": email }),
+            Err(problem) => {
+                warn!("member added but the invitation failed: {problem}");
+                json!({ "sent": false, "reason": problem })
+            }
+        },
+    };
+
     let Some(extension) = body.extension.as_deref().map(str::trim).filter(|e| !e.is_empty())
     else {
         return Ok((StatusCode::CREATED, Json(ApiResponse {
-            data: json!({ "person": person }),
+            data: json!({ "person": person, "invitation": invited }),
             meta: json!({ "resource": "members" }),
         })));
     };
@@ -2160,7 +2175,12 @@ async fn add_member(
     };
 
     Ok((StatusCode::CREATED, Json(ApiResponse {
-        data: json!({ "person": person, "extension": row, "sip_password": password }),
+        data: json!({
+            "person": person,
+            "extension": row,
+            "sip_password": password,
+            "invitation": invited,
+        }),
         meta: json!({ "resource": "members" }),
     })))
 }
@@ -2207,6 +2227,52 @@ async fn set_my_name(
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "me" }) }))
+}
+
+/// Send somebody a link that signs them in.
+///
+/// **Through GoTrue's own `/otp`, with the anon key.** Creating a user or
+/// sending an admin invite needs `service_role`, and this process deliberately
+/// holds none — a process with that key can read every table in every
+/// organisation. `/otp` is a public endpoint by design: it takes an address and
+/// emails a single-use link, and it is the same mechanism a person uses to sign
+/// themselves in.
+///
+/// Which is why the invitation *is* the email rather than a password handed
+/// over. The membership already exists carrying their address, so
+/// `claim_membership()` attaches them the moment they follow it.
+///
+/// Failure is reported and never fatal to the caller. Somebody who has been
+/// added to a workspace has been added whether or not the mail server was
+/// reachable at that second, and rolling back a person because an email bounced
+/// would be the wrong half to undo.
+async fn send_sign_in_link(email: &str) -> Result<(), String> {
+    let (base, anon) = (
+        std::env::var("SUPABASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".into()),
+        std::env::var("SUPABASE_ANON_KEY").unwrap_or_default(),
+    );
+    if anon.is_empty() {
+        return Err("SUPABASE_ANON_KEY is not set, so no invitation can be sent".into());
+    }
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/auth/v1/otp", base.trim_end_matches('/')))
+        .header("apikey", &anon)
+        .header("Content-Type", "application/json")
+        // `create_user` is true: the whole point is somebody who has no account.
+        .json(&json!({ "email": email, "create_user": true }))
+        .send()
+        .await
+        .map_err(|error| format!("could not reach the mail path: {error}"))?;
+
+    if response.status().is_success() {
+        return Ok(());
+    }
+    Err(format!(
+        "the invitation was refused: {} {}",
+        response.status(),
+        response.text().await.unwrap_or_default()
+    ))
 }
 
 /* ---------------------------------------------------------------- operator */
@@ -2325,6 +2391,60 @@ async fn operator_set_entitlement(
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
     Ok(Json(ApiResponse { data: json!({ "ok": true }), meta: json!({ "resource": "entitlements" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct NewTenantBody {
+    name: String,
+    slug: String,
+    owner_email: Option<String>,
+    plan: Option<String>,
+}
+
+/// Create a workspace, and invite whoever will own it.
+///
+/// Two things that must not be one: the workspace exists whether or not the
+/// email lands, so a mail failure is reported beside the created tenant rather
+/// than failing the request. Rolling back a workspace because an invitation
+/// bounced would undo the half that worked.
+async fn operator_create_tenant(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<NewTenantBody>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let created = client
+        .database()
+        .rpc(
+            "operator_create_tenant",
+            Some(json!({
+                "p_name": body.name,
+                "p_slug": body.slug,
+                "p_owner_email": body.owner_email,
+                "p_plan": body.plan,
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+
+    let invited = match body.owner_email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        None => json!({ "sent": false, "reason": "no owner address was given" }),
+        Some(email) => match send_sign_in_link(email).await {
+            Ok(()) => json!({ "sent": true, "to": email }),
+            Err(problem) => {
+                warn!("tenant created but the invitation failed: {problem}");
+                json!({ "sent": false, "reason": problem })
+            }
+        },
+    };
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ApiResponse {
+            data: json!({ "tenant": created, "invitation": invited }),
+            meta: json!({ "resource": "tenants" }),
+        }),
+    ))
 }
 
 async fn preflight_engine(
@@ -2775,7 +2895,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/operator/me", get(operator_me))
-        .route("/api/v1/operator/tenants", get(operator_tenants))
+        .route("/api/v1/operator/tenants", get(operator_tenants).post(operator_create_tenant))
         .route("/api/v1/operator/tenants/{id}", post(operator_set_tenant))
         .route(
             "/api/v1/operator/tenants/{id}/entitlements",
