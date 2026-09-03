@@ -389,6 +389,108 @@ pre-flight builds what a call builds.
 - **It has never answered a real call.** Everything above is tested, pre-flighted
   and unexercised by a caller.
 
+## The dashboard is the present tense, and it is pushed
+
+`/dashboard` is the landing route. Four numbers, what is on the line, and who
+can take a call.
+
+**No charts, no graphs, no history.** Not a styling preference — it is what the
+screen is for. A chart answers "what has been happening", and this screen
+answers "what is happening", which is a different question with a different
+half-life. The day's counters are there because they were asked for; a
+sparkline, a trend line, a seven-day anything, or a chart library is not to be
+added. Where history belongs is Observe.
+
+**Server-Sent Events end to end. Nothing polls.**
+
+```
+console  ←  /api/v1/dashboard/stream   gated on the org, adds the day's counts
+         ←  /events/live               bridge, x-vokoo-internal
+         ←  ARI + the bridge's own registries
+```
+
+Every registry announces rather than waiting to be asked: a call starting, being
+attributed, gaining a human or ending, and Asterisk saying an endpoint moved.
+The day's figures are recomputed when a bridge frame arrives, which is exactly
+when they can have changed — a call ending is the same event that moves both
+numbers, so one push carries both.
+
+A frame is a whole snapshot, never a delta: a reconnecting browser has not seen
+the previous ones, and a snapshot cannot be applied to the wrong state.
+`broadcast` rather than `watch`, so a lagging subscriber is told to re-read.
+
+**`EventSource` cannot send headers**, and every route here needs
+`authorization` and `x-org-id`. The alternative was the access token in a query
+string, which is where a bearer token must never be — it is written into every
+proxy log between the browser and the server and stays there. `use-event-stream.ts`
+reads the stream with `fetch` and does the four lines of framing itself.
+
+One thing ticks locally: a live call's timer, from a clock in the browser rather
+than a request. Measured from when the frame landed rather than from an absolute
+start time, so a browser whose clock disagrees still counts the right seconds.
+
+### The plausible wrong source, measured before building on it
+
+`calls where ended_at is null` reads like "live now" and is not. The table has
+three rows still marked `in-progress` from calls that died on 2 September and on
+the morning of the 3rd, so that query counts every crash this line has ever had —
+and the number only grows.
+
+| Fact | Read from | Not from |
+|---|---|---|
+| calls up right now | `live::LiveCalls`, registered in `handle_call` | `calls`, per above |
+| a person is on this call | the same registry, set at the escalation | — |
+| agent online / offline | `GET /ari/endpoints` | `agent_extensions.status`, which is employment |
+| answered today | `calls`, counted in the control plane | the bridge, which keeps no history |
+
+`LiveCalls` sits in `handle_call` because that is the one place **every** call
+passes through on either wire. `stasis::Switchboard` holds only what Asterisk is
+bridging, so a KooKoo call on the direct WebSocket is invisible there. Entries
+are held by a `Drop` guard, so an early return, a `?` and a panic all remove the
+call without any of them having to remember.
+
+Presence is refreshed when Asterisk says something moved, never on a clock —
+`PeerStatusChange`, `ContactStatusChange` and `EndpointStateChange` all become
+one `AriEvent::EndpointChanged`, which is a prompt to re-read rather than a
+payload to interpret. Asterisk emits more than one of them per registration, so
+`Presence::replace` announces only when something actually differs.
+
+### Two facts that look like one
+
+**Every live call has an AI on it, including the escalated ones** — the AI stays
+in the bridge muted, taking notes. So "with a person" is a subset of "live", not
+a column beside it, and the labels say so.
+
+**An agent's `status` is not their availability.** Active/suspended is
+employment; online/offline is a SIP registration living in Asterisk's memory.
+A suspended agent whose registration has not expired is genuinely still
+reachable for a few minutes, so the roster shows both rather than picking one.
+
+### `resource.select` applied to the list and nothing else
+
+`agent-extensions` leaves `sip_password` out of its column list because SIP
+digest auth needs the plaintext and it cannot be hashed. Only the list route
+honoured that — `get_resource` selected `*` and create and update returned `*`,
+so the password came back on every detail load. All four use the resource's own
+list now. Every other resource selects `*`, so nothing else changed. Verified
+against the live instance: the detail response carries nine columns and not that
+one.
+
+### Team is two screens, not one
+
+`Manage → Team` provisions — add, suspend, rotate — and `/team/{id}` is where the
+last two live. The roster with presence is on the dashboard, because who is on
+duty is a fact about the line rather than about the roster.
+
+**"Today" is the viewer's browser timezone**, labelled on screen. UTC would reset
+the day at half past five in the morning for an Indian clinic, and there is no
+`organizations.timezone` to consult — worth adding the day two people in
+different places need to agree on the number.
+
+**Unverified: the push half in a browser.** Nine tests cover the registries, ARI
+was read against the real switch, and the first frame arrives on connect. Nobody
+has yet watched a row flip from off duty to on duty without a refresh.
+
 ## The console shows what exists
 
 Nine navigation items across two sections became two, on the same test the
