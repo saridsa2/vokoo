@@ -1770,6 +1770,134 @@ fn month(m: u32) -> &'static str {
         [(m as usize).saturating_sub(1).min(11)]
 }
 
+/// Put a supervisor on a live call: listen, whisper, or barge.
+///
+/// **This half decides whether; the bridge decides how.** Listening to a
+/// colleague's live call is surveillance, so three things happen here that the
+/// bridge cannot do — it is behind a shared secret and would monitor anything
+/// asked of it.
+///
+/// 1. **The caller's role.** Only an owner or an admin of the organisation.
+/// 2. **The supervisor's own extension**, looked up from their auth user rather
+///    than taken from the request. Accepting an endpoint from the browser would
+///    let anyone ring anyone: the request would name the person to connect, and
+///    the only thing stopping it would be that the console does not offer it.
+/// 3. **A record.** Who listened to which call and when, in `call_events`,
+///    written before the request is forwarded — a monitoring session that
+///    happened and was not recorded is worse than one that was refused.
+#[derive(serde::Deserialize)]
+struct MonitorBody {
+    /// `listen`, `whisper` or `barge`.
+    mode: String,
+    /// What to say, when whispering to an AI agent.
+    note: Option<String>,
+}
+
+async fn monitor_call(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MonitorBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    if !matches!(body.mode.as_str(), "listen" | "whisper" | "barge") {
+        return Err(ApiError::BadRequest(format!("unknown mode '{}'", body.mode)));
+    }
+
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let user = client
+        .current_user()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::unauthorized("no current user"))?;
+    let user_id = user.id.to_string();
+
+    // 1. Role. RLS would let any member read the call; monitoring one live is a
+    // different act, and the table cannot express that.
+    let role = client
+        .database()
+        .from("memberships")
+        .select("role")
+        .eq("user_id", &user_id)
+        .eq("org_id", &organization)
+        .single_execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?
+        .and_then(|row| row.get("role").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_default();
+    if !matches!(role.as_str(), "owner" | "admin") {
+        return Err(ApiError::Forbidden(
+            "listening to a live call is limited to owners and admins".into(),
+        ));
+    }
+
+    // 2. Their own extension. Never one named by the request.
+    let endpoint = client
+        .database()
+        .from("agent_extensions")
+        .select("endpoint")
+        .eq("user_id", &user_id)
+        .eq("org_id", &organization)
+        .eq("status", "active")
+        .single_execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?
+        .and_then(|row| row.get("endpoint").and_then(Value::as_str).map(str::to_owned));
+
+    // Whispering to an AI is text and rings nobody, so it is the one mode that
+    // works without the supervisor having an extension of their own.
+    if endpoint.is_none() && !(body.mode == "whisper" && body.note.is_some()) {
+        return Err(ApiError::BadRequest(
+            "you need an extension of your own to hear a call — add yourself under Manage → Team"
+                .into(),
+        ));
+    }
+
+    // 3. The record, before the act. A monitoring session that happened and was
+    // not written down is worse than one that was refused.
+    // Written against the table's real columns, not invented ones: `call_events`
+    // has no `kind`, and a row that fails to insert is an audit trail that does
+    // not exist. `sequence` is not null and has no default — a monitoring event
+    // has no place in the flow's own numbering, so it is 0 and the trigger event
+    // says what it actually is.
+    if let Ok(insert) = client.database().insert("call_events").values(json!({
+        "call_id":       id,
+        "org_id":        organization,
+        "sequence":      0,
+        "trigger_event": "supervisor",
+        "node_name":     body.mode,
+        "implementation": "monitor",
+        "outcome":       body.mode,
+        "detail":   {
+            "by":       user_id,
+            "endpoint": endpoint,
+            // The words themselves. What was whispered to an agent is exactly
+            // what an audit of a whisper is for.
+            "note":     body.note,
+        },
+    })) {
+        // A failed write is logged, not fatal. Refusing to connect a supervisor
+        // because an audit row would not insert turns a record-keeping problem
+        // into a call nobody could listen to; the warning is what gets chased.
+        if let Err(error) = insert.returning("id").execute::<Value>().await {
+            warn!("monitor on {id} was not recorded: {error}");
+        }
+    }
+
+    call_bridge(
+        &state,
+        &headers,
+        "/call/monitor",
+        json!({
+            "call_id":  id,
+            "mode":     body.mode,
+            "endpoint": endpoint,
+            "note":     body.note,
+        }),
+    )
+    .await
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2213,6 +2341,7 @@ fn app(state: AppState) -> Router {
         // The landing screen's live feed. A GET that never returns, on purpose.
         .route("/api/v1/dashboard/stream", get(dashboard_stream))
         .route("/api/v1/dashboard/history", get(dashboard_history))
+        .route("/api/v1/calls/{id}/monitor", post(monitor_call))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))

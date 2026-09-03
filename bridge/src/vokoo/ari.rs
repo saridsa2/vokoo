@@ -187,6 +187,48 @@ impl Ari {
             .collect())
     }
 
+    /// Listen to a live channel, and optionally speak into it.
+    ///
+    /// The mechanism behind supervisor monitoring. A snoop channel is a real
+    /// channel carrying a copy of another one's audio, so it can be bridged to
+    /// a supervisor exactly like any other leg — which means listen, whisper
+    /// and barge are three configurations of machinery that already exists here
+    /// rather than three features.
+    ///
+    /// `spy` is what the supervisor hears: `both` is the whole conversation.
+    /// `whisper` is where the supervisor's own audio goes — `none` for silent
+    /// monitoring, and a direction on the *agent's* channel to coach them
+    /// without the caller hearing.
+    ///
+    /// **Snooping is surveillance.** Nothing here decides whether it is
+    /// allowed; that belongs to the control plane, which knows who is asking.
+    pub async fn snoop(
+        &self,
+        channel: &str,
+        spy: &str,
+        whisper: &str,
+        app: &str,
+        args: &str,
+    ) -> Result<String, String> {
+        let response = self
+            .http
+            .post(self.url(&format!("channels/{channel}/snoop")))
+            .basic_auth(&self.user, Some(&self.password))
+            .query(&[("spy", spy), ("whisper", whisper), ("app", app), ("appArgs", args)])
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!("snoop {channel} answered {status}: {body}"));
+        }
+        serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_owned))
+            .ok_or_else(|| format!("snoop returned no channel id: {body}"))
+    }
+
     /// Originate an AudioSocket channel that connects back to us and enters a
     /// Stasis application.
     ///

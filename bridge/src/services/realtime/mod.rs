@@ -581,6 +581,37 @@ impl RealtimeControls {
 }
 
 impl RealtimeControls {
+    /// Put a word in the agent's ear.
+    ///
+    /// The AI half of "whisper". A supervisor coaching a person speaks to them
+    /// and the caller does not hear it; there is no equivalent for a model,
+    /// because audio pushed into its input is transcribed as though the *caller*
+    /// said it — the model would answer it out loud, to the caller, which is the
+    /// opposite of a whisper.
+    ///
+    /// Text is the equivalent. Both providers accept a text turn mid-session
+    /// (`send_text` is on the trait), the caller hears nothing, and the model
+    /// steers on its next turn.
+    ///
+    /// Framed as an instruction from a supervisor rather than passed through
+    /// bare: an unattributed sentence in the transcript is indistinguishable
+    /// from something the caller said, and the model would answer it as though
+    /// it had been asked a question.
+    ///
+    /// Refused while listening: the session is closed on a hand-over, so there
+    /// is nothing to steer, and a caller now speaking to a person is not
+    /// somebody a note to the model can help.
+    pub async fn steer(&self, note: &str) -> Result<(), String> {
+        if self.listening.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("the agent is listening only — there is no session to steer".into());
+        }
+        let framed = format!(
+            "[Supervisor guidance, not spoken by the caller. Do not read this aloud or refer to \
+             it. Follow it from your next reply onwards.] {note}"
+        );
+        self.session.lock().await.send_text(&framed).await
+    }
+
     /// Stop talking; send caller audio to `tap` instead.
     ///
     /// The conversational session is closed rather than left idle: it is billed

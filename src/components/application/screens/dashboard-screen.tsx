@@ -164,6 +164,12 @@ export const DashboardScreen = () => {
                 />
             </section>
 
+            {/* The live half, together. Reporting is below because it
+                answers a different question over a different span, and
+                putting a fortnight's chart between two live panels made
+                the roster look like part of the history. */}
+            <div className="grid grid-cols-1 gap-8 xl:grid-cols-3">
+                <div className="xl:col-span-2">
             <section className="flex flex-col gap-3">
                 <h2 className="text-lg font-semibold text-primary">Active Calls</h2>
                 {calls.length === 0 ? (
@@ -224,12 +230,8 @@ export const DashboardScreen = () => {
                     </div>
                 )}
             </section>
-
-            <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold text-primary">Reporting</h2>
-                <DashboardCharts history={history} />
-            </section>
-
+                </div>
+                <div>
             <section className="flex flex-col gap-3">
                 <div className="flex items-baseline justify-between gap-3">
                     <h2 className="text-lg font-semibold text-primary">Agents</h2>
@@ -267,6 +269,14 @@ export const DashboardScreen = () => {
                     </ul>
                 )}
             </section>
+                </div>
+            </div>
+
+            <section className="flex flex-col gap-3">
+                <h2 className="text-lg font-semibold text-primary">Reporting</h2>
+                <DashboardCharts history={history} />
+            </section>
+
         </div>
     );
 };

@@ -44,7 +44,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
 /// One call, as it looks while it is happening.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveCall {
     /// Whose call this is. `None` when the number resolved no flow, which means
     /// nobody can be told about it — a call we cannot attribute is not shown to
@@ -62,6 +62,17 @@ pub struct LiveCall {
     /// True once a person has been conferenced in. The AI stays on the line
     /// muted, so this is "a human is on this call", not "the AI has left".
     pub human: bool,
+    /// A way into the live model session, for a supervisor's whisper.
+    ///
+    /// Whispering to a person is audio; whispering to a model is text, because
+    /// audio pushed at it is transcribed as though the caller said it. So the
+    /// AI half of "whisper" needs the *session*, not a channel — and the
+    /// session lives inside a pipeline this registry is the only thing holding
+    /// a handle to from outside.
+    ///
+    /// `None` on a relay: a cascading engine has no single session to steer,
+    /// and the monitor route says so rather than silently doing nothing.
+    pub steer: Option<Arc<crate::services::realtime::RealtimeControls>>,
     started: Instant,
 }
 
@@ -151,6 +162,41 @@ impl LiveCalls {
             }
         }
         self.announce();
+    }
+
+    /// Hand the registry a way into this call's model session.
+    ///
+    /// Set once the pipeline is built, which is after the call is registered —
+    /// the call goes on the books before anything can go wrong with it, and by
+    /// then there is no session yet.
+    pub fn set_steering(
+        &self,
+        id: &str,
+        controls: Arc<crate::services::realtime::RealtimeControls>,
+    ) {
+        if let Ok(mut map) = self.inner.lock() {
+            if let Some(call) = map.get_mut(id) {
+                call.steer = Some(controls);
+            }
+        }
+        // Deliberately no announcement: nothing on a dashboard changes, and a
+        // frame per call for an invisible field is a frame for nothing.
+    }
+
+    /// The way into one call's model session, if it has one.
+    pub fn steering(
+        &self,
+        id: &str,
+    ) -> Option<Arc<crate::services::realtime::RealtimeControls>> {
+        self.inner.lock().ok()?.get(id)?.steer.clone()
+    }
+
+    /// Whether a person is on this call.
+    ///
+    /// What decides whether a whisper is audio or text: a supervisor coaching a
+    /// colleague speaks to them, and a supervisor coaching a model writes to it.
+    pub fn has_human(&self, id: &str) -> bool {
+        self.inner.lock().ok().and_then(|m| m.get(id).map(|c| c.human)).unwrap_or(false)
     }
 
     /// A person has joined this call.
@@ -284,6 +330,7 @@ pub fn arriving(did: &str, caller: &str, channel: &'static str) -> LiveCall {
         channel,
         agent: None,
         human: false,
+        steer: None,
         started: Instant::now(),
     }
 }

@@ -182,6 +182,95 @@ impl Switchboard {
         log::info!("[stasis] {uuid} — escalated to {endpoint} on {human}");
         Ok(human)
     }
+
+    /// Put a supervisor on a live call, one of three ways.
+    ///
+    /// **All three are one mechanism configured differently**, which is the
+    /// point: a snoop channel is a real channel carrying a copy of another
+    /// one's audio, so it bridges to a supervisor exactly like the AI leg or a
+    /// person's leg does. Nothing new holds a call open, and nothing new can
+    /// leak one.
+    ///
+    /// | | what happens |
+    /// |---|---|
+    /// | `Listen` | snoop the caller, `spy=both`. The supervisor hears everything and is heard by nobody. |
+    /// | `Whisper` | snoop the **agent's** leg with a whisper direction, so the supervisor's audio reaches the agent and not the caller. |
+    /// | `Barge` | no snoop at all — the supervisor joins the call's own mixing bridge and everybody hears them. |
+    ///
+    /// Barge is nearly free because the bridge already exists: it is the same
+    /// `add_to_bridge` an escalation uses, called by a person rather than by
+    /// the model deciding it wants one.
+    ///
+    /// **This only rings them.** The bridging happens when they answer, in the
+    /// `supervisor` arm of `on_start` — the same shape `escalate` uses, and for
+    /// the same reason: `originate` returns as soon as the channel exists, and
+    /// a snoop created against a supervisor who is still deciding whether to
+    /// pick up is a channel nothing will read until the call ends.
+    ///
+    /// The mode travels in `appArgs` rather than in a registry here. It is
+    /// three characters that are already being passed, and a second map keyed
+    /// by uuid would be a thing to leak.
+    ///
+    /// **Whispering to an AI does not come through here.** Audio pushed at a
+    /// model is transcribed as though the caller said it, so the equivalent is
+    /// text into its session — `RealtimeControls::steer`. The caller refuses it
+    /// before reaching this, rather than opening a snoop that would make the AI
+    /// answer the supervisor out loud.
+    ///
+    /// Nothing here decides whether the supervisor is *allowed* to listen. That
+    /// is the control plane's job, because it is the half that knows who is
+    /// asking; this half only knows how.
+    pub async fn monitor(
+        &self,
+        ari: &Ari,
+        uuid: &str,
+        mode: Monitor,
+        endpoint: &str,
+        caller_id: Option<&str>,
+    ) -> Result<String, String> {
+        // Existence check only, exactly as `escalate` does — the call's bridge
+        // is not touched until somebody has answered.
+        self.get(uuid).await.ok_or("no such call")?;
+
+        let args = format!("supervisor,{uuid},{}", mode.as_str());
+        let supervisor = ari
+            .originate_endpoint(endpoint, APP, &args, caller_id)
+            .await
+            .map_err(|e| format!("no supervisor leg: {e}"))?;
+
+        log::info!("[stasis] {uuid} — {mode:?} requested by {endpoint}, ringing {supervisor}");
+        Ok(supervisor)
+    }
+}
+
+/// What a supervisor is doing on somebody else's call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Monitor {
+    /// Hear the call. Nobody hears the supervisor.
+    Listen,
+    /// Coach the agent. The caller does not hear the supervisor.
+    Whisper,
+    /// Join the call. Everybody hears the supervisor.
+    Barge,
+}
+
+impl Monitor {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "listen" => Some(Self::Listen),
+            "whisper" => Some(Self::Whisper),
+            "barge" => Some(Self::Barge),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Listen => "listen",
+            Self::Whisper => "whisper",
+            Self::Barge => "barge",
+        }
+    }
 }
 
 /// Run the application until the event stream drops, then say so.
@@ -358,6 +447,75 @@ async fn on_start(
                 return;
             }
             log::info!("[stasis] {uuid} — agent {channel} in the bridge, {} call(s) up", board.len().await);
+        }
+
+        // A supervisor who picked up. Everything happens now rather than at
+        // originate: until they answer there is nobody for a snoop to feed.
+        //
+        // Deliberately *not* recorded in `by_channel`. A supervisor hanging up
+        // must be nothing to the call — registering them would make their
+        // `StasisEnd` look like a leg of the conversation leaving, which is how
+        // `on_end` decides to hang up the caller.
+        "supervisor" => {
+            let (Some(uuid), Some(mode)) =
+                (args.get(1), args.get(2).map(String::as_str).and_then(Monitor::parse))
+            else {
+                log::warn!("[stasis] supervisor {channel} carries no call or mode");
+                ari.hangup(channel).await;
+                return;
+            };
+            let Some(call) = board.get(uuid).await else {
+                log::info!("[stasis] {uuid} — call ended before the supervisor answered");
+                ari.hangup(channel).await;
+                return;
+            };
+
+            let joined = match mode {
+                // Into the conversation itself. Everybody hears them.
+                Monitor::Barge => ari.add_to_bridge(&call.bridge, &[channel]).await,
+                Monitor::Listen | Monitor::Whisper => {
+                    // Whisper coaches whoever is answering, so it snoops that
+                    // leg; listening is about the conversation, so it snoops
+                    // the caller's, which carries both sides of the bridge.
+                    let (target, whisper) = match mode {
+                        Monitor::Whisper => (
+                            call.human
+                                .as_deref()
+                                .or(call.agent.as_deref())
+                                .unwrap_or(call.caller.as_str()),
+                            "out",
+                        ),
+                        _ => (call.caller.as_str(), "none"),
+                    };
+                    match ari.snoop(target, "both", whisper, APP, &format!("snoop,{uuid}")).await {
+                        // A bridge of their own, not the call's: a copy put
+                        // back into the conversation it is a copy of would
+                        // feed the call its own audio.
+                        Ok(snoop) => match ari.create_bridge().await {
+                            Ok(room) => ari.add_to_bridge(&room, &[&snoop, channel]).await,
+                            Err(e) => Err(e),
+                        },
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+
+            match joined {
+                Ok(()) => log::info!("[stasis] {uuid} — supervisor {channel} is {mode:?}ing"),
+                Err(e) => {
+                    // They answered to silence otherwise, and would never learn
+                    // why. The call itself is untouched.
+                    log::error!("[stasis] {uuid} — supervisor {channel} could not join: {e}");
+                    ari.hangup(channel).await;
+                }
+            }
+        }
+
+        // The copy. It is bridged by the supervisor arm that created it, so
+        // there is nothing to do here — but it must not fall through to the
+        // catch-all, which hangs up.
+        "snoop" => {
+            log::debug!("[stasis] snoop channel {channel} entered");
         }
 
         other => {

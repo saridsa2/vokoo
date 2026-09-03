@@ -872,6 +872,99 @@ async fn operations(state: &AppState, org_id: &str) -> serde_json::Value {
     })
 }
 
+/// Put a supervisor on a live call: listen, whisper, or barge.
+///
+/// One route for three things because they are one mechanism configured three
+/// ways — a snoop channel is a real channel, so it bridges to a supervisor
+/// exactly as the AI's leg or a person's leg does. See `stasis::monitor`.
+///
+/// **Whisper splits on who is answering.** To a person it is audio into their
+/// leg only. To a model it cannot be audio at all: anything pushed at its input
+/// is transcribed as though the caller said it, and the model would answer the
+/// supervisor out loud. So the AI half is text into the live session, which is
+/// reachable because `LiveCalls` holds the handle.
+///
+/// This route knows how, not whether. Whether a supervisor may listen to a
+/// colleague's call is the control plane's question, because it is the half
+/// that knows who is asking — this one is behind the internal token and would
+/// happily monitor anything.
+#[derive(serde::Deserialize)]
+struct MonitorRequest {
+    /// The call, by the id the dashboard shows.
+    call_id: String,
+    /// `listen`, `whisper` or `barge`.
+    mode: String,
+    /// The supervisor's own PJSIP endpoint. They hear the call on the softphone
+    /// they are already registered with; putting audio in the browser would
+    /// need a second SIP stack for a problem the desktop app has solved.
+    endpoint: Option<String>,
+    /// What to say, when whispering to a model. Ignored otherwise.
+    note: Option<String>,
+}
+
+async fn call_monitor(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<MonitorRequest>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
+    }
+
+    let Some(mode) = rustvani::vokoo::stasis::Monitor::parse(&request.mode) else {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "unknown mode" })));
+    };
+
+    // Whispering to the AI is text, and needs no channel at all.
+    let ai_answering = !state.live.has_human(&request.call_id);
+    if mode == rustvani::vokoo::stasis::Monitor::Whisper && ai_answering {
+        let Some(note) = request.note.filter(|n| !n.trim().is_empty()) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "whispering to an agent needs something to say" })),
+            );
+        };
+        let Some(controls) = state.live.steering(&request.call_id) else {
+            return (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": false,
+                    // Said rather than swallowed: a relay has no single session
+                    // to steer, and a button that quietly does nothing is worse
+                    // than one that says why.
+                    "error": "this call has no model session to steer",
+                })),
+            );
+        };
+        return match controls.steer(&note).await {
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true, "delivered": "text" }))),
+            Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+        };
+    }
+
+    let (Some(ari), Some(endpoint)) =
+        (state.ari.as_ref(), request.endpoint.filter(|e| !e.is_empty()))
+    else {
+        return (
+            StatusCode::OK,
+            Json(json!({ "ok": false, "error": "no supervisor endpoint to ring" })),
+        );
+    };
+
+    match state
+        .switchboard
+        .monitor(ari, &request.call_id, mode, &endpoint, Some("Monitor"))
+        .await
+    {
+        Ok(channel) => (StatusCode::OK, Json(json!({ "ok": true, "channel": channel }))),
+        Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+    }
+}
+
 async fn engine_preflight(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -2551,6 +2644,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         };
         // Taken before the pipeline consumes the processor: the flow decides
         // when the agent stops talking, and the flow does not own the pipeline.
+        let controls = std::sync::Arc::new(rt.controls());
+        // The registry is the only handle to a live session from outside the
+        // pipeline, which is what makes a supervisor's whisper reachable: for
+        // an AI, whisper is text into this session rather than audio into a
+        // channel.
+        state.live.set_steering(&arrival.id, controls.clone());
         realtime_controls = Some(rt.controls());
         let realtime = rt.into_processor();
         let task = PipelineTask::new(
@@ -3133,6 +3232,7 @@ async fn main() {
             }),
         )
         .route("/events/live", get(live_events))
+        .route("/call/monitor", post(call_monitor))
         .route("/engine/preflight", post(engine_preflight))
         .route("/flow/dryrun", post(flow_dry_run))
         .route("/catalogue/refresh", post(catalogue_refresh))
