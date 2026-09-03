@@ -1,6 +1,12 @@
 "use client";
 
+import { useState } from "react";
+
 import { Avatar } from "@/components/base/avatar/avatar";
+import { Button } from "@/components/base/buttons/button";
+import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { Input } from "@/components/base/input/input";
+import { api } from "@/utils/api-client";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { LogOut01 } from "@/components/icons";
 import { Tooltip } from "@/components/base/tooltip/tooltip";
@@ -13,7 +19,8 @@ import { useSession } from "@/hooks/use-session";
  * ("Caitlyn King") and offers no way to sign out.
  */
 export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
-    const { session, signOut, organizations, switchOrganization } = useSession();
+    const { session, signOut, organizations, switchOrganization, context } = useSession();
+    const [naming, setNaming] = useState(false);
 
     if (!session) return null;
 
@@ -84,17 +91,108 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
             <div className="flex items-center gap-3 rounded-xl p-3 ring-1 ring-secondary">
                 <Avatar size="md" initials={initials} alt={session.email} />
 
-                <div className="min-w-0 flex-1">
+                {/* The name is the button. Editing your own name is not worth
+                    a settings screen, and it is the one thing on this card
+                    somebody would think to click. */}
+                <button
+                    type="button"
+                    onClick={() => setNaming(true)}
+                    className="min-w-0 flex-1 text-left"
+                    title="Change your name"
+                >
                     <p className="truncate text-sm font-semibold text-primary capitalize">{displayName}</p>
                     {/* The email, always. This card answers "who am I signed
                         in as", and replacing that with the workspace name —
                         which the line above it already carries — took away the
                         one thing it existed to say. */}
                     <p className="truncate text-xs text-tertiary">{session.email}</p>
-                </div>
+                </button>
 
                 <ButtonUtility size="xs" color="tertiary" tooltip="Sign out" icon={LogOut01} onClick={signOut} />
             </div>
+
+            {naming ? (
+                <NameYourself
+                    current={here?.member_name ?? ""}
+                    workspace={here?.name ?? ""}
+                    context={context}
+                    onClose={() => setNaming(false)}
+                />
+            ) : null}
         </div>
     );
 }
+
+/**
+ * Change your own name.
+ *
+ * Per workspace, and the dialog says so: `display_name` lives on the membership
+ * rather than the account, because the same person can be "Priya" in one
+ * organisation and "Dr Nair" in another. Naming the workspace here is what
+ * stops that being a surprise the second time somebody joins one.
+ */
+const NameYourself = ({
+    current,
+    workspace,
+    context,
+    onClose,
+}: {
+    current: string;
+    workspace: string;
+    context: { accessToken: string; organizationId: string } | null;
+    onClose: () => void;
+}) => {
+    const [name, setName] = useState(current);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const save = async () => {
+        if (!context) return;
+        setSaving(true);
+        setError(null);
+        try {
+            await api.setMyName(name.trim(), context);
+            // The name is read at sign-in and on restore, so a reload is what
+            // makes it appear everywhere it is shown rather than only here.
+            window.location.reload();
+        } catch (problem) {
+            setError(problem instanceof Error ? problem.message : "Could not save that");
+            setSaving(false);
+        }
+    };
+
+    return (
+        <ModalOverlay isOpen onOpenChange={(open) => !open && onClose()}>
+            <Modal className="max-w-md">
+                <Dialog>
+                    <div className="flex w-full flex-col rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
+                        <h2 className="text-lg font-semibold text-primary">Your name</h2>
+                        <p className="mt-1 text-sm text-tertiary">
+                            What colleagues see in {workspace || "this workspace"} — on the team
+                            list, and beside any call you take.
+                        </p>
+                        <div className="mt-5">
+                            <Input
+                                aria-label="Your name"
+                                value={name}
+                                onChange={setName}
+                                autoFocus
+                                placeholder="Priya Nair"
+                                hint="Left empty, the console falls back to your email address."
+                            />
+                        </div>
+                        {error ? <p className="mt-4 text-sm text-error-primary">{error}</p> : null}
+                        <div className="mt-6 flex justify-end gap-3">
+                            <Button size="sm" color="secondary" onClick={onClose}>
+                                Cancel
+                            </Button>
+                            <Button size="sm" isLoading={saving} onClick={save}>
+                                Save
+                            </Button>
+                        </div>
+                    </div>
+                </Dialog>
+            </Modal>
+        </ModalOverlay>
+    );
+};

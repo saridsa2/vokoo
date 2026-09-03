@@ -277,6 +277,14 @@ export const api = {
     myOrganizations: <T>(accessToken: string) =>
         request<T[]>("/api/v1/me/organizations", {}, { accessToken, organizationId: "" }),
 
+    /** Set your own name in this workspace. Empty clears it. */
+    setMyName: (name: string, context: AccessContext) =>
+        request<string>(
+            "/api/v1/me/profile",
+            { method: "POST", body: JSON.stringify({ name }) },
+            context,
+        ),
+
     members: <T>(context: AccessContext) => request<T[]>("/api/v1/settings/members", {}, context),
 
     /**

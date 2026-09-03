@@ -2164,6 +2164,37 @@ fn sip_password() -> String {
     (0..24).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
 }
 
+/// Set your own name in this workspace.
+///
+/// Through `set_my_display_name` rather than a PATCH on `memberships`: that
+/// table is admin-writable, and the tempting fix — an RLS policy letting a
+/// member update their own row — cannot work, because **a policy cannot
+/// restrict a column**. It would let anybody set their own role to `owner`
+/// through a name field. The function writes one column, and the column list is
+/// the constraint.
+#[derive(serde::Deserialize)]
+struct ProfileBody {
+    name: String,
+}
+
+async fn set_my_name(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ProfileBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "set_my_display_name",
+            Some(json!({ "p_org": organization, "p_name": body.name })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "me" }) }))
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2610,6 +2641,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/auth/refresh", post(refresh_session))
         .route("/api/v1/me", get(me))
         .route("/api/v1/me/organizations", get(list_my_organizations))
+        .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/catalogue", get(capability_catalogue))
         .route("/api/v1/metrics", get(metrics))
         .route("/api/v1/settings/organizations", post(create_organization))
