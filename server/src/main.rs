@@ -38,7 +38,7 @@ struct Config {
     /// executor needs to read nothing at all.
     run_secret: String,
     bind: SocketAddr,
-    cors_origin: HeaderValue,
+    cors_origins: Vec<HeaderValue>,
 }
 
 impl Config {
@@ -51,10 +51,24 @@ impl Config {
             .unwrap_or_else(|_| "8081".into())
             .parse::<u16>()
             .map_err(|_| ApiError::configuration("CONTROLPLANE_PORT must be a valid port"))?;
-        let cors_origin = env::var("CORS_ORIGIN")
+        // **A list, not one origin.** There are two products on two hostnames
+        // now, and a developer running the console locally is a third — one
+        // value meant deploying broke local work and local work broke the
+        // deployment. Comma-separated, and an entry that is not a valid origin
+        // is a configuration error rather than a silently ignored one: a
+        // mistyped origin fails as CORS in a browser, which sends the reader to
+        // look at the server.
+        let cors_origins = env::var("CORS_ORIGIN")
             .unwrap_or_else(|_| "http://localhost:3000".into())
-            .parse::<HeaderValue>()
-            .map_err(|_| ApiError::configuration("CORS_ORIGIN must be a valid origin"))?;
+            .split(',')
+            .map(str::trim)
+            .filter(|origin| !origin.is_empty())
+            .map(|origin| {
+                origin
+                    .parse::<HeaderValue>()
+                    .map_err(|_| ApiError::configuration(format!("not a valid origin: {origin}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
             supabase_url,
@@ -62,7 +76,7 @@ impl Config {
             supabase_jwt_secret,
             run_secret,
             bind: SocketAddr::from(([0, 0, 0, 0], port)),
-            cors_origin,
+            cors_origins,
         })
     }
 
@@ -2746,7 +2760,7 @@ async fn delete_resource(
 
 fn app(state: AppState) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(state.config.cors_origin.clone())
+        .allow_origin(tower_http::cors::AllowOrigin::list(state.config.cors_origins.clone()))
         // PUT was missing, so every preflight for one was rejected and the browser
         // reported it as the API being unreachable — which sends the reader to
         // check the server rather than the method list.

@@ -1,0 +1,26 @@
+[Unit]
+Description=Sarvathra console and platform portal (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vokoo/console
+# Loopback only. Caddy terminates TLS and decides which hostname is which
+# product; binding this publicly would publish both on a port with no
+# certificate and no host routing.
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=3000
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+# A standalone build resolves nothing at runtime, so it needs no registry
+# credential and no writable install directory.
+ProtectSystem=strict
+ReadWritePaths=/opt/vokoo/console
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

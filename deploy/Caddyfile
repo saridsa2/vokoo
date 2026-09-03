@@ -1,0 +1,68 @@
+vokoo.vayuveda.ai {
+	encode gzip
+	# Caddy upgrades /ws transparently; no extra config needed for WebSockets.
+	reverse_proxy 127.0.0.1:8080
+}
+
+# Sarvathra SIP — this block exists to obtain and renew a certificate, not to
+# serve anything. Meta requires TLS on 5061 with a certificate whose subject
+# covers the SIP hostname, and Caddy already owns 80/443 and ACME, so letting
+# it issue is one fewer thing holding a port. Asterisk reads the files Caddy
+# writes; see the copy-on-renew unit.
+sip.sarvathra.ai {
+	# WebRTC agents register here, over the certificate Caddy already owns.
+	#
+	# **Only /ws.** Asterisk's HTTP server carries the SIP WebSocket *and* ARI
+	# on the same port, and ARI can originate calls, bridge channels and hang
+	# people up. Opening Asterisk's own TLS port would publish both; proxying
+	# one path publishes one, and 127.0.0.1:8088 stays loopback-only.
+	handle /ws {
+		reverse_proxy 127.0.0.1:8088
+	}
+
+	# The block still exists mainly to obtain and renew the certificate: Meta
+	# requires TLS on 5061 with a certificate covering the SIP hostname, and
+	# Caddy already owns 80/443 and ACME. Asterisk reads the files Caddy
+	# writes; see the copy-on-renew unit.
+	handle {
+		respond "sarvathra" 200
+	}
+}
+
+# ---------------------------------------------------------------------------
+# The console and the platform portal: one Next process, two hostnames.
+#
+# Two hosts rather than two paths on one, and the reason is the browser rather
+# than tidiness: localStorage, cookies and session storage are scoped to an
+# origin. On one host an operators session and a tenants session are the same
+# stored object. On two they cannot see each other, and signing into the portal
+# is a separate act.
+#
+# Next decides which product a hostname serves — see src/middleware.ts — so
+# both blocks proxy the same upstream and the Host header does the routing.
+# ---------------------------------------------------------------------------
+
+console.sarvathra.ai {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+platform.sarvathra.ai {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+# The control plane, over TLS.
+#
+# **Not optional once the console is served over HTTPS.** A page on https:
+# cannot call http:, and a browser blocks it as mixed content without making
+# the request — so the deployed console would fail every call while the API
+# was healthy and reachable by curl.
+#
+# 8081 stays open as well, because the console is still developed locally
+# against it. That is a deliberate loose end, not an oversight: closing it
+# means every developer switching to this hostname first.
+api.sarvathra.ai {
+	encode gzip
+	reverse_proxy 127.0.0.1:8081
+}
