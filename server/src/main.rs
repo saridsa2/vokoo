@@ -2447,6 +2447,67 @@ async fn operator_create_tenant(
     ))
 }
 
+/// The keys a tenant's calls run on when it does not bring its own.
+///
+/// Guarded by `is_platform_admin()` in the database, like every other operator
+/// function. **No route returns a key** — the listing carries the last four
+/// characters and a date, which is enough to tell two keys apart and useless to
+/// anybody who obtains it.
+async fn operator_platform_keys(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_platform_keys", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "platform_keys" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct PlatformKeyBody {
+    secret: String,
+    label: Option<String>,
+}
+
+async fn operator_set_platform_key(
+    State(state): State<AppState>,
+    Path(vendor): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<PlatformKeyBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_set_platform_key",
+            Some(json!({
+                "p_vendor": vendor,
+                "p_secret": body.secret,
+                "p_label": body.label,
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "platform_keys" }) }))
+}
+
+async fn operator_delete_platform_key(
+    State(state): State<AppState>,
+    Path(vendor): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_delete_platform_key", Some(json!({ "p_vendor": vendor })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "platform_keys" }) }))
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2895,6 +2956,11 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/operator/me", get(operator_me))
+        .route("/api/v1/operator/keys", get(operator_platform_keys))
+        .route(
+            "/api/v1/operator/keys/{vendor}",
+            post(operator_set_platform_key).delete(operator_delete_platform_key),
+        )
         .route("/api/v1/operator/tenants", get(operator_tenants).post(operator_create_tenant))
         .route("/api/v1/operator/tenants/{id}", post(operator_set_tenant))
         .route(
