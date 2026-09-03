@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
+import { Select } from "@/components/base/select/select";
 import { ScreenHeader } from "@/components/application/screen/screen-header";
 import { Tabs } from "@/components/application/tabs/tabs";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -118,15 +119,16 @@ type Organization = {
 type Draft = Partial<Record<keyof Organization, string>>;
 
 const SECTIONS: ReadonlyArray<{
-    id: string;
+    id: SectionId;
     label: string;
     asks: string;
     badge?: string;
 }> = [
-    { id: "identity", label: "Identity", asks: "Who is this business?" },
+    // Alphabetical. Not the order these were reasoned in — that ran from
+    // identity through operation to cost — but the order somebody scans a strip
+    // of six in when they already know the name of the one they want.
+    { id: "billing", label: "Billing", asks: "What does it cost?" },
     { id: "calls", label: "Calls", asks: "How does the line behave?" },
-    { id: "intelligence", label: "Intelligence", asks: "Who reads our calls?" },
-    { id: "data", label: "Data", asks: "What do we keep?" },
     {
         id: "compliance",
         label: "Compliance",
@@ -136,8 +138,10 @@ const SECTIONS: ReadonlyArray<{
         // would read as work somebody could do today.
         badge: "Read-only",
     },
-    { id: "billing", label: "Billing", asks: "What does it cost?" },
-] as const;
+    { id: "data", label: "Data", asks: "What do we keep?" },
+    { id: "identity", label: "Identity", asks: "Who is this business?" },
+    { id: "intelligence", label: "Intelligence", asks: "Who reads our calls?" },
+];
 
 type SectionId = "identity" | "calls" | "intelligence" | "data" | "compliance" | "billing";
 
@@ -147,6 +151,7 @@ export function OrganizationScreen() {
         useCallback((ctx) => api.organization<Organization>(ctx), []),
     );
 
+    // Identity is where somebody lands, even though Billing sorts first.
     const [section, setSection] = useState<SectionId>("identity");
     const [draft, setDraft] = useState<Draft>({});
     const [isSaving, setIsSaving] = useState(false);
@@ -335,22 +340,12 @@ const Pane = ({
 
         case "intelligence":
             return (
-                <Card>
-                    <Input
-                        label="Provider"
-                        value={value("intelligence_provider")}
-                        onChange={set("intelligence_provider")}
-                        placeholder="minimax"
-                        hint="Must serve the Anthropic Messages API — anthropic or minimax. The reading is held to its shape by a forced tool call, and a provider outside that list fails saying so."
-                    />
-                    <Input
-                        label="Model"
-                        value={value("intelligence_model")}
-                        onChange={set("intelligence_model")}
-                        placeholder="MiniMax-M2"
-                        hint="One choice for the whole workspace. Four post-call flows would otherwise carry four copies of it, and changing what reads your calls would mean opening four boards and hoping you found them all."
-                    />
-                </Card>
+                <Intelligence
+                    context={context}
+                    provider={value("intelligence_provider")}
+                    model={value("intelligence_model")}
+                    set={set}
+                />
             );
 
         case "data":
@@ -439,6 +434,107 @@ const Pane = ({
 };
 
 /**
+ * Who reads the calls, chosen from the catalogue.
+ *
+ * These were two text boxes, which is the shape that has hurt this project
+ * before: a relay was published on a Sarvam model months after Sarvam retired
+ * it, and the caller heard silence. A typed model id fails at the one moment
+ * nobody is watching — after the call has ended.
+ *
+ * So both come from `catalogue_models`, like every other model in the console.
+ * Changing the provider clears the model rather than leaving one provider's id
+ * against another's name, which would save cleanly and fail on the next call.
+ *
+ * **There is no pre-flight for this.** `POST /engine/preflight` builds and runs
+ * the real processors for an engine; nothing does the equivalent for the
+ * workspace's reader, so a wrong pairing is still discovered when a call ends —
+ * only now it takes two deliberate choices rather than a typo.
+ */
+const Intelligence = ({
+    context,
+    provider,
+    model,
+    set,
+}: {
+    context: { accessToken: string; organizationId: string } | null;
+    provider: string;
+    model: string;
+    set: (field: keyof Organization) => (next: string) => void;
+}) => {
+    const [catalogue, setCatalogue] = useState<{
+        providers: Array<{ id: string; label: string; summary?: string }>;
+        models: Array<{ id: string; label: string; provider_id: string; summary?: string }>;
+    } | null>(null);
+
+    useEffect(() => {
+        if (!context) return;
+        let live = true;
+        api.catalogue<{
+            providers: Array<{ id: string; label: string; summary?: string }>;
+            models: Array<{ id: string; label: string; provider_id: string; summary?: string }>;
+        }>(context)
+            .then(({ data }) => live && setCatalogue(data ?? { providers: [], models: [] }))
+            .catch(() => live && setCatalogue({ providers: [], models: [] }));
+        return () => {
+            live = false;
+        };
+    }, [context?.accessToken, context?.organizationId]);
+
+    // Only the two the bridge can actually talk to. `host()` in
+    // `intelligence.rs` is a two-arm match on the Anthropic Messages API, and a
+    // provider outside it fails with a message saying so — offering the rest of
+    // the catalogue here would be offering a choice that cannot work.
+    const READERS = ["minimax", "anthropic"];
+    const providers = (catalogue?.providers ?? []).filter((p) => READERS.includes(p.id));
+    const models = (catalogue?.models ?? []).filter((m) => m.provider_id === provider);
+
+    return (
+        <Card>
+            <Select
+                label="Provider"
+                selectedKey={provider}
+                onSelectionChange={(key) => {
+                    set("intelligence_provider")(String(key));
+                    // A model belongs to one provider. Carrying the old id over
+                    // would save cleanly and fail on the next call that ended.
+                    set("intelligence_model")("");
+                }}
+                items={providers}
+                hint="Must serve the Anthropic Messages API. The reading is held to its shape by a forced tool call rather than by parsing a reply, which is what makes these two interchangeable."
+            >
+                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+            </Select>
+
+            <Select
+                label="Model"
+                selectedKey={model}
+                onSelectionChange={(key) => set("intelligence_model")(String(key))}
+                items={models}
+                isDisabled={models.length === 0}
+                placeholder={
+                    providers.length === 0
+                        ? "Loading…"
+                        : models.length === 0
+                          ? "Choose a provider first"
+                          : "Choose a model"
+                }
+                hint="One choice for the whole workspace. Four post-call flows would otherwise carry four copies of it, and changing what reads your calls would mean opening four boards and hoping you found them all."
+            >
+                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+            </Select>
+
+            <Pending>
+                MiniMax publishes no models endpoint, so its entry is hand-maintained — the same
+                situation as Sarvam, which is the provider whose retired model put silence on a
+                live call. Anthropic publishes one and discovery should own those. And nothing
+                pre-flights a reader the way it pre-flights an engine, so a wrong pairing is
+                found when a call ends.
+            </Pending>
+        </Card>
+    );
+};
+
+/**
  * What the calls have cost.
  *
  * Real, unlike the two sections above it: `call_costs` and `engine_costs` are
@@ -454,16 +550,16 @@ const Billing = ({
     context: { accessToken: string; organizationId: string } | null;
     plan: string;
 }) => {
-    const [costs, setCosts] = useState<Array<Record<string, unknown>> | null>(null);
-    const [rates, setRates] = useState<Array<Record<string, unknown>> | null>(null);
+    const [engines, setEngines] = useState<EngineCost[] | null>(null);
+    const [rates, setRates] = useState<Rate[] | null>(null);
 
     useEffect(() => {
         if (!context) return;
         let live = true;
-        api.list<Record<string, unknown>>("engine-costs", context)
-            .then(({ data }) => live && setCosts(data ?? []))
-            .catch(() => live && setCosts([]));
-        api.list<Record<string, unknown>>("vendor-rates", context)
+        api.list<EngineCost>("engine-costs", context)
+            .then(({ data }) => live && setEngines(data ?? []))
+            .catch(() => live && setEngines([]));
+        api.list<Rate>("vendor-rates", context)
             .then(({ data }) => live && setRates(data ?? []))
             .catch(() => live && setRates([]));
         return () => {
@@ -471,10 +567,38 @@ const Billing = ({
         };
     }, [context?.accessToken, context?.organizationId]);
 
-    const unpriced = (rates ?? []).filter((r) => r.unit_price == null);
+    const rows = engines ?? [];
+    const calls = rows.reduce((total, row) => total + (row.calls ?? 0), 0);
+    const seconds = rows.reduce((total, row) => total + Number(row.total_seconds ?? 0), 0);
+    const priced = rows.reduce((total, row) => total + Number(row.total_cost ?? 0), 0);
+    const unpriced = rows.reduce((total, row) => total + (row.unpriced_items ?? 0), 0);
+    const currency = rows.find((row) => row.currency)?.currency ?? "USD";
+    const toPrice = [...new Set((rates ?? []).filter((r) => r.rate_per_unit == null).map((r) => r.vendor_id))];
 
     return (
         <>
+            <Card>
+                <div className="grid grid-cols-3 gap-4">
+                    <Figure label="Spend" value={priced > 0 ? `${currency} ${priced.toFixed(2)}` : "—"} />
+                    <Figure label="Calls" value={String(calls)} />
+                    <Figure label="Talk time" value={`${Math.round(seconds / 60)}m`} />
+                </div>
+                {priced === 0 && unpriced > 0 ? (
+                    // The honest answer to "what have I incurred". Not zero —
+                    // unknown, with the reason and the remedy attached. A call
+                    // nobody has priced and a call that cost nothing are
+                    // different facts, and reporting the second as the first is
+                    // how a wrong invoice goes out.
+                    <p className="border-t border-secondary pt-4 text-sm text-tertiary">
+                        <strong className="text-primary">Nothing is priced yet</strong>, so this
+                        is not a bill of zero — it is {unpriced} metered quantit
+                        {unpriced === 1 ? "y" : "ies"} nobody has attached a rate to. Every rate in
+                        the card is deliberately null: a figure written from memory into a table
+                        that produces invoices is exactly how a wrong invoice goes out.
+                    </p>
+                ) : null}
+            </Card>
+
             <Card>
                 <div className="flex items-center justify-between">
                     <div>
@@ -490,48 +614,96 @@ const Billing = ({
             </Card>
 
             <Card>
-                <p className="text-sm font-medium text-secondary">Cost by engine</p>
-                {costs === null ? (
+                <p className="text-sm font-medium text-secondary">By engine</p>
+                {engines === null ? (
                     <p className="text-sm text-tertiary">Loading…</p>
-                ) : costs.length === 0 ? (
+                ) : rows.length === 0 ? (
                     <p className="text-sm text-tertiary">
-                        Nothing recorded yet. A relay meters every step; a realtime engine
-                        currently records nothing at all, and no call has ever emitted the
-                        carrier&rsquo;s own charge.
+                        Nothing metered yet. A relay meters every step; a realtime engine records
+                        nothing at all, and no call has ever emitted the carrier&rsquo;s own charge
+                        — so an engine missing here may be unused or may be unmeasured.
                     </p>
                 ) : (
-                    <ul className="flex flex-col divide-y divide-secondary">
-                        {costs.slice(0, 8).map((row, index) => (
-                            <li
-                                key={index}
-                                className="flex items-baseline justify-between gap-4 py-2 text-sm"
-                            >
-                                <span className="text-primary">
-                                    {String(row.engine_name ?? "—")}
-                                </span>
-                                <span className="text-tertiary tabular-nums">
-                                    {String(row.calls ?? 0)} calls
-                                </span>
-                            </li>
-                        ))}
-                    </ul>
+                    <div className="overflow-x-auto">
+                        <table className="w-full border-collapse text-sm">
+                            <thead>
+                                <tr className="border-b border-secondary text-left">
+                                    <th className="py-2 pr-4 text-xs font-medium text-tertiary">
+                                        Engine
+                                    </th>
+                                    <th className="py-2 pr-4 text-xs font-medium text-tertiary">
+                                        Calls
+                                    </th>
+                                    <th className="py-2 pr-4 text-xs font-medium text-tertiary">
+                                        Minutes
+                                    </th>
+                                    <th className="py-2 text-right text-xs font-medium text-tertiary">
+                                        Cost
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((row) => (
+                                    <tr key={row.engine_id} className="border-b border-secondary last:border-0">
+                                        <td className="py-2.5 pr-4 text-primary">
+                                            {row.engine_name}
+                                            <span className="ml-2 text-xs text-quaternary">
+                                                {row.mode}
+                                            </span>
+                                        </td>
+                                        <td className="py-2.5 pr-4 tabular-nums text-tertiary">
+                                            {row.calls}
+                                        </td>
+                                        <td className="py-2.5 pr-4 tabular-nums text-tertiary">
+                                            {Math.round(Number(row.total_seconds ?? 0) / 60)}
+                                        </td>
+                                        <td className="py-2.5 text-right tabular-nums text-tertiary">
+                                            {row.total_cost == null
+                                                ? `${row.unpriced_items ?? 0} unpriced`
+                                                : `${currency} ${Number(row.total_cost).toFixed(2)}`}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </Card>
 
-            {unpriced.length > 0 ? (
+            {toPrice.length > 0 ? (
                 <Pending>
                     <strong className="text-primary">
-                        {unpriced.length} rate{unpriced.length === 1 ? "" : "s"} are unpriced.
+                        {toPrice.length} vendor{toPrice.length === 1 ? "" : "s"} still to price:
                     </strong>{" "}
-                    Every rate in the card is null on purpose — a figure written from memory into
-                    a table that produces invoices is how a wrong invoice goes out. Until each is
-                    read off a vendor&rsquo;s own page, a call nobody has priced and a call that
-                    cost nothing stay different facts.
+                    {toPrice.join(", ")}. Each rate has to be read off that vendor&rsquo;s own
+                    page and entered — until then this reports what was consumed and refuses to
+                    guess what it cost.
                 </Pending>
             ) : null}
         </>
     );
 };
+
+type EngineCost = {
+    engine_id: string;
+    engine_name: string;
+    mode: string;
+    currency: string | null;
+    calls: number | null;
+    total_cost: number | null;
+    total_seconds: number | null;
+    unpriced_items: number | null;
+};
+
+type Rate = { vendor_id: string; stage: string; unit: string; rate_per_unit: number | null };
+
+/** One number, on the billing summary. */
+const Figure = ({ label, value }: { label: string; value: string }) => (
+    <div className="flex flex-col gap-1">
+        <span className="text-xs text-tertiary">{label}</span>
+        <span className="text-display-xs font-semibold text-primary tabular-nums">{value}</span>
+    </div>
+);
 
 const Card = ({ children }: { children: React.ReactNode }) => (
     <section className="flex flex-col gap-5 rounded-xl p-5 ring-1 ring-secondary">{children}</section>
