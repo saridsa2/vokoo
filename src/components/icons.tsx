@@ -69,6 +69,7 @@ import {
     faFlask,
     faFolder,
     faGaugeHigh,
+    faGrid2,
     faHeadset,
     faKey,
     faMicrophoneLines,
@@ -238,9 +239,11 @@ export const XClose = icon(faXmark);
 
 /* VoKoo navigation icons, named for what they represent in this product rather
  * than for the Untitled UI component they replaced. */
-// Where you land: what the line is doing right now. A gauge rather than a
-// chart, because a chart is history and this screen is the present moment.
-export const IconDashboard = icon(faGaugeSimpleHigh);
+// Panels. A dashboard is literally a board of them — the live band, the roster,
+// the charts — and at 20px a gauge collapses into an ambiguous slash. Not a
+// chart glyph either: Runs already wears one, and this screen is more than its
+// charts.
+export const IconDashboard = icon(faGrid2);
 export const IconAgents = icon(faUsers);
 // The people who take a call the AI hands over. A headset rather than a second
 // group of figures: Agents already wears `faUsers`, and two nav rows with one

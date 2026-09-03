@@ -394,12 +394,37 @@ pre-flight builds what a call builds.
 `/dashboard` is the landing route. Four numbers, what is on the line, and who
 can take a call.
 
-**No charts, no graphs, no history.** Not a styling preference — it is what the
-screen is for. A chart answers "what has been happening", and this screen
-answers "what is happening", which is a different question with a different
-half-life. The day's counters are there because they were asked for; a
-sparkline, a trend line, a seven-day anything, or a chart library is not to be
-added. Where history belongs is Observe.
+**The live band is half of it. The other half is history, in charts.** The
+first version had neither charts nor history, the user said so, and it was
+written down here as a rule forbidding them — the exact inversion of what was
+meant. Recorded because the mistake is instructive: "no X" said about a screen
+under construction is a complaint about an absence, not a prohibition, and the
+way to tell them apart is to ask.
+
+Three charts, from `calls` through `/api/v1/dashboard/history`: **calls a day**,
+**time on the phone**, and **when the phone rings** — the last one bucketed by
+hour of the day, which is the staffing question. Recharts was already a
+dependency.
+
+Aggregated in the control plane rather than in SQL. A view over `calls` would
+need `security_invoker = true` or it runs as its owner and hands every
+organisation's calls to any signed-in user — the fault migration 0056 already
+found here once, and a view announces it nowhere. Counting a few hundred rows in
+Rust cannot have that bug at all.
+
+**Every day in the window is returned, including the empty ones.** A chart drawn
+only from days that had calls draws a straight line through a quiet weekend and
+reports business as steady.
+
+**Chart colour is `var(--color-fg-brand-primary)`, never a hex.** This system is
+achromatic: the accent is ink on light and eggshell on dark, so a literal would
+give a chart invisible in one of the two modes. Recharts takes `var()` for every
+colour prop. Its default tooltip is a rounded white card — another project's
+styling, like the borrowed editor's eight radii — so it is restyled square.
+
+**History is a plain GET, refetched when the day's count moves** — which is to
+say, when a call ends, which is exactly what the stream announces. Same event,
+both halves, still nothing on a timer.
 
 **Server-Sent Events end to end. Nothing polls.**
 

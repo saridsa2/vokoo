@@ -31,6 +31,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
+import { DashboardCharts, type History } from "@/components/application/screens/dashboard-charts";
+import { api } from "@/utils/api-client";
 import { useEventStream } from "@/hooks/use-event-stream";
 import { useSession } from "@/hooks/use-session";
 
@@ -98,6 +100,28 @@ export const DashboardScreen = () => {
     }, [calls.length]);
     const elapsed = (call: LiveCall) =>
         call.seconds + Math.max(0, Math.floor((Date.now() - frameAt.current) / 1000));
+
+    // History is a plain GET, refetched when the day's count moves — which is
+    // to say, when a call ends. The stream is what says so, so this updates on
+    // the same event and still nothing is on a timer.
+    const [history, setHistory] = useState<History | null>(null);
+    const answered = data?.today?.answered ?? null;
+    useEffect(() => {
+        if (!context) return;
+        let live = true;
+        api.dashboardHistory<History>(14, timezone(), context)
+            .then(({ data: rows }) => {
+                if (live && rows) setHistory(rows);
+            })
+            .catch(() => {
+                // The live band is the important half and has its own error
+                // line; a failed history fetch leaves the charts saying they
+                // are loading rather than replacing the screen with an error.
+            });
+        return () => {
+            live = false;
+        };
+    }, [context?.accessToken, context?.organizationId, answered]);
 
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-6 lg:p-8">
@@ -176,6 +200,11 @@ export const DashboardScreen = () => {
                         ))}
                     </ul>
                 )}
+            </section>
+
+            <section className="flex flex-col gap-3">
+                <h2 className="text-lg font-semibold text-primary">Over the last two weeks</h2>
+                <DashboardCharts history={history} />
             </section>
 
             <section className="flex flex-col gap-3">

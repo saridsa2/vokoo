@@ -194,6 +194,21 @@ export const api = {
     metrics: <T>(context: AccessContext) => request<T>("/api/v1/metrics", {}, context),
 
     /**
+     * What the line has been doing, bucketed for a chart.
+     *
+     * The dashboard's other half. Its live band is a stream; this is a plain
+     * GET, because history does not change until a call ends — and when one
+     * does, the stream says so, which is what triggers the refetch. Still no
+     * polling: the same event drives both.
+     */
+    dashboardHistory: <T>(days: number, timezone: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/dashboard/history?days=${days}&tz=${encodeURIComponent(timezone)}`,
+            {},
+            context,
+        ),
+
+    /**
      * Providers, models, voices and transcribers in one response.
      *
      * One request rather than four: the console needs the whole registry to

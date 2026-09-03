@@ -1652,6 +1652,124 @@ async fn today(client: &Client, organization: &str, tz: &str) -> Value {
     })
 }
 
+/// What the line has been doing, bucketed for a chart.
+///
+/// The other half of the dashboard. The stream says what is happening; this says
+/// what has been happening, which is a different question and belongs in a shape
+/// you can see a trend in rather than a number.
+///
+/// Aggregated here rather than in SQL. A view over `calls` would need
+/// `security_invoker = true` or it runs as its owner and hands every
+/// organisation's calls to any signed-in user — the fault migration 0056 already
+/// found here once, and it announces itself nowhere. Counting a few hundred rows
+/// in this process cannot have that bug at all.
+///
+/// Both bucketings are in the viewer's timezone, because a day boundary and an
+/// hour of the day are both questions about local time: "we are busy at 10am" is
+/// meaningless in UTC for a clinic in Bangalore.
+async fn dashboard_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    use chrono::{Datelike, TimeZone, Timelike};
+
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let zone: chrono_tz::Tz =
+        query.get("tz").and_then(|tz| tz.parse().ok()).unwrap_or(chrono_tz::UTC);
+    // Bounded: a landing screen must not become an unbounded query somebody can
+    // widen from the address bar.
+    let days: i64 = query
+        .get("days")
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(14)
+        .clamp(1, 90);
+
+    let today_local = chrono::Utc::now().with_timezone(&zone).date_naive();
+    let from = today_local - chrono::Duration::days(days - 1);
+    let from_utc = from
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| zone.from_local_datetime(&naive).earliest())
+        .map(|local| local.with_timezone(&chrono::Utc))
+        .unwrap_or_else(chrono::Utc::now);
+
+    let rows = client
+        .database()
+        .from("calls")
+        .select("started_at,duration_seconds,status,direction")
+        .eq("org_id", &organization)
+        .gte("started_at", &from_utc.to_rfc3339())
+        .execute::<Value>()
+        .await
+        .unwrap_or_default();
+
+    // Every day in the window, including the ones with nothing in them. A chart
+    // drawn only from days that had calls draws a straight line through a quiet
+    // weekend and says business was steady.
+    let mut by_day: Vec<(chrono::NaiveDate, i64, i64, i64)> = (0..days)
+        .map(|offset| (from + chrono::Duration::days(offset), 0, 0, 0))
+        .collect();
+    let mut by_hour = [0i64; 24];
+
+    for row in &rows {
+        let Some(started) = row
+            .get("started_at")
+            .and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        else {
+            continue;
+        };
+        let local = started.with_timezone(&zone);
+        let seconds = row.get("duration_seconds").and_then(Value::as_i64).unwrap_or(0);
+        let finished = row.get("status").and_then(Value::as_str) == Some("ended");
+
+        by_hour[local.hour() as usize] += 1;
+        if let Some(bucket) = by_day.iter_mut().find(|(date, ..)| *date == local.date_naive()) {
+            bucket.1 += 1;
+            bucket.2 += seconds;
+            bucket.3 += i64::from(finished);
+        }
+    }
+
+    let days_out: Vec<Value> = by_day
+        .iter()
+        .map(|(date, calls, seconds, finished)| {
+            json!({
+                "date":     date.to_string(),
+                "label":    format!("{} {}", date.day(), month(date.month())),
+                "calls":    calls,
+                "seconds":  seconds,
+                "finished": finished,
+                // Over the finished ones only. Including a call still in
+                // progress folds it in as zero and drags the average down.
+                "average":  if *finished > 0 { seconds / finished } else { 0 },
+            })
+        })
+        .collect();
+
+    let hours_out: Vec<Value> = by_hour
+        .iter()
+        .enumerate()
+        .map(|(hour, calls)| json!({ "hour": hour, "calls": calls }))
+        .collect();
+
+    Ok(Json(ApiResponse {
+        data: json!({
+            "days":     days_out,
+            "hours":    hours_out,
+            "total":    rows.len(),
+            "timezone": zone.name(),
+        }),
+        meta: json!({ "resource": "dashboard", "days": days }),
+    }))
+}
+
+fn month(m: u32) -> &'static str {
+    ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        [(m as usize).saturating_sub(1).min(11)]
+}
+
 async fn preflight_engine(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -2094,6 +2212,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/settings/vendors/{vendor}/test", post(test_credential))
         // The landing screen's live feed. A GET that never returns, on purpose.
         .route("/api/v1/dashboard/stream", get(dashboard_stream))
+        .route("/api/v1/dashboard/history", get(dashboard_history))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
