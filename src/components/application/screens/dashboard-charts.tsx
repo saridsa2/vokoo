@@ -29,10 +29,15 @@
  * ink bar for emphasis, that bar read as a rendering fault — and branding the
  * data made the numbers look like decoration.
  *
- * So the data has a hue of its own and the section colour stays on the frame.
- * **The capacity line is the one marigold thing inside a chart**, and
- * deliberately: it is not data. It is a limit imposed from outside, and drawing
- * it in the data's colour would make it read as a second series.
+ * ## The palette is the logo
+ *
+ * The mark grades from teal to blue, and so do these: `--chart-1` is its blue
+ * end and `--chart-1-soft` its teal one, so a bar is the logo's own gradient
+ * standing up. A panel's rule takes the teal — of the logo, but not the data.
+ *
+ * **The capacity line is the one colour that is not ours**, and deliberately: it
+ * marks the carrier's ceiling, a limit imposed from outside, and drawn in a
+ * brand colour it would read as a second series.
  */
 
 import { useMemo } from "react";
@@ -92,7 +97,9 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                         data: history.days.map((day) => day.calls),
                         barMaxWidth: 26,
                         // Down the bar rather than across it: a vertical fade
-                        // reads as height, which is what a bar measures.
+                        // reads as height, which is what a bar measures. Blue at
+                        // the top to teal at the foot — the logo's own gradient,
+                        // in the logo's own direction.
                         itemStyle: { color: down(theme.data, theme.dataSoft) },
                     },
                 ],
@@ -223,10 +230,10 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                         markLine: {
                             silent: true,
                             symbol: "none",
-                            lineStyle: { color: theme.accent, type: "dashed", width: 1.5 },
+                            lineStyle: { color: theme.limit, type: "dashed", width: 1.5 },
                             label: {
                                 formatter: `Carrier limit · ${history.capacity}`,
-                                color: theme.accent,
+                                color: theme.limit,
                                 fontSize: 11,
                                 position: "insideEndTop",
                             },
@@ -281,7 +288,7 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                 />
             </Panel>
 
-            <Panel title="Call Length" note="Completed calls">
+            <Panel title="Call Duration" note="Completed calls">
                 <Chart option={options.durations} height={200} ariaLabel="How long calls last" />
             </Panel>
 

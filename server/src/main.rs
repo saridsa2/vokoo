@@ -1911,15 +1911,20 @@ async fn monitor_call(
 
     // 1. Role. RLS would let any member read the call; monitoring one live is a
     // different act, and the table cannot express that.
+    // `execute` and take the first, not `single_execute`. PostgREST answers a
+    // zero-row single-object request with PGRST116 rather than an empty result,
+    // so `single_execute` turns "this person is not a member" into a 502 about
+    // a database error. Both lookups here can legitimately match nothing.
     let role = client
         .database()
         .from("memberships")
         .select("role")
         .eq("user_id", &user_id)
         .eq("org_id", &organization)
-        .single_execute::<Value>()
+        .execute::<Value>()
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?
+        .first()
         .and_then(|row| row.get("role").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
     if !matches!(role.as_str(), "owner" | "admin") {
@@ -1936,9 +1941,10 @@ async fn monitor_call(
         .eq("user_id", &user_id)
         .eq("org_id", &organization)
         .eq("status", "active")
-        .single_execute::<Value>()
+        .execute::<Value>()
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?
+        .first()
         .and_then(|row| row.get("endpoint").and_then(Value::as_str).map(str::to_owned));
 
     // Whispering to an AI is text and rings nobody, so it is the one mode that

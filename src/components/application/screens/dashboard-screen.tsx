@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/base/badges/badges";
+import { CallMonitor } from "@/components/application/screens/call-monitor";
 import { Button } from "@/components/base/buttons/button";
 import { DashboardCharts, type History } from "@/components/application/screens/dashboard-charts";
 import { api } from "@/utils/api-client";
@@ -184,7 +185,7 @@ export const DashboardScreen = () => {
                     // the point of a live board is that the eye runs down one
                     // column, and that needs the columns to exist.
                     <div className="overflow-x-auto border border-secondary">
-                        <table className="w-full min-w-[46rem] border-collapse text-sm">
+                        <table className="w-full min-w-[58rem] border-collapse text-sm">
                             <thead>
                                 <tr className="border-b border-secondary bg-secondary text-left">
                                     <Th>Caller</Th>
@@ -193,6 +194,7 @@ export const DashboardScreen = () => {
                                     <Th>Type</Th>
                                     <Th align="right">Duration</Th>
                                     <Th>Channel</Th>
+                                    <Th align="right">Supervise</Th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -223,6 +225,12 @@ export const DashboardScreen = () => {
                                             {clock(elapsed(call))}
                                         </Td>
                                         <Td muted>{call.channel}</Td>
+                                        <Td align="right">
+                                            <CallMonitor
+                                                callId={call.id}
+                                                hasHuman={call.human}
+                                            />
+                                        </Td>
                                     </tr>
                                 ))}
                             </tbody>

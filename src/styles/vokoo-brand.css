@@ -185,47 +185,45 @@
  * Surfaces stack eggshell → taupe → stone; Untitled UI would otherwise derive
  * them from its neutral ramp and land pure white at the top.
  */
-/* ---- chart ink ----
+/* ---- chart ink: the logo's own gradient ----
  *
- * **Data is blue. Chrome is marigold.** Two separate decisions that arrived by
- * being wrong twice.
+ * **The palette is the mark.** The logo is a fingerprint drawn as concentric
+ * arcs, grading from teal at the top left to a vivid blue at the right, and
+ * that gradient is what the charts are drawn in. Nothing here was chosen for
+ * being a nice blue; it was sampled from the thing already on the sign.
  *
- * The brand ramp is achromatic, which is right for controls and wrong for data:
- * a chart drawn in it is a grey chart. The first correction was to draw the
- * data in the navigation section's own colour, and that was wrong too — a
- * marigold chart with one ink bar for emphasis read as a rendering fault rather
- * than as emphasis, and branding the data made the numbers look like decoration.
+ * Arrived at by being wrong three times. Drawn in the achromatic brand ramp the
+ * charts read as bland; redrawn in the navigation section's marigold with one
+ * ink bar for emphasis, that bar read as a rendering fault; a generic console
+ * blue then read as data rather than as *ours*.
  *
- * So the data has its own hue, which is what most consoles do and for a good
- * reason: it reads as data rather than as identity, and it leaves the section
- * accent free to say which part of the product you are in. The section colour
- * survives on the frame — a card's top rule, the live dot — and never inside a
- * chart.
- *
- * **No emphasis colour at all.** A second fill inside one series says the bars
- * are different kinds of thing. The newest day is marked by being last, which
- * the axis already says.
+ * | | |
+ * |---|---|
+ * | `--chart-1` | the blue end. The data itself. |
+ * | `--chart-1-soft` | the teal end. Where every gradient goes, and the low end of the heatmap. |
+ * | `--chart-accent` | teal, for chrome — a panel's rule. Of the logo, and not the data. |
+ * | `--chart-limit` | **the one colour that is not ours**, and deliberately. It marks the carrier's own ceiling: a threshold imposed from outside, which drawn in a brand colour would read as another series. |
  *
  * Tokens rather than hexes in a component: this file is where a colour decision
  * lives, and a literal cannot follow the theme.
  */
 :root {
-    /* Data. */
-    --chart-1: #2563eb;
-    --chart-1-soft: #7ba4f5;
-    --chart-1-wash: #e8f0fe;
-    /* Chrome — the section this screen belongs to. */
-    --chart-accent: #b45309;
+    --chart-1: #1f5ce8;
+    --chart-1-soft: #1583a0;
+    --chart-1-wash: #e9f1fd;
+    --chart-accent: #1583a0;
+    --chart-limit: #b45309;
 }
 
 :root.dark-mode,
 .dark-mode {
-    /* Lifted rather than reused: both hues at full saturation sink into a warm
-     * dark ground. */
-    --chart-1: #6096f5;
-    --chart-1-soft: #3c6ab8;
-    --chart-1-wash: #1a2334;
-    --chart-accent: #e8973f;
+    /* Lifted rather than reused: both ends of the gradient sink into a warm
+     * dark ground at the saturation that works on eggshell. */
+    --chart-1: #4d86f5;
+    --chart-1-soft: #2ba0bd;
+    --chart-1-wash: #16202e;
+    --chart-accent: #2ba0bd;
+    --chart-limit: #e8973f;
 }
 
 :root:not(.dark-mode),

@@ -53,10 +53,15 @@ echarts.use([
 ]);
 
 export type ChartTheme = {
+    /** The logo's blue end. The data itself. */
     data: string;
+    /** The logo's teal end. The other end of every gradient. */
     dataSoft: string;
     dataWash: string;
+    /** Teal. Chrome — a panel's rule — so it is of the logo but not the data. */
     accent: string;
+    /** A threshold imposed from outside. The one colour that is not ours. */
+    limit: string;
     grid: string;
     label: string;
     surface: string;
@@ -69,6 +74,7 @@ const TOKENS: Record<keyof ChartTheme, string> = {
     dataSoft: "--chart-1-soft",
     dataWash: "--chart-1-wash",
     accent: "--chart-accent",
+    limit: "--chart-limit",
     grid: "--color-border-secondary",
     label: "--color-text-tertiary",
     surface: "--color-bg-primary",
@@ -79,36 +85,61 @@ const TOKENS: Record<keyof ChartTheme, string> = {
 /**
  * The palette, as literal values ECharts can use.
  *
- * Re-read whenever the theme changes. Reading once at module load would bake in
- * whichever theme happened to be active on the first render, and the charts
- * would keep light-mode colours on a dark ground — the exact failure the
- * stylesheet's own comments warn about, arriving through a different door.
+ * ## Watching the class, not the render
+ *
+ * The obvious version depends on `resolvedTheme` from `next-themes` and reads
+ * the tokens in an effect. **It reads the outgoing theme.** `ThemeProvider` is
+ * a parent, and React runs a child's effects before its parent's — so when the
+ * toggle flips, this effect runs, reads the styles, and only then does
+ * next-themes put the new class on `<html>`. Every chart keeps the previous
+ * theme's colours: a black heatmap ground and a black tooltip on a white page,
+ * which is what it looked like.
+ *
+ * A `MutationObserver` on the class attribute cannot have that bug, because it
+ * fires *because* the class changed rather than alongside the render that
+ * eventually changes it. It also does not care who flips the class, which
+ * matters the day the toggle stops being next-themes.
  */
 export function useChartTheme(): ChartTheme {
-    const { resolvedTheme } = useTheme();
+    // Kept only so a theme change still re-renders the components using this
+    // hook; the values themselves come from the observer below.
+    useTheme();
     const [theme, setTheme] = useState<ChartTheme | null>(null);
 
     useEffect(() => {
-        const styles = getComputedStyle(document.documentElement);
-        const read = (token: string) => styles.getPropertyValue(token).trim();
-        setTheme(
-            Object.fromEntries(
-                Object.entries(TOKENS).map(([key, token]) => [key, read(token)]),
-            ) as ChartTheme,
-        );
-    }, [resolvedTheme]);
+        const read = () => {
+            const styles = getComputedStyle(document.documentElement);
+            setTheme(
+                Object.fromEntries(
+                    Object.entries(TOKENS).map(([key, token]) => [
+                        key,
+                        styles.getPropertyValue(token).trim(),
+                    ]),
+                ) as ChartTheme,
+            );
+        };
+        read();
+        const observer = new MutationObserver(read);
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class"],
+        });
+        return () => observer.disconnect();
+    }, []);
 
     // Before the first read there is no document to read from — server render,
-    // and the first client paint. Values that are legible on either ground
-    // rather than a flash of the wrong palette.
+    // and the first client paint. The logo's own two ends, and a transparent
+    // ground, so a chart that paints before the read is quiet rather than
+    // wrong.
     return (
         theme ?? {
-            data: "#2563eb",
-            dataSoft: "#7ba4f5",
-            dataWash: "rgba(37,99,235,0.08)",
-            accent: "#b45309",
+            data: "#1f5ce8",
+            dataSoft: "#1583a0",
+            dataWash: "rgba(31,92,232,0.08)",
+            accent: "#1583a0",
+            limit: "#b45309",
             grid: "#00000014",
-            label: "#77716930",
+            label: "#77716999",
             surface: "transparent",
             border: "#00000014",
             text: "#171512",

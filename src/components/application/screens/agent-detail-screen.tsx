@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/base/badges/badges";
+import { Select } from "@/components/base/select/select";
 import { Button } from "@/components/base/buttons/button";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Input } from "@/components/base/input/input";
@@ -29,6 +30,13 @@ import { ArrowLeft } from "@/components/icons";
 import { api } from "@/utils/api-client";
 import { generateSipPassword } from "@/utils/sip-password";
 import { useSession } from "@/hooks/use-session";
+
+type Member = {
+    user_id: string | null;
+    display_name: string | null;
+    invited_email: string | null;
+    role: string;
+};
 
 type AgentExtension = {
     id: string;
@@ -50,16 +58,21 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
     const [error, setError] = useState<string | null>(null);
     /** Set for as long as a freshly rotated password is on screen. */
     const [rotated, setRotated] = useState<string | null>(null);
+    const [members, setMembers] = useState<Member[]>([]);
 
     useEffect(() => {
         if (!isReady || !context) return;
         let live = true;
         (async () => {
             try {
-                const { data } = await api.get<AgentExtension>("agent-extensions", agentId, context);
+                const [{ data }, people] = await Promise.all([
+                    api.get<AgentExtension>("agent-extensions", agentId, context),
+                    api.members<Member>(context),
+                ]);
                 if (!live || !data) return;
                 setAgent(data);
                 setName(data.display_name);
+                setMembers((people.data ?? []).filter((m) => m.user_id));
             } catch (problem) {
                 if (live) setError((problem as Error).message);
             }
@@ -144,6 +157,37 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
                                 Save
                             </Button>
                         </div>
+                    </section>
+
+                    <section className="flex flex-col gap-3">
+                        <h2 className="text-lg font-semibold text-primary">Who this is</h2>
+                        <p className="text-sm text-tertiary">
+                            The person in this workspace who owns this extension. Without it the
+                            extension answers calls but belongs to nobody — and supervising a call
+                            needs it, because the console rings <em>your own</em> extension rather
+                            than one named in a request.
+                        </p>
+                        <Select
+                            aria-label="Person"
+                            selectedKey={agent.user_id ?? ""}
+                            isDisabled={busy === "user"}
+                            onSelectionChange={(key) =>
+                                void patch(
+                                    "user",
+                                    { user_id: String(key) || null },
+                                    String(key) ? "Linked." : "Unlinked.",
+                                )
+                            }
+                            items={[
+                                { id: "", label: "Nobody" },
+                                ...members.map((m) => ({
+                                    id: m.user_id as string,
+                                    label: m.display_name || m.invited_email || m.user_id!,
+                                })),
+                            ]}
+                        >
+                            {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                        </Select>
                     </section>
 
                     <section className="flex flex-col gap-3">

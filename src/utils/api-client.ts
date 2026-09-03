@@ -194,6 +194,27 @@ export const api = {
     metrics: <T>(context: AccessContext) => request<T>("/api/v1/metrics", {}, context),
 
     /**
+     * Put a supervisor on a live call.
+     *
+     * `listen`, `whisper` or `barge`. The control plane decides whether — role,
+     * and the supervisor's own extension, never one named here — and the bridge
+     * decides how. `note` is only read when whispering to an AI agent, where
+     * the equivalent of speaking into somebody's ear is text into the model's
+     * session.
+     */
+    monitorCall: <T>(
+        callId: string,
+        mode: "listen" | "whisper" | "barge",
+        note: string | undefined,
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/calls/${encodeURIComponent(callId)}/monitor`,
+            { method: "POST", body: JSON.stringify({ mode, note }) },
+            context,
+        ),
+
+    /**
      * What the line has been doing, bucketed for a chart.
      *
      * The dashboard's other half. Its live band is a stream; this is a plain
