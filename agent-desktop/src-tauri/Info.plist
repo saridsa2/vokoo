@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Shown in the macOS permission prompt. A blank or missing string means
+       the prompt never appears and the microphone is simply denied. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Sarvathra needs your microphone so you can speak to callers.</string>
+</dict>
+</plist>

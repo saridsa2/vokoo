@@ -222,6 +222,8 @@ pub struct AudioSocketTransport {
     wire_rate: u32,
     /// Ends the call from our side. See [`Self::hangup`].
     hangup: Arc<tokio::sync::Notify>,
+    /// Stops this leg speaking without removing it. See [`Self::mute`].
+    muted: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AudioSocketTransport {
@@ -243,7 +245,24 @@ impl AudioSocketTransport {
             audio_out_sample_rate,
             wire_rate: params.wire_rate,
             hangup: Arc::new(tokio::sync::Notify::new()),
+            muted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// A switch that stops this leg speaking while leaving it in the call.
+    ///
+    /// **This is what lets the AI stay conferenced in after a handover.** It
+    /// keeps hearing everything — in a mixing bridge that is now the caller
+    /// *and* the person who took over — so the transcript, the tools and the
+    /// post-call reading all continue across the handover. It simply stops
+    /// putting audio back, which is the one thing that would make it a third
+    /// voice talking over two people.
+    ///
+    /// Muting rather than removing, because a removed leg takes the record
+    /// with it: the part of the call a human handles is the part most worth
+    /// writing down.
+    pub fn mute(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.muted.clone()
     }
 
     /// A handle that ends the call.
@@ -315,6 +334,7 @@ impl AudioSocketTransport {
         // would make an outbound write wait for an inbound read, which at 20 ms
         // is audible.
         let hangup = self.hangup.clone();
+        let muted = self.muted.clone();
         let (mut rx_half, mut tx_half): (OwnedReadHalf, OwnedWriteHalf) = stream.into_split();
         let mut buffer = vec![0u8; READ_BUFFER];
 
@@ -430,6 +450,15 @@ impl AudioSocketTransport {
                     match output_msg {
                         Some(OutputMessage::Audio(bytes)) => {
                             let frame = Frame::output_audio(bytes, self.audio_out_sample_rate, 1);
+                            if muted.load(std::sync::atomic::Ordering::Relaxed) {
+                                // Still consumed, so the serializer's buffers
+                                // and the pipeline's pacing stay in step —
+                                // dropping the frame earlier would leave a
+                                // half-frame behind that speaks when unmuted.
+                                let _ = serializer.serialize(&frame).await;
+                                outbound.clear();
+                                continue;
+                            }
                             if let Some(SerializedOutput::Binary(out)) =
                                 serializer.serialize(&frame).await
                             {

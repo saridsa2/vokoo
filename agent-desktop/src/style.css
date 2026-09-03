@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light dark;
+  --ink:#1a1a19; --paper:#fdfcfc; --line:#e2e0dd;
+  --good:#2f7d4f; --bad:#a8322d; --dim:#6c6a67;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ink:#f2f0ee; --paper:#191817; --line:#3a3836; --dim:#9a9793 }
+}
+* { box-sizing:border-box }
+body {
+  margin:0; background:var(--paper); color:var(--ink);
+  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  display:grid; place-items:start center; min-height:100vh; padding:2.5rem 1.5rem;
+}
+main { width:min(26rem,100%) }
+h1 { margin:0 0 1.75rem; font-size:.82rem; letter-spacing:.14em; text-transform:uppercase }
+dl { margin:0 }
+dl > div { display:flex; justify-content:space-between; gap:1rem;
+           padding:.5rem 0; border-bottom:1px solid var(--line) }
+dt { color:var(--dim) }
+dd { margin:0; font-variant-numeric:tabular-nums }
+#state.up { color:var(--good); font-weight:600 }
+#state.down { color:var(--bad) }
+#state.busy { font-weight:600 }
+#call { margin-top:1.5rem; padding:1rem; border:1px solid var(--good) }
+#call[hidden] { display:none }
+#who { margin:0 0 .9rem; font-weight:600 }
+.actions { display:flex; gap:.6rem; margin-top:1.5rem }
+button { font:inherit; padding:.55rem 1.1rem; border:1px solid var(--ink);
+         background:var(--ink); color:var(--paper); cursor:pointer }
+button.ghost { background:transparent; color:var(--ink) }
+button:disabled { opacity:.4; cursor:not-allowed }
+button:focus-visible { outline:2px solid var(--good); outline-offset:2px }
+#log { margin-top:1.75rem; font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+       color:var(--dim); white-space:pre-wrap; max-height:12rem; overflow:auto }

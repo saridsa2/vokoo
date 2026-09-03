@@ -1183,6 +1183,15 @@ impl CallWire {
         }
     }
 
+    /// Stop this leg speaking, where the wire can. Only AudioSocket can — a
+    /// KooKoo WebSocket carries the caller, and muting the caller is nonsense.
+    fn mute(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        match self {
+            Self::Kookoo { .. } => None,
+            Self::Asterisk { transport, .. } => Some(transport.mute()),
+        }
+    }
+
     fn input(&self) -> FrameProcessor {
         match self {
             Self::Kookoo { transport, .. } => transport.input(),
@@ -2436,6 +2445,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // the moment the flow is done, rather than whenever this function happens
     // to return.
     let hangup = transport.hangup();
+    // Taken before `run` consumes the wire. Muting is how the AI stays in the
+    // conference after a handover without becoming a third voice.
+    let mute = transport.mute();
     // Whether the wire closed on its own — the caller hung up, or Asterisk
     // ended the channel. A completed future must never be polled again.
     let mut socket_done = false;
@@ -2569,6 +2581,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 // the flow's own `wants_human` branch rather than replacing it.
                 if outcome == "wants_human" {
                     if let (Some(key), Some(ari)) = (switch_key.as_deref(), state.ari.as_ref()) {
+                        // First, before anything can end. `finish_call` is
+                        // already winding the pipeline down, and the AI leg's
+                        // StasisEnd would otherwise be read as the call ending.
+                        state.switchboard.mark_escalating(key).await;
                         let endpoint = env_or("AGENT_ENDPOINT", "PJSIP/sarvathra-4001");
                         match state
                             .switchboard
@@ -2581,11 +2597,22 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                                     "sarvathra_escalations_total",
                                     &[("channel", arrival.channel), ("result", "handed_over")],
                                 );
-                                // The pipeline's work is done — the person has
-                                // the call now. Leaving it running would put
-                                // the AI and the human in the same bridge.
+                                // Muted, not ended. The AI stays in the bridge
+                                // and — because it is a *mixing* bridge — now
+                                // hears the caller and the person both, so the
+                                // transcript, the tools and the post-call
+                                // reading carry on across the handover. It just
+                                // stops being a third voice.
+                                if let Some(m) = mute.as_ref() {
+                                    m.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    log::info!("[call={call}] agent muted — taking notes");
+                                }
                                 agent_outcome = Some(outcome.to_string());
-                                break;
+                                // The flow is done deciding; the conversation
+                                // is not. Falling through would end the call
+                                // the moment the person picked up.
+                                listening = true;
+                                continue;
                             }
                             Err(e) => {
                                 log::warn!("[call={call}] could not hand over: {e}");

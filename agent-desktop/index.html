@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sarvathra Agent</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<main>
+  <h1>Sarvathra</h1>
+  <dl>
+    <div><dt>Extension</dt><dd id="ext">—</dd></div>
+    <div><dt>Server</dt><dd id="host">—</dd></div>
+    <div><dt>Status</dt><dd id="state" class="down">off duty</dd></div>
+  </dl>
+  <section id="call" hidden>
+    <p id="who">Incoming call</p>
+    <div class="actions">
+      <button id="answer">Answer</button>
+      <button id="hangup" class="ghost">Hang up</button>
+    </div>
+  </section>
+  <p class="actions"><button id="connect">Go on duty</button></p>
+  <pre id="log"></pre>
+  <audio id="remote" autoplay></audio>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Sarvathra agent — spike</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --ink:#1a1a19; --paper:#fdfcfc; --line:#e0dedb; --good:#2f7d4f; --bad:#a8322d; }
+  @media (prefers-color-scheme: dark) { :root { --ink:#f2f0ee; --paper:#191817; --line:#3a3836; } }
+  body { margin:0; font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+         background:var(--paper); color:var(--ink); display:grid; place-items:center; min-height:100vh; }
+  main { width:min(30rem,92vw); }
+  h1 { font-size:1.1rem; letter-spacing:.09em; text-transform:uppercase; margin:0 0 1.5rem; }
+  .row { display:flex; justify-content:space-between; gap:1rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
+  .row span:last-child { font-variant-numeric:tabular-nums; opacity:.8; }
+  #state { font-weight:600; }
+  .up { color:var(--good) } .down { color:var(--bad) }
+  #call { margin-top:1.5rem; padding:1rem; border:1px solid var(--line); display:none; }
+  #call.ringing { display:block; border-color:var(--good); }
+  button { font:inherit; padding:.6rem 1.1rem; border:1px solid var(--ink); background:var(--ink);
+           color:var(--paper); cursor:pointer; }
+  button.ghost { background:transparent; color:var(--ink); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  #log { margin-top:1.5rem; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+         white-space:pre-wrap; max-height:14rem; overflow:auto; opacity:.75; }
+</style>
+
+<main>
+  <h1>Sarvathra agent</h1>
+
+  <div class="row"><span>Extension</span><span>sarvathra-4001</span></div>
+  <div class="row"><span>Server</span><span>sip.sarvathra.ai</span></div>
+  <div class="row"><span>Registration</span><span id="state" class="down">not connected</span></div>
+
+  <div id="call">
+    <p id="who" style="margin:0 0 .9rem"><strong>Incoming call</strong></p>
+    <button id="answer">Answer</button>
+    <button id="hangup" class="ghost">Hang up</button>
+  </div>
+
+  <p style="margin-top:1.5rem">
+    <button id="connect">Register</button>
+  </p>
+
+  <div id="log"></div>
+  <audio id="remote" autoplay></audio>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/sip.js@0.21.2/lib/index.min.js"></script>
+<script>
+// A spike, deliberately: credentials are hard-wired because the question this
+// answers is "can a browser register to our Asterisk and take an escalated
+// call", not "how should agents authenticate". Real agents get their SIP
+// credentials from the console after login, and this page is thrown away.
+const SERVER = "wss://sip.sarvathra.ai/ws";
+const AOR    = "sip:sarvathra-4001@sip.sarvathra.ai";
+const USER   = "sarvathra-4001";
+const PASS   = "16zpbjnxo6XCLAN8PxkzK9";
+
+const $ = (id) => document.getElementById(id);
+const log = (m) => {
+  $("log").textContent += `${new Date().toLocaleTimeString()}  ${m}\n`;
+  $("log").scrollTop = $("log").scrollHeight;
+};
+const state = (text, up) => { $("state").textContent = text; $("state").className = up ? "up" : "down"; };
+
+let simple;
+
+$("connect").onclick = async () => {
+  $("connect").disabled = true;
+  try {
+    simple = new SIP.Web.SimpleUser(SERVER, {
+      aor: AOR,
+      // The remote audio has to land on a real element or the call is silent
+      // with no error anywhere — the browser holds the stream and plays nothing.
+      media: { remote: { audio: $("remote") } },
+      userAgentOptions: {
+        authorizationUsername: USER,
+        authorizationPassword: PASS,
+        // Asterisk answers OPTIONS to check we are alive; without a sensible
+        // display name the agent's screen shows a bare extension.
+        displayName: "Sarvathra agent",
+        logLevel: "warn",
+      },
+    });
+
+    simple.delegate = {
+      onCallReceived: async () => {
+        // Not auto-answered on purpose. A person picking up is the difference
+        // between a handover and a hot mic in somebody's room.
+        $("call").className = "ringing";
+        $("who").innerHTML = "<strong>Incoming call</strong>";
+        log("ringing");
+      },
+      onCallAnswered: () => { log("answered — you are on the call"); state("on a call", true); },
+      onCallHangup:   () => { $("call").className = ""; log("call ended"); state("registered", true); },
+      onRegistered:   () => { state("registered", true); log("registered"); },
+      onUnregistered: () => state("not registered", false),
+      onServerDisconnect: () => { state("disconnected", false); log("server disconnected"); },
+    };
+
+    log(`connecting to ${SERVER}`);
+    await simple.connect();
+    log("websocket open");
+    await simple.register();
+  } catch (e) {
+    state("failed", false);
+    log(`FAILED: ${e && e.message ? e.message : e}`);
+    $("connect").disabled = false;
+  }
+};
+
+$("answer").onclick = async () => {
+  try { await simple.answer(); } catch (e) { log(`answer failed: ${e.message || e}`); }
+};
+$("hangup").onclick = async () => {
+  try { await simple.hangup(); } catch (e) { log(`hangup failed: ${e.message || e}`); }
+};
+</script>

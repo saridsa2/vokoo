@@ -45,8 +45,18 @@ pub const APP: &str = "sarvathra";
 struct Switched {
     bridge: String,
     caller: String,
-    /// The channel currently answering — the AI now, a human after escalation.
+    /// The AI's leg. It stays for the whole call, muted after a handover.
     agent: Option<String>,
+    /// A person who has joined. `None` until an escalation.
+    human: Option<String>,
+    /// A handover has been decided but the person has not arrived yet.
+    ///
+    /// **This exists to close a race that ended every escalation.**
+    /// `finish_call(wants_human)` makes the pipeline wind down, so the AI leg's
+    /// `StasisEnd` arrives *before* the human has been originated — and
+    /// `on_end` read that as the agent leaving and hung up the caller. The
+    /// person's phone was ringing into a bridge already being destroyed.
+    escalating: bool,
 }
 
 /// Calls this application is holding, keyed by the uuid the dialplan minted.
@@ -75,6 +85,33 @@ impl Switchboard {
         self.inner.lock().await.get(uuid).cloned()
     }
 
+    /// Say that a person is being fetched, before fetching them.
+    ///
+    /// Called the moment the outcome arrives rather than when the originate
+    /// starts, because the AI leg can end in between.
+    pub async fn mark_escalating(&self, uuid: &str) {
+        if let Some(call) = self.inner.lock().await.get_mut(uuid) {
+            call.escalating = true;
+        }
+    }
+
+    /// Stop associating a channel with its call.
+    ///
+    /// For a leg whose ending is expected — the AI's recorder stopping while
+    /// two people carry on talking. Without this its `StasisEnd` would be read
+    /// as the conversation ending and hang up both of them.
+    async fn forget_channel(&self, channel: &str) {
+        self.by_channel.lock().await.remove(channel);
+    }
+
+    /// Record a person who has joined, without displacing the AI.
+    async fn add_human(&self, uuid: &str, channel: &str) {
+        if let Some(call) = self.inner.lock().await.get_mut(uuid) {
+            call.human = Some(channel.to_string());
+        }
+        self.by_channel.lock().await.insert(channel.to_string(), uuid.to_string());
+    }
+
     async fn set_agent(&self, uuid: &str, channel: &str) {
         if let Some(call) = self.inner.lock().await.get_mut(uuid) {
             call.agent = Some(channel.to_string());
@@ -90,6 +127,9 @@ impl Switchboard {
             if let Some(a) = &c.agent {
                 by.remove(a);
             }
+            if let Some(h) = &c.human {
+                by.remove(h);
+            }
         }
         call
     }
@@ -101,17 +141,18 @@ impl Switchboard {
 }
 
 impl Switchboard {
-    /// Hand the caller to a person.
+    /// Bring a person into the call.
     ///
-    /// The caller is never moved, re-dialled or put on hold: they stay in the
-    /// bridge they have been in since the call began, and the channel beside
-    /// them changes. That is the whole reason for routing a working call
-    /// through a switch — `kookoo.transfer` drops the caller and hopes, and on
-    /// a WhatsApp call it cannot work at all.
+    /// **A conference, not a transfer.** The caller stays in the bridge they
+    /// have been in since the call began, the person joins it, and the AI stays
+    /// too — muted, but still hearing both of them. That is what keeps the
+    /// transcript, the tools and the post-call reading working across a
+    /// handover: the part of a call a human takes is the part most worth
+    /// writing down, and a leg that is removed takes the record with it.
     ///
-    /// The AI leg is hung up *after* the human is dialled, not before, so a
-    /// caller whose agent never answers is not left in silence. If the
-    /// originate fails the AI is still there and the flow carries on.
+    /// The AI is not hung up at all, which also means a person who never
+    /// answers costs nothing — the caller still has somebody talking, and the
+    /// flow carries on as though the escalation had not happened.
     pub async fn escalate(
         &self,
         ari: &Ari,
@@ -119,7 +160,8 @@ impl Switchboard {
         endpoint: &str,
         caller_id: Option<&str>,
     ) -> Result<String, String> {
-        let call = self.get(uuid).await.ok_or("no such call")?;
+        // Existence check only — the bridge is not touched here.
+        self.get(uuid).await.ok_or("no such call")?;
 
         let args = format!("agent,{uuid}");
         let human = ari
@@ -127,13 +169,16 @@ impl Switchboard {
             .await
             .map_err(|e| format!("no human leg: {e}"))?;
 
-        // Only now does the AI go. `on_start` for the human will add it to the
-        // bridge; until that happens the caller still has somebody talking.
-        if let Some(ai) = &call.agent {
-            let _ = ari.remove_from_bridge(&call.bridge, ai).await;
-            ari.hangup(ai).await;
-        }
-        self.set_agent(uuid, &human).await;
+        // The AI stays, and is muted by the bridge rather than removed here —
+        // see `AudioSocketTransport::mute`. A leg that is removed takes the
+        // record with it, and the part of a call a person handles is the part
+        // most worth writing down.
+        //
+        // Recorded as the *human*, not by overwriting `agent`: when they hang
+        // up, `on_end` has to be able to tell which of the three legs left.
+        // Overwriting meant `call.human` stayed None, the hangup fell through
+        // to the wrong branch, and the caller sat in silence until a timeout.
+        self.add_human(uuid, &human).await;
         log::info!("[stasis] {uuid} — escalated to {endpoint} on {human}");
         Ok(human)
     }
@@ -227,7 +272,13 @@ async fn on_start(
             };
 
             board
-                .insert(uuid, Switched { bridge: bridge.clone(), caller: channel.to_string(), agent: None })
+                .insert(uuid, Switched {
+                    bridge: bridge.clone(),
+                    caller: channel.to_string(),
+                    agent: None,
+                    human: None,
+                    escalating: false,
+                })
                 .await;
 
             if let Err(e) = ari.add_to_bridge(&bridge, &[channel]).await {
@@ -301,10 +352,25 @@ async fn on_end(ari: &Ari, board: &Switchboard, channel: &str) {
         }
         ari.destroy_bridge(&call.bridge).await;
         board.remove(&uuid).await;
+    } else if call.human.as_deref() == Some(channel) {
+        // The person hung up. The caller is still there with the AI, which is
+        // muted — so the call would go silent. Ending it is the honest
+        // outcome; leaving somebody listening to nothing is not.
+        log::info!("[stasis] {uuid} — the person left, ending the call");
+        ari.hangup(&call.caller).await;
+        if let Some(ai) = &call.agent {
+            ari.hangup(ai).await;
+        }
+        ari.destroy_bridge(&call.bridge).await;
+        board.remove(&uuid).await;
+    } else if call.human.is_some() || call.escalating {
+        // The AI's leg ended while a person is on the call, or on their way.
+        // That is the recorder stopping, not the conversation — and during an
+        // escalation it is expected, because `finish_call` winds the pipeline
+        // down before the person has answered.
+        log::info!("[stasis] {uuid} — the AI leg ended; a person is on the call or joining");
+        board.forget_channel(channel).await;
     } else {
-        // The agent leg ended. Today that means the pipeline finished, so the
-        // call is over too. When escalation exists this is the moment a human
-        // would be dialled instead.
         log::info!("[stasis] {uuid} — agent gone, ending the call");
         ari.hangup(&call.caller).await;
         ari.destroy_bridge(&call.bridge).await;
@@ -322,7 +388,7 @@ mod tests {
         // back to the same uuid or a teardown finds nothing and leaks a bridge.
         let board = Switchboard::new();
         board
-            .insert("u1", Switched { bridge: "b1".into(), caller: "caller-1".into(), agent: None })
+            .insert("u1", Switched { bridge: "b1".into(), caller: "caller-1".into(), agent: None, human: None, escalating: false })
             .await;
         board.set_agent("u1", "agent-1").await;
 
@@ -337,7 +403,7 @@ mod tests {
         // the leak this project already fixed once in PendingCalls.
         let board = Switchboard::new();
         board
-            .insert("u2", Switched { bridge: "b2".into(), caller: "c2".into(), agent: None })
+            .insert("u2", Switched { bridge: "b2".into(), caller: "c2".into(), agent: None, human: None, escalating: false })
             .await;
         board.set_agent("u2", "a2").await;
 
@@ -346,6 +412,31 @@ mod tests {
         assert_eq!(board.len().await, 0);
         assert!(board.uuid_for("c2").await.is_none());
         assert!(board.uuid_for("a2").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_conference_holds_three_legs() {
+        // After a handover the call has a caller, a muted AI and a person, and
+        // all three must resolve back to it — a leg the switchboard cannot name
+        // is a leg whose hangup is either ignored or mistaken for the end.
+        let board = Switchboard::new();
+        board
+            .insert("u3", Switched { bridge: "b3".into(), caller: "c3".into(), agent: None, human: None, escalating: false })
+            .await;
+        board.set_agent("u3", "ai-3").await;
+        board.add_human("u3", "human-3").await;
+
+        let call = board.get("u3").await.unwrap();
+        assert_eq!(call.agent.as_deref(), Some("ai-3"), "the AI stays after a handover");
+        assert_eq!(call.human.as_deref(), Some("human-3"));
+        for channel in ["c3", "ai-3", "human-3"] {
+            assert_eq!(board.uuid_for(channel).await.as_deref(), Some("u3"), "{channel}");
+        }
+
+        board.remove("u3").await;
+        for channel in ["c3", "ai-3", "human-3"] {
+            assert!(board.uuid_for(channel).await.is_none(), "{channel} forgotten");
+        }
     }
 
     #[tokio::test]
