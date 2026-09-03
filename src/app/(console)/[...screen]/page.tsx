@@ -8,7 +8,7 @@ import { SchemasScreen } from "@/components/application/screens/schemas-screen";
 import { SkillsScreen } from "@/components/application/screens/skills-screen";
 import { EnginesScreen } from "@/components/application/screens/engines-screen";
 import { CredentialsScreen } from "@/components/application/screens/credentials-screen";
-import { MembersScreen, OrganizationScreen } from "@/components/application/screens/settings-screens";
+import { OrganizationScreen } from "@/components/application/screens/settings-screens";
 
 /**
  * Resolves a console route to its screen.
@@ -123,7 +123,9 @@ export default async function ConsoleScreen({
     if (route === "engines") return <EnginesScreen />;
     if (route === "settings/credentials") return <CredentialsScreen />;
     if (route === "settings/organization") return <OrganizationScreen />;
-    if (route === "settings/members") return <MembersScreen />;
+    // One population, one screen. Redirected rather than removed: this is a
+    // link people already have.
+    if (route === "settings/members") redirect("/team");
 
     // Only the route name crosses into the client component; it resolves its own
     // column definitions there.

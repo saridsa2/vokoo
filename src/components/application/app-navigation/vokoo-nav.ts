@@ -7,7 +7,6 @@ import {
     IconFiles,
     IconIntegrations,
     IconLock,
-    IconMembers,
     IconOrganization,
     IconPhoneNumbers,
     IconShapes,
@@ -104,12 +103,12 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         label: "Manage",
         items: [
             { label: "Organization", href: "/settings/organization", icon: IconOrganization },
-            // The people who take calls. Onboarding rather than watching:
-            // adding somebody, suspending them, giving them a new password.
-            // Who is on duty right now is on the dashboard, because that is a
-            // fact about the line and not about the roster.
+            // One entry, because there is one population. It was Team and
+            // Members: two lists over the same staff, neither able to say
+            // whether the other knew about somebody. A person's role is what
+            // the console lets them do and their extension is whether they
+            // answer the phone — two columns, not two screens.
             { label: "Team", href: "/team", icon: IconTeam },
-            { label: "Members", href: "/settings/members", icon: IconMembers },
         ],
     },
 ];

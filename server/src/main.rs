@@ -1523,6 +1523,37 @@ async fn call_bridge(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
 }
 
+/// The zone a business day is measured in.
+///
+/// The organisation's own, when somebody has set one; otherwise the viewer's
+/// browser, which is what the console sends. A business has one working day, so
+/// the column wins — without it two people in different places see different
+/// numbers for "today" and both are right.
+///
+/// Falling back rather than defaulting to UTC: UTC would reset the day at half
+/// past five in the morning for an Indian clinic, and a default that wrong is
+/// worse than asking the browser.
+async fn business_zone(client: &Client, organization: &str, viewer: Option<&str>) -> chrono_tz::Tz {
+    let stated = client
+        .database()
+        .from("organizations")
+        .select("timezone")
+        .eq("id", organization)
+        .execute::<Value>()
+        .await
+        .ok()
+        .and_then(|rows| {
+            rows.first()?.get("timezone").and_then(Value::as_str).map(str::to_owned)
+        })
+        .filter(|zone| !zone.is_empty());
+
+    stated
+        .as_deref()
+        .and_then(|zone| zone.parse().ok())
+        .or_else(|| viewer.and_then(|zone| zone.parse().ok()))
+        .unwrap_or(chrono_tz::UTC)
+}
+
 /// The dashboard's stream: what is happening now, and what the day has come to.
 ///
 /// Server-Sent Events end to end. The bridge pushes a frame the instant a call
@@ -1551,7 +1582,10 @@ async fn dashboard_stream(
 
     let organization = org_id(&headers)?.to_owned();
     let client = authed_client(&state, &headers).await?;
-    let tz = query.get("tz").cloned().unwrap_or_else(|| "UTC".into());
+    // Resolved once when the stream opens rather than per frame: a timezone
+    // does not change between two calls ending, and re-reading it on every
+    // push would be a query per event per viewer.
+    let zone = business_zone(&client, &organization, query.get("tz").map(String::as_str)).await;
 
     let (base, token) = (
         std::env::var("BRIDGE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
@@ -1584,7 +1618,6 @@ async fn dashboard_stream(
         .filter_map(move |chunk| {
             let client = client.clone();
             let organization = organization.clone();
-            let tz = tz.clone();
             async move {
                 let text = String::from_utf8(chunk.ok()?.to_vec()).ok()?;
                 let payload = text
@@ -1592,7 +1625,7 @@ async fn dashboard_stream(
                     .find_map(|line| line.strip_prefix("data: "))?;
                 let mut value: Value = serde_json::from_str(payload).ok()?;
                 if let Some(object) = value.as_object_mut() {
-                    object.insert("today".into(), today(&client, &organization, &tz).await);
+                    object.insert("today".into(), today(&client, &organization, zone).await);
                 }
                 Some(Ok::<_, std::convert::Infallible>(
                     Event::default().data(value.to_string()),
@@ -1612,8 +1645,7 @@ async fn dashboard_stream(
 /// why the live half does not come from here — `calls` has three rows still
 /// marked `in-progress` from calls that died days ago, so counting those as
 /// live would give a figure that only ever grows.
-async fn today(client: &Client, organization: &str, tz: &str) -> Value {
-    let zone: chrono_tz::Tz = tz.parse().unwrap_or(chrono_tz::UTC);
+async fn today(client: &Client, organization: &str, zone: chrono_tz::Tz) -> Value {
     let midnight = chrono::Utc::now()
         .with_timezone(&zone)
         .date_naive()
@@ -1676,8 +1708,7 @@ async fn dashboard_history(
 
     let organization = org_id(&headers)?.to_owned();
     let client = authed_client(&state, &headers).await?;
-    let zone: chrono_tz::Tz =
-        query.get("tz").and_then(|tz| tz.parse().ok()).unwrap_or(chrono_tz::UTC);
+    let zone = business_zone(&client, &organization, query.get("tz").map(String::as_str)).await;
     // Bounded: a landing screen must not become an unbounded query somebody can
     // widen from the address bar.
     let days: i64 = query
@@ -2142,7 +2173,7 @@ async fn get_organization(
     let row = client
         .database()
         .from("organizations")
-        .select("id,name,slug,plan,settings,created_at,updated_at")
+        .select("id,name,slug,plan,settings,timezone,escalation_number,retention_days,intelligence_provider,intelligence_model,created_at,updated_at")
         .eq("id", &organization)
         .single_execute::<Value>()
         .await
@@ -2194,15 +2225,36 @@ async fn update_organization(
     let input = payload
         .as_object()
         .ok_or_else(|| ApiError::BadRequest("request body must be a JSON object".into()))?;
+    // An allowlist, not the whole row. `slug` is deliberately absent: it is half
+    // of every agent's PJSIP endpoint name, and `set_agent_endpoint()` re-derives
+    // those on write — so renaming it would rename every endpoint Asterisk knows
+    // and break every registration at once.
     let mut body = Map::new();
-    for field in ["name", "settings"] {
+    for field in [
+        "name",
+        "settings",
+        // The business's own clock. Everything that says "today" reads this.
+        "timezone",
+        // Where a failed call goes when no exception flow is bound. Wrong here
+        // means a caller hearing silence, which is why it is worth a field
+        // rather than a row somebody edits in SQL.
+        "escalation_number",
+        // How long a call's *content* is kept. Null keeps everything, which is
+        // what happens today.
+        "retention_days",
+        // Who reads the calls afterwards.
+        "intelligence_provider",
+        "intelligence_model",
+    ] {
         if let Some(value) = input.get(field) {
             body.insert(field.into(), value.clone());
         }
     }
     if body.is_empty() {
         return Err(ApiError::BadRequest(
-            "organization updates support name and settings".into(),
+            "nothing to update — the slug cannot be changed, because every agent's \
+             SIP endpoint is derived from it"
+                .into(),
         ));
     }
     let client = authed_client(&state, &headers).await?;
@@ -2225,22 +2277,30 @@ async fn update_organization(
     }))
 }
 
+/// Everyone in the organisation, with their extension if they have one.
+///
+/// Through `org_people` rather than a select on `memberships`, for a reason the
+/// old version made visible: **an email is not in `memberships`.** It lives in
+/// `auth.users`, PostgREST serves only the `public` schema, and the screen was
+/// left rendering the first eight characters of a uuid. The function joins the
+/// three tables a person is spread across — membership, auth user, extension —
+/// and is `security definer` because only a definer can reach the second.
+///
+/// It also answers the thing that made this worth doing: **an agent is not a
+/// second kind of person.** One list, and an extension is a column on it.
 async fn list_members(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
     let organization = org_id(&headers)?.to_owned();
     let client = authed_client(&state, &headers).await?;
-    let rows = client
+    let data = client
         .database()
-        .from("memberships")
-        .select("id,org_id,user_id,role,display_name,invited_email,created_at,updated_at")
-        .eq("org_id", &organization)
-        .execute::<Value>()
+        .rpc("org_people", Some(json!({ "p_org": organization })))
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
     Ok(Json(ApiResponse {
-        data: rows,
+        data,
         meta: json!({ "resource": "members", "organization_id": organization }),
     }))
 }

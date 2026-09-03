@@ -69,7 +69,6 @@ const SECTION_OF: Record<string, keyof typeof SECTION_ACCENTS> = {
 
     "/settings/organization": "Manage",
     "/team": "Manage",
-    "/settings/members": "Manage",
 };
 
 /** The pair for a destination, or nothing — which leaves it the resting grey. */
