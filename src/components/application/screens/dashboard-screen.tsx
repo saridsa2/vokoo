@@ -127,7 +127,7 @@ export const DashboardScreen = () => {
         <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto p-6 lg:p-8">
             <header className="flex flex-wrap items-baseline justify-between gap-3">
                 <div>
-                    <h1 className="text-display-xs font-semibold text-primary">Today</h1>
+                    <h1 className="text-display-xs font-semibold text-primary">Dashboard</h1>
                     <p className="mt-1 text-sm text-tertiary">
                         {data?.today
                             ? `Since midnight, ${data.today.timezone}.`
@@ -139,7 +139,7 @@ export const DashboardScreen = () => {
 
             <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
                 <Figure
-                    label="Calls answered"
+                    label="Calls Today"
                     value={data?.today?.answered ?? null}
                     note={
                         data?.today && data.today.answered > data.today.finished
@@ -147,9 +147,9 @@ export const DashboardScreen = () => {
                             : undefined
                     }
                 />
-                <Figure label="Time on the phone" value={data?.today ? minutes(data.today.seconds) : null} />
+                <Figure label="Talk Time" value={data?.today ? minutes(data.today.seconds) : null} />
                 <Figure
-                    label="On a call now"
+                    label="Active Calls"
                     value={data ? data.live : null}
                     note={
                         data && data.with_human > 0
@@ -158,60 +158,83 @@ export const DashboardScreen = () => {
                     }
                 />
                 <Figure
-                    label="Agents on duty"
+                    label="Agents Available"
                     value={data ? online : null}
                     note={agents.length ? `of ${agents.length}` : undefined}
                 />
             </section>
 
             <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold text-primary">Happening now</h2>
+                <h2 className="text-lg font-semibold text-primary">Active Calls</h2>
                 {calls.length === 0 ? (
                     <Empty>
                         {connected
-                            ? "Nobody is on the line. This fills in the moment a call arrives — it is not refreshed on a timer."
-                            : "Connecting to the line."}
+                            ? "No calls in progress."
+                            : "Connecting."}
                     </Empty>
                 ) : (
-                    <ul className="flex flex-col divide-y divide-secondary border-y border-secondary">
-                        {calls.map((call) => (
-                            <li key={call.id} className="flex flex-wrap items-center gap-3 py-3">
-                                <span className="font-mono text-sm text-primary">
-                                    {call.caller || "unknown caller"}
-                                </span>
-                                <span className="text-sm text-tertiary">
-                                    {call.agent ?? "still routing"}
-                                </span>
-                                {call.human ? (
-                                    // Not "handed over": the AI is still on the
-                                    // call, muted, taking notes. Saying it left
-                                    // would misdescribe what is happening.
-                                    <Badge color="brand" size="sm">
-                                        person joined
-                                    </Badge>
-                                ) : null}
-                                <span className="ml-auto text-sm text-tertiary tabular-nums">
-                                    {clock(elapsed(call))}
-                                </span>
-                                <span className="w-20 text-right text-xs text-quaternary">
-                                    {call.channel}
-                                </span>
-                            </li>
-                        ))}
-                    </ul>
+                    // A table, with a header row and aligned columns. It was a
+                    // flex row per call, which reads as a list of sentences —
+                    // the point of a live board is that the eye runs down one
+                    // column, and that needs the columns to exist.
+                    <div className="overflow-x-auto border border-secondary">
+                        <table className="w-full min-w-[46rem] border-collapse text-sm">
+                            <thead>
+                                <tr className="border-b border-secondary bg-secondary text-left">
+                                    <Th>Caller</Th>
+                                    <Th>Number Called</Th>
+                                    <Th>Agent</Th>
+                                    <Th>Type</Th>
+                                    <Th align="right">Duration</Th>
+                                    <Th>Channel</Th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {calls.map((call) => (
+                                    <tr
+                                        key={call.id}
+                                        className="border-b border-secondary last:border-0"
+                                    >
+                                        <Td mono>{call.caller || "Unknown"}</Td>
+                                        <Td mono muted>{call.did || "—"}</Td>
+                                        <Td>{call.agent ?? "Routing"}</Td>
+                                        <Td>
+                                            {/* Not "handed over": the AI stays
+                                                on the call, muted, taking
+                                                notes. Saying it left would
+                                                misdescribe what is happening. */}
+                                            {call.human ? (
+                                                <Badge color="brand" size="sm">
+                                                    AI + Person
+                                                </Badge>
+                                            ) : (
+                                                <Badge color="gray" size="sm">
+                                                    AI
+                                                </Badge>
+                                            )}
+                                        </Td>
+                                        <Td align="right" mono>
+                                            {clock(elapsed(call))}
+                                        </Td>
+                                        <Td muted>{call.channel}</Td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </section>
 
             <section className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold text-primary">Over the last two weeks</h2>
+                <h2 className="text-lg font-semibold text-primary">Reporting</h2>
                 <DashboardCharts history={history} />
             </section>
 
             <section className="flex flex-col gap-3">
                 <div className="flex items-baseline justify-between gap-3">
-                    <h2 className="text-lg font-semibold text-primary">Who can take a call</h2>
+                    <h2 className="text-lg font-semibold text-primary">Agents</h2>
                     <Button href="/team" color="link-color" size="sm">
-                        Manage the team
+                        Manage
                     </Button>
                 </div>
                 {agents.length === 0 ? (
@@ -325,6 +348,47 @@ const Dot = ({ state }: { state: RosterAgent["state"] }) => (
                       : "var(--color-fg-quaternary)",
         }}
     />
+);
+
+const Th = ({
+    children,
+    align,
+}: {
+    children: React.ReactNode;
+    align?: "right";
+}) => (
+    <th
+        scope="col"
+        className={`px-4 py-2.5 text-xs font-medium text-tertiary ${
+            align === "right" ? "text-right" : "text-left"
+        }`}
+    >
+        {children}
+    </th>
+);
+
+const Td = ({
+    children,
+    align,
+    mono,
+    muted,
+}: {
+    children: React.ReactNode;
+    align?: "right";
+    /** Numbers and identifiers, so digits line up down the column. */
+    mono?: boolean;
+    muted?: boolean;
+}) => (
+    <td
+        className={[
+            "px-4 py-3",
+            align === "right" ? "text-right" : "text-left",
+            mono ? "font-mono tabular-nums" : "",
+            muted ? "text-tertiary" : "text-primary",
+        ].join(" ")}
+    >
+        {children}
+    </td>
 );
 
 const Empty = ({ children }: { children: React.ReactNode }) => (

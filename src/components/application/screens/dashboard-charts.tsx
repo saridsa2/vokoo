@@ -8,18 +8,18 @@
  * off a number — a count of twenty says nothing about whether that is a good
  * day or a collapse.
  *
- * ## The data is marigold, and everything around it is not
+ * ## Data is blue, chrome is marigold, and there is no emphasis colour
  *
- * The first version drew all three in ink, and read as bland — correctly. The
- * brand ramp is achromatic, which is right for controls and wrong for data.
+ * Arrived at by being wrong twice. Drawn in the achromatic brand ramp the
+ * charts read as bland; redrawn in the navigation section's marigold with one
+ * ink bar for emphasis, that bar read as a rendering fault — and branding the
+ * data made the numbers look like decoration.
  *
- * The console already has a real accent system: one saturated pair per
- * navigation section, and the dashboard's is marigold. So the data takes the
- * colour of the section it belongs to, and the axes, grid and labels stay
- * neutral. **One hue at several weights, never two** — a second colour on the
- * same screen claims two things are different when they are one measurement
- * seen two ways. The only other value is ink, and it is used for exactly one
- * bar per chart: today, and the busiest hour.
+ * So the data has a hue of its own and the section colour stays on the frame,
+ * where it says which part of the product you are in. **One fill per series,
+ * no second value inside it**: a differently coloured bar claims the bars are
+ * different kinds of thing. The newest day is marked by being last, which the
+ * axis already says.
  *
  * Every colour is a token from `vokoo-brand.css`. A hex here could not follow
  * the theme, and there are two themes.
@@ -37,7 +37,6 @@ import {
     Bar,
     BarChart,
     CartesianGrid,
-    Rectangle,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -60,9 +59,11 @@ export type History = {
     timezone: string;
 };
 
+const DATA = "var(--chart-1)";
+const DATA_SOFT = "var(--chart-1-soft)";
+const DATA_WASH = "var(--chart-1-wash)";
+/** Chrome only — a panel's top rule. Never inside a chart. */
 const ACCENT = "var(--chart-accent)";
-const SOFT = "var(--chart-accent-soft)";
-const EMPHASIS = "var(--chart-emphasis)";
 const GRID = "var(--color-border-secondary)";
 const LABEL = "var(--color-text-tertiary)";
 
@@ -83,7 +84,6 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
     }
 
     const days = withMinutes(history.days);
-    const last = days.length - 1;
     // The busiest hour, emphasised rather than left for the reader to find by
     // comparing twenty-four bars.
     const peak = history.hours.reduce(
@@ -93,16 +93,16 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
 
     return (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Panel title="Calls a day" note={`Last ${days.length} days · ${history.timezone}`}>
+            <Panel title="Call Volume" note={`Last ${days.length} days · ${history.timezone}`}>
                 <ResponsiveContainer width="100%" height={210}>
                     <BarChart data={days} margin={margin}>
                         <defs>
                             {/* Down the bar rather than across it: a vertical
                                 fade reads as height, which is what the bar is
                                 measuring. */}
-                            <linearGradient id="bar-accent" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={ACCENT} stopOpacity={1} />
-                                <stop offset="100%" stopColor={SOFT} stopOpacity={0.85} />
+                            <linearGradient id="bar-data" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={DATA} stopOpacity={1} />
+                                <stop offset="100%" stopColor={DATA_SOFT} stopOpacity={0.9} />
                             </linearGradient>
                         </defs>
                         {/* Horizontal only. Vertical rules over a bar chart draw
@@ -112,18 +112,18 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                         <XAxis dataKey="label" {...axis} interval="preserveStartEnd" />
                         <YAxis {...axis} allowDecimals={false} width={40} />
                         <Tooltip {...tooltipProps} content={<Card unit="calls" />} />
-                        <Bar dataKey="calls" maxBarSize={26} shape={emphasise((index) => index === last)} />
+                        <Bar dataKey="calls" maxBarSize={26} fill="url(#bar-data)" />
                     </BarChart>
                 </ResponsiveContainer>
             </Panel>
 
-            <Panel title="Time on the phone" note="Minutes a day">
+            <Panel title="Talk Time" note="Minutes per day">
                 <ResponsiveContainer width="100%" height={210}>
                     <AreaChart data={days} margin={margin}>
                         <defs>
-                            <linearGradient id="area-accent" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={ACCENT} stopOpacity={0.32} />
-                                <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
+                            <linearGradient id="area-data" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={DATA} stopOpacity={0.28} />
+                                <stop offset="100%" stopColor={DATA} stopOpacity={0.02} />
                             </linearGradient>
                         </defs>
                         <CartesianGrid stroke={GRID} vertical={false} />
@@ -133,22 +133,22 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                         <Area
                             type="monotone"
                             dataKey="minutes"
-                            stroke={ACCENT}
+                            stroke={DATA}
                             strokeWidth={2}
-                            fill="url(#area-accent)"
+                            fill="url(#area-data)"
                             // No dot on every point — at fourteen days they
                             // crowd the line, and the shape is what is read.
                             // The hovered one still appears.
                             dot={false}
-                            activeDot={{ r: 4, fill: ACCENT, stroke: "var(--color-bg-primary)", strokeWidth: 2 }}
+                            activeDot={{ r: 4, fill: DATA, stroke: "var(--color-bg-primary)", strokeWidth: 2 }}
                         />
                     </AreaChart>
                 </ResponsiveContainer>
             </Panel>
 
             <Panel
-                title="When the phone rings"
-                note={`Busiest at ${hour(peak)} · ${history.timezone}`}
+                title="Calls by Hour"
+                note={`Peak ${hour(peak)} · ${history.timezone}`}
                 className="xl:col-span-2"
             >
                 <ResponsiveContainer width="100%" height={190}>
@@ -169,44 +169,16 @@ export const DashboardCharts = ({ history }: { history: History | null }) => {
                             content={<Card unit="calls" />}
                             labelFormatter={(value) => hour(Number(value))}
                         />
-                        <Bar
-                            dataKey="calls"
-                            maxBarSize={20}
-                            shape={emphasise((index) => index === peak, {
-                                // The quiet hours recede rather than
-                                // disappearing: an empty 03:00 is a fact about
-                                // the line, not a gap in the chart.
-                                rest: ACCENT,
-                                restOpacity: 0.55,
-                            })}
-                        />
+                        {/* Lighter than the daily chart, because this is the
+                            same measurement cut a second way rather than a
+                            second measurement. */}
+                        <Bar dataKey="calls" maxBarSize={20} fill={DATA} fillOpacity={0.7} />
                     </BarChart>
                 </ResponsiveContainer>
             </Panel>
         </div>
     );
 };
-
-/**
- * One bar per chart carries the emphasis; the rest carry the accent.
- *
- * The `shape` prop rather than `<Cell>`: Cell is deprecated in Recharts 3 and
- * goes in 4, and it was always the wrong shape for this — a child element per
- * datum, purely to set a fill.
- */
-const emphasise =
-    (isEmphasised: (index: number) => boolean, options?: { rest?: string; restOpacity?: number }) =>
-    (props: unknown) => {
-        const bar = props as { index?: number };
-        const on = isEmphasised(bar.index ?? -1);
-        return (
-            <Rectangle
-                {...(props as object)}
-                fill={on ? EMPHASIS : (options?.rest ?? "url(#bar-accent)")}
-                fillOpacity={on ? 1 : (options?.restOpacity ?? 1)}
-            />
-        );
-    };
 
 /** Seconds are what the record holds; minutes are what a person reads. */
 const withMinutes = (days: HistoryDay[]) =>
@@ -215,7 +187,7 @@ const withMinutes = (days: HistoryDay[]) =>
 const hour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 const tooltipProps = {
-    cursor: { fill: "var(--chart-accent-wash)" },
+    cursor: { fill: DATA_WASH },
 } as const;
 
 /**
@@ -247,7 +219,7 @@ const Card = ({
                 {labelFormatter && label !== undefined ? labelFormatter(label) : label}
             </p>
             <p className="text-sm font-semibold text-primary tabular-nums">
-                <span style={{ color: ACCENT }}>{point.value}</span> {unit}
+                <span style={{ color: DATA }}>{point.value}</span> {unit}
             </p>
         </div>
     );
