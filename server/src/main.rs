@@ -2295,7 +2295,7 @@ async fn get_organization(
     let row = client
         .database()
         .from("organizations")
-        .select("id,name,slug,plan,settings,timezone,escalation_number,retention_days,intelligence_provider,intelligence_model,created_at,updated_at")
+        .select("*")
         .eq("id", &organization)
         .single_execute::<Value>()
         .await
@@ -2367,6 +2367,21 @@ async fn update_organization(
         // Who reads the calls afterwards.
         "intelligence_provider",
         "intelligence_model",
+        // How the line behaves.
+        "max_concurrent_calls",
+        // What is kept.
+        "record_calls",
+        "redact_transcripts",
+        // What we are obliged to do. Writable through the API because the
+        // column has to be settable eventually; the console renders these
+        // read-only until outbound exists to honour them, because a compliance
+        // setting that stores and does not enforce is worse than one you cannot
+        // change.
+        "dnd_scrubbing",
+        "calling_window_start",
+        "calling_window_end",
+        "daily_call_cap",
+        "announce_recording",
     ] {
         if let Some(value) = input.get(field) {
             body.insert(field.into(), value.clone());
