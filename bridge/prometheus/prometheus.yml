@@ -1,0 +1,38 @@
+# Prometheus for the Sarvathra bridge.
+#
+# Deployed to /opt/vokoo/prometheus/prometheus.yml and run in Docker with
+# --network host, so `localhost` here is the VPS itself.
+#
+# **It listens on 127.0.0.1 only.** Prometheus has no authentication of its
+# own, and its query API would let anyone read every series and, through the
+# admin API, delete them. The way to look at it is an SSH tunnel:
+#
+#     ssh -L 9090:127.0.0.1:9090 vokoo
+#
+# then http://localhost:9090 in a browser.
+
+global:
+  # 15s is the usual default and the right trade here: the bridge's own
+  # counters are cheap to render, and a call lasts long enough that four
+  # samples a minute describe it well.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    host: vokoo
+
+scrape_configs:
+  # The thing that answers the phone.
+  - job_name: bridge
+    static_configs:
+      - targets: ["127.0.0.1:8080"]
+        labels:
+          service: vokoo-bridge
+    # If a scrape ever costs more than this, something is wrong with the
+    # registry rather than with the network — it is formatting a few hundred
+    # numbers held in memory.
+    scrape_timeout: 5s
+
+  # Prometheus watching itself, which is how you find out it stopped.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
