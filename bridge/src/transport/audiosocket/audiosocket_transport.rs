@@ -90,6 +90,22 @@ fn silence(wire_rate: u32) -> Vec<u8> {
 /// only so a runaway producer cannot grow the queue without limit.
 const MAX_QUEUE_FRAMES: usize = 3000;
 
+/// Frames to gather before an utterance starts playing — 60 ms.
+///
+/// **Without this the caller hears speech with holes in it.** The serializer
+/// emits at most one frame per pipeline chunk, and a chunk is 320 samples at
+/// 16 kHz which resamples to *about* 160 at 8 kHz — a stream resampler yields
+/// 159 or 161 as often as 160. On a short chunk `take_frame` returns nothing,
+/// no frame is queued for that tick, and the clock sends silence: a 20 ms hole
+/// in the middle of a word. Over a sentence that is heard as the voice dropping
+/// out intermittently, and it leaves no error anywhere.
+///
+/// Three frames of head start absorb that, because the shortfall is a sample or
+/// two per chunk and never a whole frame. It costs 60 ms before the agent's
+/// first syllable, which is below what anyone notices on a phone call and far
+/// below what a gap in the middle of one is worth.
+const PREROLL_FRAMES: usize = 3;
+
 const AUDIO_OUT_CHANNEL_CAP: usize = 150;
 
 /// One second of frames, the threshold worth mentioning in the log.
@@ -314,6 +330,12 @@ impl AudioSocketTransport {
         clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut deepest = 0usize;
         let mut dropped = 0usize;
+        // Whether an utterance is currently playing out. False between
+        // utterances, when silence is the right thing to send.
+        let mut speaking = false;
+        // Ticks that wanted audio and found none — the symptom this preroll
+        // exists to prevent, kept so it is visible if it ever returns.
+        let mut underruns = 0u64;
 
         // Instrumentation. A wire clocked at 50 frames a second is either
         // running at that rate or it is not, and every theory about why a call
@@ -423,6 +445,9 @@ impl AudioSocketTransport {
                             // this wire has — what Asterisk already holds is
                             // gone, which is why the queue is kept shallow.
                             outbound.clear();
+                            // The next utterance gathers its preroll again
+                            // rather than starting from whatever survived.
+                            speaking = false;
                             // Clears the serializer's own part-frame; returns
                             // nothing, because AudioSocket has no "stop
                             // playing" to send.
@@ -440,6 +465,15 @@ impl AudioSocketTransport {
                     // Silence when there is nothing to say. Not an idle state:
                     // it is what holds the call up between the caller's
                     // question and the agent's answer.
+                    // Start an utterance only once enough of it has arrived to
+                    // ride out the resampler's per-chunk jitter; stop when it
+                    // has all been spoken.
+                    if !speaking && outbound.len() >= PREROLL_FRAMES {
+                        speaking = true;
+                    } else if speaking && outbound.is_empty() {
+                        speaking = false;
+                    }
+
                     let frame = match tone_hz {
                         Some(hz) => tone_frame(
                             &mut tone_phase,
@@ -447,7 +481,15 @@ impl AudioSocketTransport {
                             self.wire_rate,
                             crate::serializers::audiosocket::frame_samples(self.wire_rate),
                         ),
-                        None => outbound.pop_front().unwrap_or_else(|| quiet.clone()),
+                        None if speaking => match outbound.pop_front() {
+                            Some(f) => f,
+                            None => {
+                                underruns += 1;
+                                quiet.clone()
+                            }
+                        },
+                        // Between utterances, and while one is still gathering.
+                        None => quiet.clone(),
                     };
                     frames_out += 1;
                     if let Some(f) = dump_out.as_mut() {
@@ -488,9 +530,12 @@ impl AudioSocketTransport {
 
         if deepest > FRAMES_PER_SECOND_USIZE {
             log::info!(
-                "AudioSocketTransport: outbound queue reached {deepest} frames ({} ms), {dropped} dropped",
+                "AudioSocketTransport: outbound queue reached {deepest} frames ({} ms), \
+                 {dropped} dropped, {underruns} underrun(s)",
                 deepest * 20,
             );
+        } else if underruns > 0 {
+            log::info!("AudioSocketTransport: {underruns} underrun(s) — gaps inside speech");
         }
 
         // Best-effort teardown: tell Asterisk the call is over so it returns to
@@ -738,6 +783,52 @@ mod tests {
                 "payload begins with an audio frame header — this is double-encoded",
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_utterance_waits_for_its_preroll_before_it_starts() {
+        // The gap this prevents: the serializer yields at most one frame per
+        // pipeline chunk, and the resampler sometimes yields 159 samples where
+        // 160 are needed. Draining on the first frame means the next short
+        // chunk sends silence into the middle of a word.
+        //
+        // Nothing here writes to the transport, so the queue never fills and
+        // every frame must be silence — never a partial utterance.
+        let (server, mut asterisk) = pair().await;
+        let transport = AudioSocketTransport::new("test", AudioSocketParams::default());
+        transport.set_serializer(Box::new(
+            crate::serializers::AudioSocketFrameSerializer::new(),
+        ));
+        let (push_tx, _push_rx) = mpsc::channel(8);
+        let handshake = AudioSocketHandshake {
+            uuid: "test".into(),
+            pending: Vec::new(),
+            reader: FrameReader::new(),
+        };
+        tokio::spawn(async move {
+            transport.run_socket(server, handshake, push_tx).await;
+        });
+
+        let mut reader = FrameReader::new();
+        let mut frames = Vec::new();
+        let mut buf = [0u8; 8192];
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(140);
+        while tokio::time::Instant::now() < deadline {
+            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await
+            else {
+                break;
+            };
+            if n == 0 {
+                break;
+            }
+            frames.extend(reader.feed(&buf[..n]));
+        }
+
+        assert!(frames.len() >= 4, "the clock must keep the wire fed regardless");
+        assert!(
+            frames.iter().all(|f| f.payload.iter().all(|&b| b == 0)),
+            "with nothing queued every frame is silence",
+        );
     }
 
     #[tokio::test]
