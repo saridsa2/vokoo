@@ -15,9 +15,9 @@ export const metadata: Metadata = createMetadata({
     // Said explicitly rather than left to the fallback: this is the one page
     // whose title is a search result, and "Sarvathra" alone tells somebody
     // scanning a page of results nothing about what it is.
-    title: "Sarvathra — AI phone reception for clinics and hospitals",
+    title: "Sarvathra — Patient journeys, turned into AI agents",
     description:
-        "Sarvathra answers the phone and the WhatsApp line for clinics and hospitals in India, in Hindi or English, around the clock. It books appointments, hands the call to your desk when the caller asks, and writes the outcome into your records.",
+        "Sarvathra turns patient care journeys into AI agents. Draw the journey once — enquiry, booking, reminder, follow-up — and it runs across voice, WhatsApp and your front desk, in Hindi or English, writing every outcome back to your systems.",
     path: "/",
 });
 

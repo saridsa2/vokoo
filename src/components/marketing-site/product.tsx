@@ -32,9 +32,9 @@ interface Tile {
 const TILES: Tile[] = [
   {
     index: "01.",
-    title: "It answers",
+    title: "You draw it",
 
-    body: "Your phone and your WhatsApp line, in Hindi or English. The caller picks on the keypad and every word after that is in their language.",
+    body: "The journey is a canvas, not a configuration screen. Every step — ask, check, book, remind, escalate, write back — is a node you place, and the drawing is what runs.",
     icon: Workflow,
     tone: "bg-accent text-accent-foreground",
 
@@ -43,9 +43,9 @@ const TILES: Tile[] = [
   },
   {
     index: "02.",
-    title: "It books",
+    title: "It runs",
 
-    body: "Finds the doctor and the day, offers what is free, confirms the time, and reads the reference back. When the caller asks for a person, it hands over.",
+    body: "On voice and WhatsApp, inbound and outbound, in Hindi or English. It finds the doctor and the day, confirms the time before booking, and hands to your desk the moment a patient asks for a person.",
     icon: Cube,
 
     tone: "bg-foreground/[0.08] text-foreground",
@@ -54,9 +54,9 @@ const TILES: Tile[] = [
   },
   {
     index: "03.",
-    title: "It writes it down",
+    title: "It writes back",
 
-    body: "After the call it reads the conversation into the fields you chose and sends them where you keep your patients — before anybody has opened a screen.",
+    body: "Every call is read into the fields you defined and delivered to your CRM or HIS. Nothing is left as a recording for somebody to listen to later.",
     icon: Sparkles,
 
     tone: "bg-foreground/[0.04] text-foreground",
@@ -98,7 +98,7 @@ export function Product(): ReactNode {
               mutedFrom={9}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Three things happen on every call, and none of them wait for a person to be free.
+The journey your clinic already runs, drawn once and executed by agents.
             </RevealHeadline>
 
             <motion.p
@@ -107,11 +107,12 @@ Three things happen on every call, and none of them wait for a person to be free
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
             >
-              A missed call is not a message to return later — it is a patient
-              who rang somebody else. Sarvathra answers on the first ring at
-              two in the morning as readily as at eleven on a Tuesday, in the
-              language the caller chose, and it stops being a phone system at
-              the point where it writes the outcome into your records.
+              Most of what a clinic loses is not a lost patient — it is a
+              patient nobody got back to. Sarvathra takes the journey you
+              already run informally and makes it something that executes:
+              on the first ring at two in the morning, in the language the
+              patient chose, ending in your records rather than in a voicemail
+              somebody will listen to on Monday.
             </motion.p>
 
             <motion.div

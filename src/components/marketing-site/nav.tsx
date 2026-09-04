@@ -51,7 +51,9 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
   return (
     <motion.nav
       aria-label="Primary"
-      className="fixed inset-x-0 top-0 z-50 pointer-events-none"
+      // `hero-surface` picks the white focus ring: this nav sits over the
+      // shader, where the brand cyan is the same colour as the ground.
+      className="hero-surface fixed inset-x-0 top-0 z-50 pointer-events-none"
       initial="hidden"
       animate="visible"
       transition={{ staggerChildren: 0.08, delayChildren: delay }}

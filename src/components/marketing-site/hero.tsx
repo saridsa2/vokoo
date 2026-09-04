@@ -104,7 +104,7 @@ export function Hero(): ReactNode {
               }}
               transition={{ staggerChildren: 0.12 }}
             >
-              {["The calls you miss", "are patients you lose."].map((line) => (
+              {["Patient journeys,", "turned into AI agents."].map((line) => (
                 <span
                   key={line}
                   className="block overflow-hidden pb-[0.05em]"
@@ -125,17 +125,17 @@ export function Hero(): ReactNode {
 
             <div className="flex items-end justify-between gap-8 max-[850px]:flex-col max-[850px]:items-start">
               <motion.p
-                className="max-w-xl text-2xl font-medium leading-snug tracking-tight text-white/90"
+                className="max-w-2xl text-2xl font-medium leading-snug tracking-tight text-white/90"
                 variants={{
                   hidden: { opacity: 0, y: 16 },
                   visible: { opacity: 1, y: 0 },
                 }}
                 transition={{ duration: 0.8, ease: easeOutExpo }}
               >
-                Sarvathra answers your phone and your WhatsApp line, in Hindi
-                or English, around the clock. It books the appointment, hands
-                to your desk when it should, and writes what happened into
-                your records.
+                Draw the journey once — the enquiry, the booking, the
+                reminder, the follow-up. Sarvathra runs it as agents across
+                voice, WhatsApp and your front desk, and recovers the
+                consultations that quietly fall through.
               </motion.p>
 
               {/* **The demo is the product.** There is no signup to send

@@ -15,15 +15,15 @@ interface Step {
 const STEPS: Step[] = [
   {
     eyebrow: "The problem",
-    body: "A clinic's phone rings while the desk is with a patient. After six, and on Sunday, it rings into an empty room. Every one of those is somebody who wanted an appointment.",
+    body: "Revenue does not leak in one place. An enquiry rings out at seven in the evening, a follow-up falls due and nobody calls, a referral is never chased. Each is a consultation your clinic had already earned.",
   },
   {
     eyebrow: "The approach",
-    body: "Sarvathra picks up instead. It speaks the caller's language, books against your diary, and hands to a person the moment the caller asks for one.",
+    body: "You draw the journey — who is contacted, when, what is asked, what happens with the answer. Sarvathra runs it as agents on voice, WhatsApp and your front desk, in the patient's own language.",
   },
   {
     eyebrow: "The outcome",
-    body: "The call is answered, the slot is taken, and what the caller wanted is written into your records before anybody reads it.",
+    body: "Every opportunity becomes an action. The call is answered or placed, the slot is taken, and what the patient wanted is written into your systems before anybody opens a screen.",
   },
 ];
 
@@ -221,8 +221,7 @@ export function ValueProp(): ReactNode {
 
         <div className="absolute inset-x-0 top-0 z-10 px-10 max-[850px]:px-6 pt-28 max-[850px]:pt-24 max-w-[1680px] mx-auto flex items-end justify-between gap-8">
           <h2 className="max-w-[22ch] text-[clamp(1.5rem,2.4vw,2.25rem)] font-medium leading-[1.15] tracking-tight text-foreground/80">
-            A phone that is never engaged, never closed, and never puts a
-            patient on hold.
+            Revenue efficiency across every stage of the patient journey.
           </h2>
           {/* Was `href="#"`. A link that goes nowhere is the tell of a
               template, and this one sits at eye level. It points at the

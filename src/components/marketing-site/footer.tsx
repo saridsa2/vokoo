@@ -39,7 +39,7 @@ export function Footer(): ReactNode {
                 </span>
                 <div className="mt-6 max-w-5xl text-4xl leading-[0.95] font-medium tracking-tighter sm:text-6xl lg:text-7xl xl:text-8xl">
                     <p className="block">Ring the line.</p>
-                    <p className="block text-foreground/55">Then tell us about your clinic.</p>
+                    <p className="block text-foreground/55">Then let&rsquo;s map your journeys.</p>
                 </div>
 
                 {/* Two, in the order somebody actually uses them: hear the thing
@@ -74,8 +74,8 @@ export function Footer(): ReactNode {
                         <span className="text-base font-bold tracking-[0.09em]">SARVATHRA</span>
                     </Link>
                     <p className="mt-4 max-w-sm leading-relaxed text-foreground/55">
-                        Sarvathra answers the phone for clinics and hospitals, in the caller&rsquo;s
-                        own language, and writes down what they wanted.
+                        Sarvathra turns patient care journeys into AI agents — on voice,
+                        WhatsApp and your front desk, in the patient&rsquo;s own language.
                     </p>
                 </div>
 

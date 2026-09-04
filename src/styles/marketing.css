@@ -90,3 +90,30 @@
     --color-brand-cyan: var(--brand-cyan);
     --color-brand-blue: var(--brand-blue);
 }
+
+/**
+ * The focus ring, in the brand's colour.
+ *
+ * The template styled focus nowhere and inherited the browser's default, which
+ * is correct for accessibility and looks like a rendering fault on a dark
+ * hero — a blue system rectangle around a nav item nobody appears to have
+ * selected.
+ *
+ * **Not removed.** A ring is how somebody navigating by keyboard knows where
+ * they are, and deleting it is the single most common accessibility regression
+ * on a marketing site. `:focus-visible` is the browser's own judgement about
+ * whether the ring is wanted, so this restyles that decision rather than
+ * overriding it: nothing appears after a mouse click, and what appears for a
+ * keyboard is the mark's cyan rather than the system blue.
+ */
+[data-site="marketing"] :focus-visible {
+    outline: 2px solid var(--brand-cyan);
+    outline-offset: 3px;
+    border-radius: 4px;
+}
+
+/* Over the hero the ground is the shader, where cyan on blue is the same
+   problem the mark had. White reads on it at any point in the animation. */
+[data-site="marketing"] .hero-surface :focus-visible {
+    outline-color: #ffffff;
+}

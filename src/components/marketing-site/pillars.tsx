@@ -25,19 +25,19 @@ const PILLARS: Pillar[] = [
   {
     tag: "01 — the voice",
     title: "It sounds like a person",
-    body: "Sub-quarter-second to first word, so there is no gap where a caller wonders whether anybody is there. Trained on Indian speech, so it gets the name right.",
+    body: "Sub-quarter-second to first word, so there is no gap where a patient wonders whether anybody is there. Trained on Indian speech, so it gets the name right the first time.",
     icon: Compass,
   },
   {
     tag: "02 — the handover",
     title: "It knows when to step aside",
-    body: "Ask for a person and you get one. If anything on the line breaks, the call is handed to your desk rather than left in silence.",
+    body: "Ask for a person and you get one. If anything on the line breaks, the call is handed to your desk rather than left in silence — the platform knows within seconds, and the patient never finds out.",
     icon: LayerGroup,
   },
   {
     tag: "03 — outbound",
     title: "It works both ways",
-    body: "The same agent that answers can place the call — reminders, follow-ups, results ready. One flow, drawn once, running in either direction.",
+    body: "One journey, drawn once, running in either direction — answering the enquiry and placing the reminder, the follow-up and the results-ready call.",
     icon: Bolt,
   },
 ];
@@ -73,7 +73,7 @@ export function Pillars(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Built for a clinic's phone, not adapted from a chatbot.
+Built for the way a clinic actually reaches a patient.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -83,7 +83,7 @@ Built for a clinic's phone, not adapted from a chatbot.
             >
               A phone line is unforgiving in ways a chat window is not. There
               is no scrollback, no spinner, and no second chance at a sentence
-              the caller did not catch.
+              the patient did not catch.
             </motion.p>
           </div>
         </div>

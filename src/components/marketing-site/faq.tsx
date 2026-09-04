@@ -122,7 +122,7 @@ export function Faq(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-What a clinic asks before it lets us answer the phone.
+What a hospital asks in the second meeting.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -130,8 +130,8 @@ What a clinic asks before it lets us answer the phone.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
             >
-              Every answer below describes something that runs today. Where a
-              thing is not built, it says so.
+              The questions that decide a procurement, answered without a
+              call.
             </motion.p>
           </div>
         </div>
