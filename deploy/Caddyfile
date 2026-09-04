@@ -79,5 +79,24 @@ platform.sarvathra.ai {
 # means every developer switching to this hostname first.
 api.sarvathra.ai {
 	encode gzip
-	reverse_proxy 127.0.0.1:8081
+
+	# **Only the verify endpoint**, and only because an emailed link has to be
+	# openable by the person who received it.
+	#
+	# GoTrue builds that link as {API_EXTERNAL_URL}/auth/v1/verify?token=...
+	# so API_EXTERNAL_URL has to be a public address — fixing SITE_URL alone
+	# leaves the link itself pointing at the tailnet, which is the half that
+	# is easy to miss because the *redirect* looks right.
+	#
+	# Kong on 8000 also fronts PostgREST, storage and the rest of the auth
+	# API. Publishing all of that to reach one endpoint would put the database
+	# API on the internet behind nothing but the anon key; this path handles
+	# a single-use token from an email and is designed to be public.
+	handle /auth/v1/verify* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8081
+	}
 }

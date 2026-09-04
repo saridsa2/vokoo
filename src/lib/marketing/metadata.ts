@@ -117,10 +117,19 @@ export function createMetadata({
   const finalDesc = description ?? siteConfig.description;
 
   return {
-    title: title ?? null,
+    // **Not `title ?? null`**, which is what this was. In Next, `null`
+    // suppresses the title rather than deferring to the parent — it exists to
+    // let a page opt out of a layout's `title.template`. This app's root
+    // layout sets a plain string and no template, so `null` wiped it and the
+    // page shipped with no `<title>` at all while `og:title` looked correct.
+    title: finalTitle,
     description: finalDesc,
     alternates: {
-      canonical: path,
+      // Absolute. `metadataBase` lives in the template's own root layout,
+      // which this app does not use — so a relative value stayed relative in
+      // the HTML, and a canonical is the one link that must be unambiguous
+      // about which host it means. This site answers on two.
+      canonical: url,
     },
     openGraph: {
       title: finalTitle,
