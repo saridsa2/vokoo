@@ -110,14 +110,27 @@ export function middleware(request: NextRequest) {
         return NextResponse.next();
     }
 
-    // The apex, and anything else pointed here. **Only the public site.**
+    // **The public site is down, deliberately.**
     //
-    // A 404 rather than a redirect for the signed-in routes: `sarvathra.ai/
-    // dashboard` is not a mistyped console URL worth rescuing, it is a route
-    // that does not exist on this product — and redirecting would hand a
-    // session-bearing page to an origin that must never hold one.
+    // Taken off on 5 September at the owner's instruction. It is done here
+    // rather than by stopping `vokoo-console` because one Next process serves
+    // all three hostnames — stopping the service would take the console and
+    // the operator portal down with it, and neither was asked for.
+    //
+    // `503` with `Retry-After` rather than a 404 or a redirect: a 404 tells a
+    // crawler the page is gone and invites it to drop the domain from its
+    // index, while a 503 is the standard "temporarily unavailable" and is
+    // treated as such. Nothing about the deployment changed, so restoring it
+    // is reverting this one branch.
     if (pathname === "/") {
-        return NextResponse.next();
+        return new NextResponse("sarvathra.ai — hello@sarvathra.ai", {
+            status: 503,
+            headers: {
+                "content-type": "text/plain; charset=utf-8",
+                "retry-after": "86400",
+                "cache-control": "no-store",
+            },
+        });
     }
     return new NextResponse("Not found", { status: 404 });
 }

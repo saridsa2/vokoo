@@ -48,6 +48,7 @@ import {
     faCompass,
     faCopy,
     faCube,
+    faDatabase,
     faDiagramProject,
     faDownload,
     faEllipsisVertical,
@@ -370,3 +371,9 @@ export const PhoneVolume = icon(faPhoneVolume);
  * files read unchanged.
  */
 export type LucideIcon = FC<IconProps>;
+
+/* The block library reaches for `Star` on rating rows. */
+export const Star = icon(faStar);
+
+/* The block library reaches for a database glyph on "writes back". */
+export const Database01 = icon(faDatabase);

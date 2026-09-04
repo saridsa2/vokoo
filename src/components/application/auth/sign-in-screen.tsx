@@ -90,9 +90,9 @@ function ProductPanel() {
                 The line beneath says what it means and puts the journey in it,
                 which is the frame this market is sold on. */}
             <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-                <p className="text-display-xs font-light text-primary">No patient falls through.</p>
+                <p className="text-display-xs font-light text-primary">Sarvathra</p>
                 <p className="text-md text-tertiary">
-                    Reach every patient, before and after they call.
+                    
                 </p>
             </div>
         </div>
