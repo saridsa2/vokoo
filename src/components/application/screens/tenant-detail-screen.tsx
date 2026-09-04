@@ -46,6 +46,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Chart } from "@/components/application/charts/chart";
 import { DataTable, type DataColumn } from "@/components/application/table/data-table";
 import { Select, type SelectItemType } from "@/components/base/select/select";
+import { keepDigits, keepPhone, NUMERIC_INPUT, PHONE_INPUT } from "@/utils/numeric-input";
 import { Tabs } from "@/components/application/tabs/tabs";
 import { api } from "@/utils/api-client";
 import { useNotify } from "@/components/application/notifications/notification-provider";
@@ -854,6 +855,7 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                             value={config.retention_days === null ? "" : String(config.retention_days)}
                             placeholder="keeps everything"
                             suffix="days"
+                            accepts="digits"
                             busy={saving === "retention"}
                             onCommit={(v) => save({ retention_days: v }, "retention")}
                         />
@@ -866,6 +868,7 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                         <Editable
                             value={config.escalation_number ?? ""}
                             placeholder="none"
+                            accepts="phone"
                             busy={saving === "escalation"}
                             onCommit={(v) => save({ escalation_number: v }, "escalation")}
                         />
@@ -882,6 +885,7 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                                     : String(config.max_concurrent_calls)
                             }
                             placeholder="not capped"
+                            accepts="digits"
                             busy={saving === "concurrency"}
                             onCommit={(v) => save({ max_concurrent_calls: v }, "concurrency")}
                         />
@@ -920,12 +924,12 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                         it. Flattening them would read as eight unrelated
                         options. */}
                     <Setting
-                        label="Reader"
-                        hint="Which model reads a finished call into a shape. Only providers serving an API this platform speaks are offered."
+                        label="Intelligence model"
+                        hint="Which model reads a finished call into a shape, for a post-call flow. Only providers serving an API this platform speaks are offered."
                     >
                         <span className="flex flex-wrap items-center gap-2">
                             <Select
-                                aria-label="Reader provider"
+                                aria-label="Intelligence provider"
                                 size="sm"
                                 placeholder="not set"
                                 selectedKey={config.intelligence_provider ?? null}
@@ -956,7 +960,7 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                                 )}
                             </Select>
                             <Select
-                                aria-label="Reader model"
+                                aria-label="Intelligence model"
                                 size="sm"
                                 placeholder="model"
                                 selectedKey={config.intelligence_model ?? null}
@@ -1345,22 +1349,31 @@ const Setting = ({
  *
  * Commits on blur and on Enter, reverts on Escape. No Save button: these are
  * independent settings, and a button would imply they are one transaction.
+ *
+ * `accepts` filters what can be typed. Three of these five settings are numbers
+ * — a day count, a call cap and a phone number — and all three were taking
+ * letters, which the database then refused after the field had been left.
  */
 const Editable = ({
     value,
     placeholder,
     suffix,
     busy,
+    accepts,
     onCommit,
 }: {
     value: string;
     placeholder: string;
     suffix?: string;
     busy?: boolean;
+    accepts?: "digits" | "phone";
     onCommit: (next: string) => void;
 }) => {
     const [draft, setDraft] = useState(value);
     useEffect(() => setDraft(value), [value]);
+
+    const clean =
+        accepts === "digits" ? keepDigits : accepts === "phone" ? keepPhone : (v: string) => v;
 
     return (
         <span className="flex items-center gap-2">
@@ -1370,7 +1383,12 @@ const Editable = ({
                 value={draft}
                 placeholder={placeholder}
                 isDisabled={busy}
-                onChange={setDraft}
+                {...(accepts === "phone"
+                    ? PHONE_INPUT
+                    : accepts === "digits"
+                      ? NUMERIC_INPUT
+                      : {})}
+                onChange={(next) => setDraft(clean(next))}
                 onBlur={() => draft !== value && onCommit(draft)}
                 onKeyDown={(event) => {
                     const field = event.target as HTMLInputElement;

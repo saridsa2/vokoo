@@ -457,6 +457,20 @@ export const api = {
     operatorPlans: <T>(context: AccessContext) =>
         request<T[]>("/api/v1/operator/plans", {}, asOperator(context)),
 
+    /**
+     * Add a plan.
+     *
+     * The id travels in the body rather than the path: it is chosen by the
+     * caller and validated by the database, and a rejected id in a URL is a 404
+     * that reads as a routing mistake.
+     */
+    operatorCreatePlan: <T>(plan: Record<string, unknown>, context: AccessContext) =>
+        request<T>(
+            "/api/v1/operator/plans",
+            { method: "POST", body: JSON.stringify(plan) },
+            asOperator(context),
+        ),
+
     operatorSetPlan: <T>(id: string, patch: Record<string, unknown>, context: AccessContext) =>
         request<T>(
             `/api/v1/operator/plans/${id}`,

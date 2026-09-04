@@ -11,6 +11,7 @@ import { Table, TableCard } from "@/components/application/table/table";
 import { useSession } from "@/hooks/use-session";
 import { ApiError, api } from "@/utils/api-client";
 import { dateTime, timeAgo } from "@/utils/format";
+import { keepDigits, keepPhone, NUMERIC_INPUT, PHONE_INPUT } from "@/utils/numeric-input";
 
 /**
  * Settings screens.
@@ -481,17 +482,22 @@ const Pane = ({
         case "calls":
             return (
                 <Card>
+                    {/* Both filtered as they are typed. A number that will be
+                        dialled and a count of calls cannot hold letters, and
+                        both were accepting them and failing at save. */}
                     <Input
                         label="Escalation number"
                         value={value("escalation_number")}
-                        onChange={set("escalation_number")}
+                        onChange={(next) => set("escalation_number")(keepPhone(next))}
+                        {...PHONE_INPUT}
                         placeholder="6309248884"
                         hint="Empty means the caller hears silence."
                     />
                     <Input
                         label="Concurrent call limit"
                         value={value("max_concurrent_calls")}
-                        onChange={set("max_concurrent_calls")}
+                        onChange={(next) => set("max_concurrent_calls")(keepDigits(next))}
+                        {...NUMERIC_INPUT}
                         placeholder="Leave empty for the carrier's limit"
                         hint="Empty means the carrier's three is the only limit."
                     />
@@ -514,7 +520,8 @@ const Pane = ({
                     <Input
                         label="Retention (days)"
                         value={value("retention_days")}
-                        onChange={set("retention_days")}
+                        onChange={(next) => set("retention_days")(keepDigits(next))}
+                        {...NUMERIC_INPUT}
                         placeholder="Leave empty to keep everything"
                         hint="Empty keeps everything."
                     />

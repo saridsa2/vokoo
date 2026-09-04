@@ -2677,6 +2677,33 @@ async fn operator_plans(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "plans" }) }))
 }
 
+/// Add a plan.
+///
+/// The id comes in the body rather than the path because it is chosen here —
+/// `operator_create_plan` refuses anything that is not a slug, and a rejected id
+/// in a URL is a 404 shaped like a routing mistake.
+async fn operator_create_plan(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut body): Json<Value>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let id = body
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(object) = body.as_object_mut() {
+        object.remove("id");
+    }
+    let data = client
+        .database()
+        .rpc("operator_create_plan", Some(json!({ "p_id": id, "p_patch": body })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "plans" }) }))
+}
+
 async fn operator_set_plan(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -3800,7 +3827,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/engines", get(list_available_engines))
         .route("/api/v1/settings/choices", get(setting_choices))
         .route("/api/v1/operator/packs", get(operator_packs))
-        .route("/api/v1/operator/plans", get(operator_plans))
+        .route("/api/v1/operator/plans", get(operator_plans).post(operator_create_plan))
         .route("/api/v1/operator/plans/{id}", get(operator_plans).patch(operator_set_plan))
         .route("/api/v1/operator/periods", get(operator_billing_periods))
         .route("/api/v1/operator/tenants/{id}/period", get(tenant_billing_period).post(operator_open_period))

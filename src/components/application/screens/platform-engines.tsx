@@ -30,6 +30,7 @@ import { InfoHint } from "@/components/base/tooltip/info-hint";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
+import { DECIMAL_INPUT, keepDecimal } from "@/utils/numeric-input";
 import { Select } from "@/components/base/select/select";
 import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
@@ -235,14 +236,16 @@ const PriceDialog = ({ engine, onClose, onSaved }: { engine: Engine; onClose: ()
                             <Input
                                 label={`Per minute (${engine.price_currency})`}
                                 value={perMinute}
-                                onChange={setPerMinute}
+                                onChange={(next) => setPerMinute(keepDecimal(next))}
+                                {...DECIMAL_INPUT}
                                 autoFocus
                                 hint="Each call rounds up to the next whole minute."
                             />
                             <Input
                                 label={`Per call (${engine.price_currency})`}
                                 value={perCall}
-                                onChange={setPerCall}
+                                onChange={(next) => setPerCall(keepDecimal(next))}
+                                {...DECIMAL_INPUT}
                                 hint="A connect fee, charged once. Leave blank for none."
                             />
                         </div>

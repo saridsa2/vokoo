@@ -19,6 +19,20 @@
  *
  * So the card says both, in those words, rather than listing "3 items".
  *
+ * The naming is not a gap in what a pack delivers. Since 0106 seeding also
+ * grants the workspace use of the engines the pack names, so one pack arrives
+ * as one working set — agents, the flow that answers, and the right to run
+ * them. It used to deliver the first two and leave the third to somebody
+ * remembering.
+ *
+ * ## Why skills and tools are not in a pack
+ *
+ * A skill is org-scoped, so a pack could only copy one — and a skill is the
+ * piece most likely to need fixing across every customer at once, which a copy
+ * makes impossible. A tool shipped in a pack cannot authenticate at all:
+ * `ctx.secrets` is `{}` on every invocation. Both are suggested when somebody
+ * edits an agent instead, which creates no row.
+ *
  * ## What it does not offer
  *
  * No editing. Authoring a pack is its own screen and this is not it — seeing
@@ -132,7 +146,7 @@ export const PlatformPacksScreen = () => {
                                         </Line>
                                         <Line
                                             term="Runs on"
-                                            hint="Named, not copied. The engine stays the platform's, so a change to it reaches every workspace on it at once."
+                                            hint="Named, not copied — the engine stays the platform's, so a change to it reaches every workspace on it at once. Seeding the pack grants the workspace the right to use it, so what arrives is one working set rather than agents pointing at something they may not run."
                                         >
                                             {pack.engines.length > 0 ? (
                                                 <span className="flex flex-wrap gap-1.5">
@@ -169,12 +183,6 @@ export const PlatformPacksScreen = () => {
                 {packs === null ? (
                     <p className="text-sm text-tertiary">Loading.</p>
                 ) : null}
-
-                <p className="text-sm text-quaternary">
-                    Skills and tools are not seeded. A skill would be copied and then could never be
-                    fixed across every customer at once; a tool shipped in a pack cannot
-                    authenticate. They are suggested when somebody edits an agent instead.
-                </p>
             </div>
         </div>
     );

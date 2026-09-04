@@ -24,6 +24,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { api } from "@/utils/api-client";
+import { keepPhone, PHONE_INPUT } from "@/utils/numeric-input";
 import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
@@ -164,10 +165,15 @@ const AddNumber = ({ onClose, onAdded }: { onClose: () => void; onAdded: () => v
                             It goes into the pool unassigned.
                         </p>
                         <div className="mt-5 flex flex-col gap-4">
+                            {/* Filtered as it is typed: this holds E.164, so
+                                letters, spaces and brackets are not a format
+                                to strip later but characters the field should
+                                never take. */}
                             <Input
                                 label="Number"
                                 value={number}
-                                onChange={setNumber}
+                                onChange={(next) => setNumber(keepPhone(next))}
+                                {...PHONE_INPUT}
                                 autoFocus
                                 isInvalid={Boolean(number) && !valid}
                                 hint={
