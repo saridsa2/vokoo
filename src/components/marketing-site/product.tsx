@@ -32,9 +32,9 @@ interface Tile {
 const TILES: Tile[] = [
   {
     index: "01.",
-    title: "Transplant",
+    title: "It holds the conversation",
 
-    body: "Stay close to a patient between visits — the level that is due, the dose that was missed, the question nobody was there to answer.",
+    body: "Spoken follow-up for every patient on a protocol, by phone or WhatsApp, in the language they answer in — with the questions your team defined.",
     icon: Workflow,
     tone: "bg-accent text-accent-foreground",
 
@@ -43,9 +43,9 @@ const TILES: Tile[] = [
   },
   {
     index: "02.",
-    title: "Oncology",
+    title: "It follows the answer",
 
-    body: "Check how somebody is doing through a course of treatment, in the weeks at home where nobody is watching and everything is decided.",
+    body: "What the patient reports decides the route through the journey, and brings a nurse onto the live call when the answer needs one.",
     icon: Cube,
 
     tone: "bg-foreground/[0.08] text-foreground",
@@ -54,9 +54,9 @@ const TILES: Tile[] = [
   },
   {
     index: "03.",
-    title: "Surgery",
+    title: "It returns the record",
 
-    body: "Prepare a patient before admission and follow them after discharge, without a coordinator working through a list by hand.",
+    body: "An account of what was asked, what the patient said and what happened next, written into the hospital\u2019s own records.",
     icon: Sparkles,
 
     tone: "bg-foreground/[0.04] text-foreground",
@@ -87,7 +87,7 @@ export function Product(): ReactNode {
               transition={{ duration: 0.6, ease: easeOutExpo }}
               className="inline-flex items-center rounded-md border border-foreground/[0.08] px-3.5 py-1.5 font-mono text-xs uppercase tracking-widest text-foreground/70"
             >
-              Built around your standard of care
+              The problem it solves
             </motion.span>
           </div>
 
@@ -98,7 +98,7 @@ export function Product(): ReactNode {
               mutedFrom={9}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Care does not end when the patient leaves.
+Getting there in time is most of the job.
             </RevealHeadline>
 
             <motion.p
@@ -107,14 +107,12 @@ Care does not end when the patient leaves.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
             >
-              Your hospital already knows what good care asks for. A call
-              after discharge. A check that the medicine was started.
-              Preparation before a procedure. A regular question about
-              symptoms. Sarvathra holds each of those as a real conversation,
-              with every patient, at the right point in their care — and when
-              a patient reports something clinical, a nurse joins the live
-              call. It does not advise. It does not triage. It does not
-              reassure.
+              A follow-up that happens a fortnight late is a follow-up that
+              did not happen. Outreach tools are built to get a message out
+              and to report that it went; in medicine the timing is the
+              clinical part. Sarvathra works from where a patient is in their
+              treatment and how urgent their situation is — and from what they
+              tell us when somebody asks.
             </motion.p>
 
             <motion.div

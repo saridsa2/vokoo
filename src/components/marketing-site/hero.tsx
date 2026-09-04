@@ -132,10 +132,11 @@ export function Hero(): ReactNode {
                 }}
                 transition={{ duration: 0.8, ease: easeOutExpo }}
               >
-                Sarvathra stays present after discharge, before a procedure,
-                and through a long course of treatment. It speaks with every
-                patient on the protocol, in their own language. It listens, and
-                what they say decides what happens next.
+                Sarvathra is how a hospital stays with its patients between
+                visits. It lets clinical and coordination teams carry a care
+                protocol to every patient on it, and brings together the
+                protocol, the conversation with the patient, the clinical team
+                and the hospital record.
               </motion.p>
 
               {/* **The demo is the product.** There is no signup to send
