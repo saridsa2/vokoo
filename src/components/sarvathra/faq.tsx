@@ -8,41 +8,68 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type QA = { question: string; answer: string };
 
+/**
+ * The questions a hospital asks before it lets somebody else answer its phone.
+ *
+ * Carried over from the previous site rather than rewritten, because they were
+ * already the right questions and every answer is one this product can stand
+ * behind. Only the container changed.
+ */
 const FAQS: QA[] = [
   {
-    question: "What exactly is Sentinel?",
+    question: "What is a care pathway here?",
     answer:
-      "Sentinel is a unified security platform that collapses detection, response, and governance into one system of record. Every alert, log, and identity event flows into a single correlated graph, so your team acts on real threats instead of stitching together a dozen consoles.",
+      "The contacts your protocol already implies, drawn as a graph: the pre-cycle labs reminder, the confirmation, the symptom check on day three, the scan reminder, the follow-up at six months. Each is a step with its own timing, its own questions and its own rule for when a person takes over. The drawing is what runs.",
   },
   {
-    question: "Which environments and clouds does Sentinel cover?",
+    question: "Does it give clinical advice?",
     answer:
-      "Sentinel runs across AWS, GCP, Azure, Kubernetes, and on-prem workloads from a single control plane. Agentless connectors cover most sources in minutes, while a lightweight collector handles anything that lives behind your firewall.",
+      "No, and it is built so that it cannot drift into doing so. It asks the questions your protocol specifies and records the answers. Anything that is a symptom, a dose question or a sign of deterioration is handed to a nurse with what the patient said — it does not triage, reassure or advise.",
   },
   {
-    question: "How does Sentinel handle data security and compliance?",
+    question: "What happens if a patient reports something serious?",
     answer:
-      "Data is encrypted in transit and at rest with hardware-backed keys, and every action is written to an immutable audit trail. Sentinel is SOC 2 Type II and ISO 27001 certified, with regional data residency available for GDPR and HIPAA programs.",
+      "The call is escalated to a number your department nominates, during the same call rather than as a task somebody picks up later, and what the patient said travels with it. If nobody answers there, that is a failure the platform reports rather than absorbs.",
   },
   {
-    question: "How long does it take to deploy?",
+    question: "Where does patient data go?",
     answer:
-      "Most teams are ingesting signal on day one. Connect your first sources through the guided setup, and Sentinel begins correlating events immediately — no professional-services engagement or multi-quarter rollout required.",
+      "It stays in your workspace. Recording is off unless you turn it on, and how long a call's content is kept is a number you set — when it lapses the content is deleted. What leaves is what you chose to send: the fields you defined, delivered to your own systems.",
   },
   {
-    question: "Will it integrate with our existing stack?",
+    question: "Does it write into our HIS?",
     answer:
-      "Yes. Sentinel ships with native integrations for the common SIEMs, identity providers, ticketing tools, and chat platforms, plus a full REST API and webhooks so you can wire automated playbooks into whatever you already run.",
+      "It delivers outward. After a call it reads the conversation into the fields you defined and posts them to your HIS or CRM over a webhook, carrying the call id so that a retry can never create a second record. Nothing is installed beside your systems and no database is opened to us.",
   },
   {
-    question: "How is access controlled and audited?",
+    question: "Can it run different pathways per department?",
     answer:
-      "Granular role-based access, SSO, and SCIM provisioning keep permissions tight, while every login and change is logged and exportable. Automated playbooks can revoke access the instant a risky pattern is detected.",
+      "That is the usual shape. Oncology and transplant do not ask a patient the same questions, escalate to the same people, or run on the same clock — so each draws its own, and a department can change its own without a release or a ticket to anybody.",
   },
   {
-    question: "Can Sentinel be self-hosted?",
+    question: "What about patients who do not answer?",
     answer:
-      "Teams with strict data-control requirements can run Sentinel entirely within their own VPC or private cloud. You keep full ownership of the data plane while still receiving managed updates to the detection engine.",
+      "Retries are part of the pathway rather than a setting buried somewhere: how many, how far apart, and what happens when the attempts are exhausted — usually a coordinator's list, which is now short and holds only the people who genuinely need a call from a person.",
+  },
+  {
+    question: "Which languages?",
+    answer:
+      "Hindi and English today, settled before the conversation starts rather than guessed from an accent, so the ear, the voice and the wording stay in one language for the whole call. More languages are a configuration change rather than a rebuild.",
+  },
+  {
+    question: "Does it work on WhatsApp?",
+    answer:
+      "Yes. WhatsApp Business calls arrive on the same platform and reach the same pathway. There is no keypad there, so it settles the language by asking once.",
+  },
+  {
+    question: "Can we see it run before it touches a patient?",
+    answer:
+      "Yes, and this is the part worth asking about. A pathway can be replayed against a real finished call and shows every step's input, output and timing — including exactly what would have been written to your systems, without writing it. You watch it execute before it speaks to anybody.",
+  },
+  {
+    question: "How do we start?",
+    answer:
+      "Call +91 80408 02529 and talk to the thing itself, then write to hello@sarvathra.ai. The first conversation is about one department, one protocol, and where its patient records live — not a signup form.",
   },
 ];
 
@@ -140,7 +167,10 @@ export function Faq(): ReactNode {
   }, []);
 
   return (
-    <section className="mx-auto max-w-[1440px] px-5 pb-24 sm:px-8 sm:pb-32 lg:px-10">
+    <section
+      id="faq"
+      className="mx-auto max-w-[1440px] scroll-mt-24 px-5 pb-24 sm:px-8 sm:pb-32 lg:px-10"
+    >
       <div className="relative grid border-y border-border lg:grid-cols-[0.85fr_1.15fr]">
         {/* Outer frame corners */}
         <CornerPlus className="left-0 top-0 -translate-x-1/2 -translate-y-1/2" />
@@ -151,15 +181,15 @@ export function Faq(): ReactNode {
         {/* Left: heading */}
         <div className="border-b border-border py-10 lg:border-b-0 lg:border-r lg:py-16 lg:pr-12">
           <h2 className="text-balance font-serif text-4xl font-normal leading-[1.05] tracking-[-0.01em] sm:text-5xl lg:text-[3.5rem]">
-            Frequently asked questions
+            What a hospital asks first
           </h2>
           <p className="mt-6 max-w-sm text-sm leading-relaxed text-muted-foreground sm:text-base">
-            Everything you need to know about deploying Sentinel. Can&apos;t find
-            an answer? Our security team is one message away.
+            Before a department lets somebody else speak to its patients. If
+            yours is not here, the phone is the fastest way to ask it.
           </p>
           <div className="mt-8">
-            <CutButton href="#contact" variant="outline">
-              Talk to our team
+            <CutButton href="tel:+918040802529" variant="outline">
+              Call +91 80408 02529
             </CutButton>
           </div>
         </div>

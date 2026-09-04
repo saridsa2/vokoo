@@ -1,73 +1,46 @@
 import { CutButton } from "@/components/sarvathra/cut-button";
 import { Logo } from "@/components/sarvathra/logo";
-import { Github, Linkedin, Youtube } from "@/components/icons";
 import type { CSSProperties, ReactNode } from "react";
 
 type FooterLink = { label: string; href: string };
 
+/**
+ * Only destinations that exist.
+ *
+ * The template's footer named Pricing, Customers, Integrations, Documentation,
+ * Developers, Changelog and System Status — every one of them a link to a page
+ * a template does not have. A footer full of dead anchors is the same fault as
+ * a logo wall of customers we do not have: it looks like a bigger company and
+ * fails the moment anybody clicks.
+ */
 const COLUMNS: { title: string; links: FooterLink[] }[] = [
   {
-    title: "Product",
+    title: "Platform",
     links: [
-      { label: "Platform", href: "#platform" },
-      { label: "Pricing", href: "#pricing" },
-      { label: "Customers", href: "#customers" },
-      { label: "Integrations", href: "#integrations" },
+      { label: "Care pathways", href: "#pathways" },
+      { label: "The call", href: "#the-call" },
+      { label: "Escalation", href: "#escalation" },
+      { label: "Your records", href: "#records" },
     ],
   },
   {
-    title: "Resources",
+    title: "Answers",
     links: [
-      { label: "Documentation", href: "#docs" },
-      { label: "Developers", href: "#developers" },
-      { label: "Changelog", href: "#changelog" },
-      { label: "System Status", href: "#status" },
-    ],
-  },
-  {
-    title: "Legal",
-    links: [
-      { label: "Privacy Policy", href: "#privacy" },
-      { label: "Terms & Conditions", href: "#terms" },
+      { label: "Questions", href: "#faq" },
+      { label: "Hear it answer", href: "tel:+918040802529" },
     ],
   },
 ];
 
-function XIcon({ className }: { className?: string }): ReactNode {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-    </svg>
-  );
-}
-
-const SOCIALS: { label: string; href: string; icon: ReactNode }[] = [
-  {
-    label: "GitHub",
-    href: "#github",
-    icon: <Github className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />,
-  },
-  {
-    label: "LinkedIn",
-    href: "#linkedin",
-    icon: <Linkedin className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />,
-  },
-  {
-    label: "X",
-    href: "#x",
-    icon: <XIcon className="h-3.5 w-3.5" />,
-  },
-  {
-    label: "YouTube",
-    href: "#youtube",
-    icon: <Youtube className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />,
-  },
-];
+/**
+ * Empty on purpose.
+ *
+ * The template linked GitHub, LinkedIn, X and YouTube. Sarvathra has no
+ * accounts on any of them, and four icons pointing at `#github` are worse than
+ * none — the row renders nothing while the array is empty, so adding a real
+ * account later is one line here.
+ */
+const SOCIALS: { label: string; href: string; icon: ReactNode }[] = [];
 
 const PANEL_CLIP =
   "polygon(28px 0, 100% 0, 100% calc(100% - 28px), calc(100% - 28px) 100%, 0 100%, 0 28px)";
@@ -155,16 +128,13 @@ export function Footer(): ReactNode {
             ))}
 
             <FooterColumn
-              index={3}
-              title="Connect"
-              links={[{ label: "Contact Sales", href: "#contact" }]}
+              index={2}
+              title="Talk to us"
+              links={[{ label: "hello@sarvathra.ai", href: "mailto:hello@sarvathra.ai" }]}
             >
               <div className="mt-6 flex flex-col items-start gap-2.5">
-                <CutButton variant="solid" href="#talk-to-us">
-                  Talk to us
-                </CutButton>
-                <CutButton variant="outline" href="#get-started">
-                  Get started
+                <CutButton variant="solid" href="tel:+918040802529">
+                  +91 80408 02529
                 </CutButton>
               </div>
             </FooterColumn>
@@ -172,7 +142,7 @@ export function Footer(): ReactNode {
 
           <div className="mt-12 flex flex-col-reverse items-start justify-between gap-6 pt-6 sm:flex-row sm:items-center md:mt-14">
             <p className="text-xs text-muted-foreground">
-              © {new Date().getFullYear()} Sentinel. All rights reserved.
+              © {new Date().getFullYear()} Sarvathra. All rights reserved.
             </p>
 
             <div className="flex items-center gap-4">

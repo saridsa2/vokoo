@@ -51,9 +51,15 @@ export function Hero(): ReactNode {
             transition={itemTransition}
             className="text-balance font-serif text-4xl font-normal leading-[1.1] tracking-[-0.01em] sm:text-5xl lg:text-[3.5rem]"
           >
-            Secure your Enterprise Stack{" "}
+            {/* The template splits its headline between the serif and the
+                sans, and the split is the design: the serif half is the
+                subject, the sans half is the claim. Ours divides the same way —
+                "Your care" in the serif, "wherever your patient is" in the
+                sans — which is also where the name comes from. सर्वत्र means
+                everywhere. */}
+            Your care,{" "}
             <span className="font-sans font-medium tracking-tight">
-              at AI Speed
+              wherever your patient is
             </span>
           </motion.h1>
 
@@ -62,9 +68,7 @@ export function Hero(): ReactNode {
             transition={itemTransition}
             className="mt-4 max-w-xl text-balance text-[15px] leading-relaxed text-muted-foreground sm:text-base"
           >
-            Sentinel gives security teams the building blocks for a unified
-            platform that meets complex compliance needs and adapts as fast as
-            threats evolve.
+            An ally for your patients. Relief for your care teams.
           </motion.p>
 
           <motion.div
@@ -72,11 +76,13 @@ export function Hero(): ReactNode {
             transition={itemTransition}
             className="mt-7 flex items-center justify-center gap-3"
           >
-            <CutButton variant="solid" href="#get-started">
-              Get Started
+            {/* The strongest thing to offer is the product answering, not a
+                signup form there is nothing behind. The number is live. */}
+            <CutButton variant="solid" href="tel:+918040802529">
+              Hear it answer
             </CutButton>
-            <CutButton variant="outline" href="#talk-to-us">
-              Talk to Us
+            <CutButton variant="outline" href="#pathways">
+              See how it works
             </CutButton>
           </motion.div>
         </motion.div>

@@ -1,16 +1,17 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
-import { Assurance } from "@/components/marketing-site/assurance";
-import { Faq } from "@/components/marketing-site/faq";
-import { FinalCta } from "@/components/marketing-site/final-cta";
-import { Footer } from "@/components/marketing-site/footer";
-import { Hero } from "@/components/marketing-site/hero";
-import { Pillars } from "@/components/marketing-site/pillars";
-import { Product } from "@/components/marketing-site/product";
 import { StructuredData } from "@/components/marketing-site/structured-data";
-import { ValueProp } from "@/components/marketing-site/value-prop";
+import { Faq } from "@/components/sarvathra/faq";
+import { Features } from "@/components/sarvathra/features";
+import { FinalCta } from "@/components/sarvathra/final-cta";
+import { Footer } from "@/components/sarvathra/footer";
+import { Hero } from "@/components/sarvathra/hero";
+import { HeroWaves } from "@/components/sarvathra/hero-waves";
+import { Nav } from "@/components/sarvathra/nav";
+import { WindowMockup } from "@/components/sarvathra/window-mockup";
 import { createMetadata } from "@/lib/marketing/metadata";
+import { InView, MotionSection } from "@/lib/sarvathra/motion";
 
 export const metadata: Metadata = createMetadata({
     // Said explicitly rather than left to the fallback: this is the one page
@@ -23,46 +24,78 @@ export const metadata: Metadata = createMetadata({
 });
 
 /**
- * sarvathra.ai.
+ * sarvathra.ai, on React Bits' Security template.
  *
- * ## Two sections the template shipped are not here
+ * ## Why this template, and what it changed
  *
- * **Partners** was a logo wall and **Pricing** a two-tier table. Both were cut
- * on the same test, which is the one this project keeps applying to its own
- * screens: does the thing behind it exist.
+ * Its hero is a picture of the product's own dashboard. Every previous version
+ * of this page opened with a shader and then argued in paragraphs, which is
+ * what kept failing: a page that has to describe itself is one nobody reads.
+ * Here the screen does the describing and the writing gets out of the way.
  *
- * There is no logo wall because there is no list of customers we can name, and
- * a trust strip filled with placeholder marks is worse than an absent one — it
- * reads as a page that failed to load, and to anybody who looks closely, as a
- * claim we could not support.
+ * ## Seven of its fifteen sections are not here
  *
- * There is no pricing table because prices are not published. Plans are real
- * and live in the database; putting them on a public page is a commercial
- * decision that was taken the other way. The FAQ says how to start instead,
- * which is a phone call.
+ * Cut on the test this project keeps applying to its own screens — does the
+ * thing behind it exist:
  *
- * ## The order the sections run in
+ * - **TrustedBy** shipped Stripe, Spotify, Anthropic, Vercel and Dropbox
+ *   wordmarks. Those are a template's placeholders; on our domain they are a
+ *   claim about customers we do not have.
+ * - **Testimonials** pairs invented quotes with photographs of people. There
+ *   is no version of that which is not a fabrication.
+ * - **CaseStudy** is hardcoded to Spotify.
+ * - **Stats** is three animated counters of invented performance claims
+ *   ("97% reduction in alert noise"). Keeping the band and filling it with
+ *   numbers we could support would be inventing a section to justify a
+ *   component.
+ * - **Pricing** — prices are not published. That is a commercial decision
+ *   already taken the other way, and the FAQ says how to start instead.
+ * - **CoverageGrid** and **ValueProp** are built on twelve stock photographs
+ *   and one more. We have no photography, and borrowed imagery of somebody
+ *   else's operations centre says nothing true about a hospital.
  *
- * Problem, then what it does, then why it holds up, then the questions a clinic
- * asks before letting somebody else answer its phone, then the number. A buyer
- * here is a doctor or an administrator rather than an engineer, so nothing
- * above the FAQ mentions a flow, an engine or a model — the words this project
- * uses internally are precisely the ones that lose that reader.
+ * What is left is the mark, the claim, the product, four things it does, the
+ * questions a department asks, and a phone number. Thinner than the template,
+ * and all of it load-bearing.
  */
+
+// Plain literals, built server-side and passed to the client motion wrappers —
+// kept inline rather than imported from a "use client" module.
+const SOFT_EASE = [0.22, 1, 0.36, 1] as const;
+const RISE_IN = {
+    hidden: { opacity: 0, y: 24, scale: 0.985 },
+    visible: { opacity: 1, y: 0, scale: 1 },
+};
+
 export default function HomePage(): ReactNode {
     return (
         <>
             <StructuredData />
-            <main id="main-content" className="relative z-10 flex-1 bg-background">
-                <Hero />
-                <ValueProp />
-                <Product />
-                <Pillars />
-                <Assurance />
-                <Faq />
+            <span id="top" className="sr-only" />
+            <Nav />
+            <main id="main-content" className="flex-1">
+                <div className="relative">
+                    <HeroWaves />
+                    <Hero />
+                    <MotionSection
+                        variants={RISE_IN}
+                        transition={{ duration: 0.85, delay: 0.55, ease: SOFT_EASE }}
+                        className="relative px-5 pb-24 sm:px-8 lg:px-10"
+                    >
+                        <WindowMockup />
+                    </MotionSection>
+                </div>
+                <InView>
+                    <Features />
+                </InView>
+                <InView>
+                    <Faq />
+                </InView>
                 <FinalCta />
             </main>
-            <Footer />
+            <InView>
+                <Footer />
+            </InView>
         </>
     );
 }

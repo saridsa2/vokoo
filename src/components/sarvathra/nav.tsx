@@ -5,12 +5,12 @@ import { Logo } from "@/components/sarvathra/logo";
 import { NavVisual } from "@/components/sarvathra/nav-visual";
 import { softEase, useReducedMotion } from "@/lib/sarvathra/motion";
 import {
-  BadgeCheck,
   ChevronDown,
-  Cloud,
   Menu,
-  MonitorSmartphone,
-  Radar,
+  PhoneVolume,
+  ShieldCheck,
+  IconTeam,
+  Workflow,
   X,
   type LucideIcon,
 } from "@/components/icons";
@@ -26,48 +26,55 @@ type PlatformItem = {
   featureDesc: string;
 };
 
+/**
+ * Four things the platform does, each pointing at a section that exists.
+ *
+ * The template's hrefs were `#threat-detection`, `#endpoint` and so on, and
+ * every one of them pointed at a section it shipped. Ours point at the four we
+ * kept — a menu whose links scroll nowhere is a menu that reads as broken.
+ */
 const PLATFORM_ITEMS: PlatformItem[] = [
   {
-    title: "Threat Detection",
-    desc: "Real-time monitoring & response",
-    href: "#threat-detection",
-    icon: Radar,
-    featureTitle: "Stop attacks before they spread",
+    title: "Care pathways",
+    desc: "Your protocol, drawn once",
+    href: "#pathways",
+    icon: Workflow,
+    featureTitle: "Draw it the way your department works",
     featureDesc:
-      "AI-driven detection flags anomalies in milliseconds and triggers automated response.",
+      "Each contact is a step with its own timing, its own questions and its own rule for when a person takes over.",
   },
   {
-    title: "Endpoint Security",
-    desc: "Protect every device, everywhere",
-    href: "#endpoint",
-    icon: MonitorSmartphone,
-    featureTitle: "Every device, fully defended",
+    title: "The call",
+    desc: "Hindi and English, on the phone or WhatsApp",
+    href: "#the-call",
+    icon: PhoneVolume,
+    featureTitle: "It asks, and it listens to the answer",
     featureDesc:
-      "Deploy lightweight agents that secure laptops, servers, and mobile endpoints from a single console.",
+      "The language is settled before the call starts, so the ear, the voice and the wording stay in one language throughout.",
   },
   {
-    title: "Cloud Protection",
-    desc: "Secure your entire infrastructure",
-    href: "#cloud",
-    icon: Cloud,
-    featureTitle: "Security that scales with you",
+    title: "Escalation",
+    desc: "A nurse, during the call",
+    href: "#escalation",
+    icon: IconTeam,
+    featureTitle: "It hands over rather than advises",
     featureDesc:
-      "Continuously monitor workloads, misconfigurations, and identities across AWS, GCP, and Azure.",
+      "A symptom or a dose question goes to the number your department nominates, with what the patient said, while they are still on the line.",
   },
   {
-    title: "Compliance",
-    desc: "Meet every standard with ease",
-    href: "#compliance",
-    icon: BadgeCheck,
-    featureTitle: "Audit-ready, always",
+    title: "Your records",
+    desc: "Delivered outward to your systems",
+    href: "#records",
+    icon: ShieldCheck,
+    featureTitle: "Nothing is installed beside your HIS",
     featureDesc:
-      "Automate evidence collection and map controls to SOC 2, ISO 27001, HIPAA, and GDPR.",
+      "Outcomes arrive as a webhook carrying the fields you defined, keyed on the call so a retry cannot write a second record.",
   },
 ];
 
 const SIMPLE_LINKS = [
-  { label: "Customers", href: "#customers" },
-  { label: "Pricing", href: "#pricing" },
+  { label: "Questions", href: "#faq" },
+  { label: "Contact", href: "#get-started" },
 ];
 
 function useScrolled(threshold = 8): boolean {
@@ -201,7 +208,7 @@ export function Nav(): ReactNode {
 
                       <div className="flex flex-1 flex-col p-3">
                         <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded">
-                          <NavVisual />
+                          <NavVisual icon={active.icon} />
                         </div>
                         <div className="mt-3 h-16">
                           <AnimatePresence mode="wait">
@@ -241,17 +248,20 @@ export function Nav(): ReactNode {
         </div>
 
         <div className="hidden items-center gap-3 lg:flex">
-          <CutButton variant="outline" href="#sign-in">
-            Sign In
+          {/* Two destinations that exist: the console a customer signs into,
+              and the number the product answers on. "Get started" pointed at a
+              signup there is nothing behind. */}
+          <CutButton variant="outline" href="https://console.sarvathra.ai">
+            Sign in
           </CutButton>
-          <CutButton variant="solid" href="#get-started">
-            Get Started
+          <CutButton variant="solid" href="tel:+918040802529">
+            Hear it answer
           </CutButton>
         </div>
 
         <div className="flex items-center gap-2.5 lg:hidden">
-          <CutButton variant="solid" href="#get-started">
-            Get Started
+          <CutButton variant="solid" href="tel:+918040802529">
+            Hear it answer
           </CutButton>
           <CutButton
             variant="outline"

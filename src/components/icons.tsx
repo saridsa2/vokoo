@@ -357,6 +357,9 @@ export const Radar = icon(faRadar);
 export const Search = icon(faMagnifyingGlass);
 export const ShieldCheck = icon(faShieldCheck);
 export const Timer = icon(faStopwatch);
+// A ringing handset. `IconCallFlows` already wears it under a name that means
+// something else in the console; the marketing site wants the plain noun.
+export const PhoneVolume = icon(faPhoneVolume);
 
 /**
  * The template types its icon props as lucide's `LucideIcon`.

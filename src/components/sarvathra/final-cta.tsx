@@ -45,7 +45,7 @@ export function FinalCta(): ReactNode {
     : { duration: 0.7, ease: softEase };
 
   return (
-    <section className="relative overflow-hidden">
+    <section id="get-started" className="relative scroll-mt-24 overflow-hidden">
       {mounted && !prefersReducedMotion && (
         <div
           aria-hidden="true"
@@ -106,7 +106,7 @@ export function FinalCta(): ReactNode {
             transition={itemTransition}
             className="text-balance font-serif text-4xl font-normal leading-[1.08] tracking-[-0.01em] sm:text-5xl lg:text-[3.75rem]"
           >
-            Take control of every threat across your org
+            Start with one department, one protocol
           </motion.h2>
 
           <motion.p
@@ -114,8 +114,8 @@ export function FinalCta(): ReactNode {
             transition={itemTransition}
             className="mt-5 max-w-md text-balance text-[15px] leading-relaxed text-muted-foreground sm:text-base"
           >
-            Unify detection, response, and governance on one platform — and give
-            your team a single line of sight from day one.
+            The first conversation is about which pathway to draw first and where
+            its patient records live. Not a signup form.
           </motion.p>
 
           <motion.div
@@ -123,11 +123,14 @@ export function FinalCta(): ReactNode {
             transition={itemTransition}
             className="mt-8 flex flex-wrap items-center justify-center gap-3"
           >
-            <CutButton variant="solid" href="#get-started">
-              Get started
+            {/* Two real destinations. A "Book a demo" button needs a calendar
+                behind it and there is none, so the second is the address that
+                reaches a person. */}
+            <CutButton variant="solid" href="tel:+918040802529">
+              Call +91 80408 02529
             </CutButton>
-            <CutButton variant="outline" href="#demo">
-              Book a demo
+            <CutButton variant="outline" href="mailto:hello@sarvathra.ai">
+              hello@sarvathra.ai
             </CutButton>
           </motion.div>
         </motion.div>
