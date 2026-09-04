@@ -8,7 +8,7 @@ import { ShaderCanvas } from "@/components/marketing-site/shader-canvas";
 const easeOutExpo = [0.33, 1, 0.68, 1] as const;
 
 // Short lines: the heading is `max-w-[16ch]` and clamps up to 5.5rem.
-const HEADLINE_LINES = ["Ring it", "and find out."] as const;
+const HEADLINE_LINES = ["Bring us", "one protocol."] as const;
 
 export function FinalCta(): ReactNode {
   const sectionRef = useRef<HTMLElement>(null);
@@ -37,7 +37,7 @@ export function FinalCta(): ReactNode {
             className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black/25 via-transparent to-black/10"
           />
 
-          <div className="relative h-full flex flex-col justify-between p-14 max-[850px]:p-8 min-h-[inherit] text-white">
+          <div className="relative h-full flex flex-col justify-between p-14 max-[850px]:p-8 min-h-[inherit] text-paper">
             <motion.h2
               id="final-cta-heading"
               className="max-w-[16ch] text-[clamp(2.5rem,6vw,5.5rem)] font-medium leading-[0.95] tracking-tight"
@@ -63,14 +63,14 @@ export function FinalCta(): ReactNode {
 
             <div className="flex items-end justify-between gap-8 max-[850px]:flex-col max-[850px]:items-start mt-10">
               <motion.p
-                className="max-w-xl text-3xl max-[850px]:text-base font-regular tracking-tighter leading-snug text-white/75"
+                className="max-w-xl text-3xl max-[850px]:text-base font-regular tracking-tighter leading-snug text-paper-quiet"
                 initial={{ opacity: 0, y: 16 }}
                 animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
                 transition={{ duration: 0.8, ease: easeOutExpo, delay: 0.6 }}
               >
-                That number is a live Sarvathra call, not a recording. Ask it
-                for a person. Tell it something it ought to escalate. Then
-                bring us one protocol from one department.
+                One department, one protocol, and we will show you the agents
+                it becomes. The number below is a live Sarvathra call, not a
+                recording — ask it for a person before you decide.
               </motion.p>
 
               <motion.a
@@ -82,10 +82,10 @@ export function FinalCta(): ReactNode {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                <span className="px-5 py-3 rounded-md bg-white text-neutral-900 text-xs font-medium tracking-widest uppercase border border-neutral-900/[0.08]">
+                <span className="px-5 py-3 rounded-md bg-paper text-neutral-900 text-xs font-medium tracking-widest uppercase border border-neutral-900/[0.08]">
                   Call +91 80408 02529
                 </span>
-                <ArrowChip className="bg-white text-neutral-900" />
+                <ArrowChip className="bg-paper text-neutral-900" />
               </motion.a>
             </div>
           </div>

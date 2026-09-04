@@ -24,16 +24,16 @@ interface Step {
 // it never tells Mrs Rao what her fever means.
 const STEPS: Step[] = [
   {
-    eyebrow: "What it covers",
-    body: "Follow-up after discharge, checks that medicines are being taken, preparation before a procedure, symptom check-ins, and outreach across a whole group of patients.",
+    eyebrow: "After they go home",
+    body: "The weeks after discharge, between cycles, before a procedure, and the follow-ups that run for years.",
   },
   {
-    eyebrow: "What it works from",
-    body: "Unlike outreach tools, Sarvathra is built around the conversation itself. It works from your patient lists, your records, and what the patient tells us.",
+    eyebrow: "In the language they speak",
+    body: "A patient who will not open an app and does not read English will still answer the phone and talk.",
   },
   {
-    eyebrow: "At either size",
-    body: "It is made for one patient and for several thousand, and the conversation stays personal at both.",
+    eyebrow: "For all of them, not some",
+    body: "One patient or four thousand. It does not get busy and it does not skip anybody.",
   },
 ];
 
@@ -231,7 +231,7 @@ export function ValueProp(): ReactNode {
 
         <div className="absolute inset-x-0 top-0 z-10 px-10 max-[850px]:px-6 pt-28 max-[850px]:pt-24 max-w-[1680px] mx-auto flex items-end justify-between gap-8">
           <h2 className="max-w-[22ch] text-[clamp(1.5rem,2.4vw,2.25rem)] font-medium leading-[1.15] tracking-tight text-foreground/80">
-            What a protocol asks for, carried out.
+            Care happens mostly where the hospital is not.
           </h2>
           {/* Was `href="#"`. A link that goes nowhere is the tell of a
               template, and this one sits at eye level. It points at the

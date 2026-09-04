@@ -24,20 +24,20 @@ interface Pillar {
 const PILLARS: Pillar[] = [
   {
     tag: "01 — the overhead",
-    title: "Follow-up waits on people",
-    body: "Booking lives in one system, reminders in another, escalation in a third — and the calls a protocol repeats on every patient get made by hand, or not at all.",
+    title: "It waits on people",
+    body: "Every contact a protocol asks for is a call somebody has to make. When the ward is busy the protocol is what gives way, and nobody records that it did.",
     icon: Compass,
   },
   {
     tag: "02 — the message",
-    title: "Delivery is not an answer",
-    body: "An opened link proves somebody opened it. A form collects what the form knew to ask. Neither tells you how the patient is.",
+    title: "A message is not a reply",
+    body: "Automating the sending does not help. An opened link proves somebody opened it, and a form collects what the form knew to ask. Neither tells you how the patient is.",
     icon: LayerGroup,
   },
   {
     tag: "03 — the record",
-    title: "The conversation goes missing",
-    body: "What a patient reported sits apart from the hospital record, so the next person caring for them starts without it.",
+    title: "The answer goes missing",
+    body: "What a patient said on the phone stays with whoever rang, so the next person caring for them starts without it.",
     icon: Bolt,
   },
 ];
@@ -73,7 +73,7 @@ export function Pillars(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-What hospitals are working with today.
+What a protocol runs into today.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -81,8 +81,8 @@ What hospitals are working with today.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
             >
-              Three systems that do not speak, a team that runs out of
-              hours, and a report that stops at whether anybody opened it.
+              It is written down, agreed, and then it depends on somebody
+              having a free afternoon.
             </motion.p>
           </div>
         </div>

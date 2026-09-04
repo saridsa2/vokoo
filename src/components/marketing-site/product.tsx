@@ -32,9 +32,9 @@ interface Tile {
 const TILES: Tile[] = [
   {
     index: "01.",
-    title: "It holds the conversation",
+    title: "Start with what you already follow",
 
-    body: "Spoken follow-up for every patient on a protocol, by phone or WhatsApp, in the language they answer in — with the questions your team defined.",
+    body: "Give us the protocol your department already works to. We turn it into something that carries itself out. Nobody has to sit and build it.",
     icon: Workflow,
     tone: "bg-accent text-accent-foreground",
 
@@ -43,9 +43,9 @@ const TILES: Tile[] = [
   },
   {
     index: "02.",
-    title: "It follows the answer",
+    title: "It rings every patient",
 
-    body: "What the patient reports decides the route through the journey, and brings a nurse onto the live call when the answer needs one.",
+    body: "On the day it should, in the language they speak, at home or wherever they have gone. It asks what your protocol asks, and listens to the reply.",
     icon: Cube,
 
     tone: "bg-foreground/[0.08] text-foreground",
@@ -54,9 +54,9 @@ const TILES: Tile[] = [
   },
   {
     index: "03.",
-    title: "It returns the record",
+    title: "You hear back the same day",
 
-    body: "An account of what was asked, what the patient said and what happened next, written into the hospital\u2019s own records.",
+    body: "If something is wrong a nurse comes on the line while the patient is still there. Either way, what they said is in your records by the evening.",
     icon: Sparkles,
 
     tone: "bg-foreground/[0.04] text-foreground",
@@ -98,7 +98,7 @@ export function Product(): ReactNode {
               mutedFrom={9}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Getting there in time is most of the job.
+A protocol on paper is a protocol that waits for somebody.
             </RevealHeadline>
 
             <motion.p
@@ -107,12 +107,13 @@ Getting there in time is most of the job.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
             >
-              A follow-up that happens a fortnight late is a follow-up that
-              did not happen. Outreach tools are built to get a message out
-              and to report that it went; in medicine the timing is the
-              clinical part. Sarvathra works from where a patient is in their
-              treatment and how urgent their situation is — and from what they
-              tell us when somebody asks.
+              Every department has one. It says who should be called, when,
+              and what to ask them. It is agreed, written down, and then it
+              runs on whoever has a free afternoon. A follow-up made a
+              fortnight late is a follow-up that did not happen, and nothing
+              anywhere records that it did not. Sarvathra takes the protocol
+              you already work to and makes it happen for every patient, on
+              time, without anybody having to remember.
             </motion.p>
 
             <motion.div

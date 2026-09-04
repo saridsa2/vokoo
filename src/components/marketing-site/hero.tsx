@@ -91,7 +91,7 @@ export function Hero(): ReactNode {
           </div>
 
           <motion.div
-            className="absolute inset-0 flex flex-col justify-between p-10 pt-40 max-[850px]:p-6 max-[850px]:pt-32 text-white pointer-events-none max-w-[1680px] mx-auto"
+            className="absolute inset-0 flex flex-col justify-between p-10 pt-40 max-[850px]:p-6 max-[850px]:pt-32 text-paper pointer-events-none max-w-[1680px] mx-auto"
             initial="hidden"
             animate="visible"
             transition={{ staggerChildren: 0.12, delayChildren: 1.4 }}
@@ -125,18 +125,14 @@ export function Hero(): ReactNode {
 
             <div className="flex items-end justify-between gap-8 max-[850px]:flex-col max-[850px]:items-start">
               <motion.p
-                className="max-w-2xl text-2xl font-medium leading-snug tracking-tight text-white/90"
+                className="max-w-2xl text-2xl font-medium leading-snug tracking-tight text-paper-soft"
                 variants={{
                   hidden: { opacity: 0, y: 16 },
                   visible: { opacity: 1, y: 0 },
                 }}
                 transition={{ duration: 0.8, ease: easeOutExpo }}
               >
-                Sarvathra is how a hospital stays with its patients between
-                visits. It lets clinical and coordination teams carry a care
-                protocol to every patient on it, and brings together the
-                protocol, the conversation with the patient, the clinical team
-                and the hospital record.
+                An ally for your patients. Relief for your care teams.
               </motion.p>
 
               {/* **The demo is the product.** There is no signup to send
@@ -154,7 +150,7 @@ export function Hero(): ReactNode {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
               >
-                <span className="px-5 py-3 rounded-md bg-white text-neutral-900 text-xs font-medium tracking-widest uppercase border border-neutral-900/[0.08]">
+                <span className="px-5 py-3 rounded-md bg-paper text-neutral-900 text-xs font-medium tracking-widest uppercase border border-neutral-900/[0.08]">
                   Call +91 80408 02529
                 </span>
                 <ArrowChip className="bg-accent text-accent-foreground" />

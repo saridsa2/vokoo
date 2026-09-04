@@ -58,7 +58,12 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
       animate="visible"
       transition={{ staggerChildren: 0.08, delayChildren: delay }}
     >
-      <div className="mx-auto flex items-center justify-between px-10 py-6 max-[850px]:px-6 max-[850px]:py-4 max-w-[1680px]">
+      {/* **Top padding is larger than the bottom on purpose.**
+          The hero panel is inset 10px from the viewport and has a rounded top
+          corner, so a symmetric `py-6` left the logo 14px below the panel edge
+          with the corner curve eating most of it — the nav read as sitting on
+          the rim rather than inside the panel. */}
+      <div className="mx-auto flex max-w-[1680px] items-center justify-between px-10 pt-11 pb-6 max-[850px]:px-6 max-[850px]:pt-8 max-[850px]:pb-4">
         <motion.div
           className="pointer-events-auto"
           variants={{
@@ -76,14 +81,19 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
               paddingRight: scrolled ? 12 : 0,
               paddingTop: scrolled ? 8 : 0,
               paddingBottom: scrolled ? 8 : 0,
+              // #fafafa over the shader rather than #ffffff — the wordmark is
+              // bold and small, and pure white at that weight blooms against a
+              // saturated ground. The scrolled pill stays true white because
+              // it sits on the page's own white and any tint would read as a
+              // dirty panel.
               backgroundColor: scrolled
                 ? "rgba(255,255,255,1)"
-                : "rgba(255,255,255,0)",
-              color: scrolled ? "#0a0a0a" : "#ffffff",
+                : "rgba(250,250,250,0)",
+              color: scrolled ? "#0a0a0a" : "#fafafa",
 
               borderColor: scrolled
                 ? "rgba(10,10,10,0.08)"
-                : "rgba(255,255,255,0)",
+                : "rgba(250,250,250,0)",
             }}
             transition={{ duration: 0.45, ease: easeOutExpo }}
           >
@@ -141,7 +151,7 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
             ))}
             <a
               href="tel:+918040802529"
-              className="inline-flex items-center px-4 py-2.5 rounded-md bg-neutral-900 text-white hover:bg-neutral-800 transition-colors duration-200"
+              className="inline-flex items-center px-4 py-2.5 rounded-md bg-neutral-900 text-paper hover:bg-neutral-800 transition-colors duration-200"
             >
               Call us
             </a>
@@ -222,7 +232,7 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
                 <a
                   href="tel:+918040802529"
                   onClick={() => setMenuOpen(false)}
-                  className="inline-flex items-center justify-center w-full px-4 py-4 rounded-md bg-neutral-900 text-white text-sm font-medium uppercase tracking-widest"
+                  className="inline-flex items-center justify-center w-full px-4 py-4 rounded-md bg-neutral-900 text-paper text-sm font-medium uppercase tracking-widest"
                 >
                   Call +91 80408 02529
                 </a>
