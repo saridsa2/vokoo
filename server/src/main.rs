@@ -22,6 +22,8 @@ use tracing::{info, warn};
 #[derive(Clone)]
 struct AppState {
     config: Arc<Config>,
+    /// Shared, because a limit that resets per request limits nothing.
+    limiter: Arc<RateLimit>,
 }
 
 #[derive(Debug)]
@@ -266,7 +268,13 @@ const RESOURCES: &[Resource] = &[
     // An engine is the chain a call runs through, of which the voice is one
     // step. `voices` remains for the voices themselves, unreferenced until
     // something needs to list them.
-    Resource { route: "engines", table: "engines", order_by: "updated_at", select: "*" },
+    // **`engines` is deliberately absent from this list.** It became the
+    // platform's in 0091, and the table's `config` carries the model names a
+    // tenant must not see. A generic resource route selects `*`, so leaving it
+    // here would hide the models on the screen and not in the API — which is
+    // not hiding them. `/api/v1/engines` is served by `available_engines`
+    // below: a name and a description, and only the engines that workspace is
+    // entitled to.
     Resource { route: "flows", table: "flows", order_by: "updated_at", select: "*" },
     Resource { route: "files", table: "files", order_by: "updated_at", select: "*" },
     Resource { route: "test-suites", table: "test_suites", order_by: "updated_at", select: "*" },
@@ -573,6 +581,157 @@ async fn sign_in(
         .await
         .map_err(|error| ApiError::unauthorized(error.to_string()))?;
     Ok(Json(json!({ "data": auth })))
+}
+
+/// A crude per-caller rate limit, for the one route that answers a question
+/// about somebody else's account.
+///
+/// In-process and in-memory on purpose: this is one process behind one reverse
+/// proxy, and a Redis dependency to slow down an endpoint would be a second
+/// thing to run and keep alive. It resets when the process restarts, which is
+/// acceptable — the attack this blunts is a script working through an address
+/// list, not a patient adversary waiting for a deploy.
+struct RateLimit {
+    hits: std::sync::Mutex<HashMap<String, (u32, std::time::Instant)>>,
+}
+
+impl RateLimit {
+    fn new() -> Self {
+        Self { hits: std::sync::Mutex::new(HashMap::new()) }
+    }
+
+    /// True when the caller may proceed.
+    fn allow(&self, who: &str, limit: u32, window: std::time::Duration) -> bool {
+        let now = std::time::Instant::now();
+        let Ok(mut hits) = self.hits.lock() else {
+            // A poisoned lock must not become an open door.
+            return false;
+        };
+
+        // Swept here rather than on a timer: the map only grows while requests
+        // arrive, so the moment to clean it is when one does.
+        hits.retain(|_, (_, started)| now.duration_since(*started) < window);
+
+        let entry = hits.entry(who.to_owned()).or_insert((0, now));
+        if now.duration_since(entry.1) >= window {
+            *entry = (0, now);
+        }
+        entry.0 += 1;
+        entry.0 <= limit
+    }
+}
+
+/// Who is calling, as well as this can be known behind a reverse proxy.
+///
+/// Caddy sets `x-forwarded-for` and the leftmost entry is the client. A client
+/// can forge that header, but it reaches this process only through Caddy, which
+/// appends rather than replaces — so a forged value shifts a real one along
+/// instead of hiding it. Good enough to slow a script down, which is all this
+/// is for.
+fn caller_key(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// Which ways this address can sign in.
+///
+/// **This is an account-enumeration oracle and was chosen deliberately** — it
+/// is what lets the sign-in form ask for a password only when there is one.
+/// Two things keep the cost down:
+///
+///   * The database answers identically for a link-only account and an address
+///     with no account (see `account_sign_in_methods` in 0101), so the only
+///     fact leaked is "this address has a password".
+///   * It is rate limited here. Ten a minute is far above what a person
+///     signing in needs and far below what enumerating a list requires.
+async fn auth_methods(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let email = payload
+        .get("email")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if email.is_empty() {
+        return Err(ApiError::BadRequest("an email address is required".into()));
+    }
+
+    if !state.limiter.allow(
+        &caller_key(&headers),
+        10,
+        std::time::Duration::from_secs(60),
+    ) {
+        // Deliberately not "you are rate limited on the methods endpoint": the
+        // less this says, the less it is worth probing.
+        return Err(ApiError::BadRequest("too many attempts, wait a minute".into()));
+    }
+
+    let client = state.config.anonymous_client()?;
+    let data = client
+        .database()
+        .rpc("account_sign_in_methods", Some(json!({ "p_email": email })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+
+    Ok(Json(json!({ "data": data })))
+}
+
+/// Mail a link that signs you in, to an account that already exists.
+///
+/// Unauthenticated by necessity — it is what somebody without a password uses —
+/// and therefore deliberately narrow: it creates no account (see
+/// `send_sign_in_link`), and it takes the destination from the browser's own
+/// `Origin` header rather than from the body, checked against `CORS_ORIGIN`.
+/// Reading it from the body would let anybody name the host a stranger's token
+/// is delivered to.
+///
+/// **The answer is the same whether or not the address is known.** Replying
+/// "no such account" would turn this into a way to test which addresses have
+/// accounts here, one request at a time.
+async fn sign_in_link(
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let email = payload
+        .get("email")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    if email.is_empty() {
+        return Err(ApiError::BadRequest("an email address is required".into()));
+    }
+
+    let origin = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    if let Err(problem) = send_sign_in_link(&email, origin.as_deref(), false).await {
+        // A rate limit is about the *caller*, not the account, so saying so
+        // discloses nothing and stops somebody waiting for mail that was never
+        // sent. Every other refusal stays quiet: it would distinguish a known
+        // address from an unknown one, which is what this route is shaped to
+        // avoid.
+        if problem == "rate_limited" {
+            return Err(ApiError::BadRequest(
+                "Too many links requested. Wait a few minutes and try again.".into(),
+            ));
+        }
+        tracing::warn!(%email, %problem, "sign-in link was not sent");
+    }
+
+    Ok(Json(json!({
+        "data": { "sent": true },
+        "meta": { "note": "If that address has an account here, a link is on its way." }
+    })))
 }
 
 async fn me(
@@ -2127,7 +2286,7 @@ async fn add_member(
     // legitimate member with no invitation at all.
     let invited = match body.email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
         None => json!({ "sent": false, "reason": "no address, so nothing to send" }),
-        Some(email) => match send_sign_in_link(email).await {
+        Some(email) => match send_sign_in_link(email, None, true).await {
             Ok(()) => json!({ "sent": true, "to": email }),
             Err(problem) => {
                 warn!("member added but the invitation failed: {problem}");
@@ -2246,7 +2405,20 @@ async fn set_my_name(
 /// added to a workspace has been added whether or not the mail server was
 /// reachable at that second, and rolling back a person because an email bounced
 /// would be the wrong half to undo.
-async fn send_sign_in_link(email: &str) -> Result<(), String> {
+///
+/// ## `create_user` is the caller's authority, not a convenience
+///
+/// An invitation is sent by a member of the workspace, who is entitled to bring
+/// somebody in — so it creates the account. The self-service route below is
+/// **unauthenticated**, because asking somebody to sign in before they can be
+/// sent a way to sign in is a circle; with `create_user: true` it would be an
+/// open endpoint that fills `auth.users` with any address a stranger types.
+/// False there means the route only ever mails an account that already exists.
+async fn send_sign_in_link(
+    email: &str,
+    origin: Option<&str>,
+    create_user: bool,
+) -> Result<(), String> {
     let (base, anon) = (
         std::env::var("SUPABASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".into()),
         std::env::var("SUPABASE_ANON_KEY").unwrap_or_default(),
@@ -2255,22 +2427,87 @@ async fn send_sign_in_link(email: &str) -> Result<(), String> {
         return Err("SUPABASE_ANON_KEY is not set, so no invitation can be sent".into());
     }
 
-    let response = reqwest::Client::new()
+    let mut body = json!({ "email": email, "create_user": create_user });
+    let mut redirect: Option<String> = None;
+
+    // Where the link lands, when the caller named somewhere.
+    //
+    // Without this every link goes to `SITE_URL`, which is one host — so an
+    // operator asking the platform portal for a link is sent to the console,
+    // whose origin cannot read the session the portal would store.
+    //
+    // **Checked against `CORS_ORIGIN` before it is passed on.** A redirect
+    // taken from a request is an open redirect, and on a magic link that is
+    // the whole account: ask for a link to somebody else's address, point it
+    // at a host you control, and the token arrives in your own fragment.
+    // GoTrue enforces its own `GOTRUE_URI_ALLOW_LIST` as well — this is the
+    // near guard, and neither is trusted to be the only one.
+    // **An invitation has no browser origin, and still needs a destination.**
+    //
+    // Without one GoTrue falls back to `SITE_URL`, which lands the tokens in
+    // the fragment of the site root rather than at the callback — and the root
+    // is the sign-in screen. Measured: `location: https://console.sarvathra.ai#access_token=…`.
+    //
+    // `CONSOLE_URL` is where a person invited to a workspace belongs, which is
+    // never the operator portal, so this is not the caller's origin even when
+    // there is one to borrow.
+    let fallback = std::env::var("CONSOLE_URL").ok();
+    let origin = origin.or(fallback.as_deref());
+
+    if let Some(origin) = origin {
+        let permitted = std::env::var("CORS_ORIGIN").unwrap_or_default();
+        let known = permitted
+            .split(',')
+            .map(str::trim)
+            .any(|allowed| !allowed.is_empty() && allowed == origin);
+        if !known {
+            return Err(format!("{origin} is not a host this installation serves"));
+        }
+        // **A query parameter, not a body field.**
+        //
+        // Both `options.email_redirect_to` and a top-level `email_redirect_to`
+        // were sent here, on the assumption that one of them would be read.
+        // Neither is: GoTrue takes `redirect_to` from the query string on
+        // `/otp`, which is where supabase-js puts it, and silently ignores the
+        // body.
+        //
+        // So every link this system has ever sent fell back to `SITE_URL` —
+        // the console root — with the tokens in a fragment nothing read. That
+        // is the whole of "the link just takes me back to the login page",
+        // and it cost several wrong fixes before anybody looked at where the
+        // parameter goes.
+        redirect = Some(format!("{origin}/auth/callback"));
+    }
+
+    let mut request = reqwest::Client::new()
         .post(format!("{}/auth/v1/otp", base.trim_end_matches('/')))
         .header("apikey", &anon)
-        .header("Content-Type", "application/json")
-        // `create_user` is true: the whole point is somebody who has no account.
-        .json(&json!({ "email": email, "create_user": true }))
+        .header("Content-Type", "application/json");
+
+    if let Some(to) = &redirect {
+        request = request.query(&[("redirect_to", to.as_str())]);
+    }
+
+    let response = request
+        .json(&body)
         .send()
         .await
         .map_err(|error| format!("could not reach the mail path: {error}"))?;
 
-    if response.status().is_success() {
+    let status = response.status();
+    if status.is_success() {
         return Ok(());
+    }
+
+    // **A refusal to send is worth distinguishing.** GoTrue rate-limits these,
+    // and answering "a link is on its way" when it sent nothing is the failure
+    // that looks exactly like a broken link.
+    if status.as_u16() == 429 {
+        return Err("rate_limited".into());
     }
     Err(format!(
         "the invitation was refused: {} {}",
-        response.status(),
+        status,
         response.text().await.unwrap_or_default()
     ))
 }
@@ -2361,6 +2598,452 @@ async fn operator_entitlements(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "entitlements" }) }))
 }
 
+/// One tenant, in the three shapes its detail screen asks for.
+///
+/// Three routes rather than one that returns everything: they change at
+/// different rates and cost different amounts. Usage is a series over a window
+/// the reader chooses; configuration is a single row that only changes when
+/// somebody changes it. Bundling them would mean re-reading a month of calls to
+/// find out whether recording is on.
+/// The engines a workspace may attach to an agent.
+///
+/// A name and a description, never `config`. See `available_engines` in 0091:
+/// what an engine is made of is the platform's, and the model names inside one
+/// are the part a customer would shop on.
+async fn list_available_engines(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("available_engines", Some(json!({ "p_org": organization })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
+}
+
+/// The price list.
+async fn operator_plans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_plans", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "plans" }) }))
+}
+
+async fn operator_set_plan(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(patch): Json<Value>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_set_plan", Some(json!({ "p_plan": id, "p_patch": patch })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "plans" }) }))
+}
+
+/// Every workspace's current period: allowance, use, and what is owed.
+async fn operator_billing_periods(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_billing_periods", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "periods" }) }))
+}
+
+/// One workspace's period. Also what a tenant would call to see its own.
+async fn tenant_billing_period(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("billing_period_usage", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "period" }) }))
+}
+
+/// Open this month's period, closing whatever preceded it.
+///
+/// Idempotent, so a retry inside the same month returns the period already
+/// open rather than starting a second — which matters because nothing rolls
+/// these automatically yet and an operator will press this twice.
+async fn operator_open_period(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("open_billing_period", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "period" }) }))
+}
+
+/// What the reader and timezone fields may be set to.
+///
+/// Served rather than hard-coded in the console, so the dropdown cannot offer
+/// something `operator_set_tenant_settings` will refuse — and so the reader
+/// list stays the same list `intelligence.rs` works from.
+async fn setting_choices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let readers = client
+        .database()
+        .rpc("reader_choices", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    let zones = client
+        .database()
+        .rpc("timezone_choices", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+
+    Ok(Json(ApiResponse {
+        data: json!({ "readers": readers, "timezones": zones }),
+        meta: json!({ "resource": "choices" }),
+    }))
+}
+
+/// The starter packs, and what each one seeds.
+///
+/// A pack is what a workspace is built from on the day it signs up: agents and
+/// a flow, copied, pointed at a platform engine that is only named. It replaced
+/// a flat list of templates, which made one starting point for every customer
+/// and was wrong the moment the second customer was not a clinic.
+async fn operator_packs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_packs", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "packs" }) }))
+}
+
+/// One engine, whole — config included. The operator composes it.
+async fn operator_engine(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_engine", Some(json!({ "p_id": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine" }) }))
+}
+
+/// Edit one. The patch is applied column by column in the database, so a key
+/// this route has never heard of cannot reach a column.
+async fn operator_update_engine(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(patch): Json<Value>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_update_engine", Some(json!({ "p_id": id, "p_patch": patch })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct NewEngineBody {
+    name: String,
+    mode: String,
+}
+
+async fn operator_create_engine(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<NewEngineBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_create_engine",
+            Some(json!({ "p_name": body.name, "p_mode": body.mode })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine" }) }))
+}
+
+/// Every engine on the platform, with what it is sold for.
+async fn operator_engines(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_engines", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct EnginePriceBody {
+    /// `None` clears the price, which reads as unpriced rather than as free.
+    per_minute: Option<f64>,
+    per_call: Option<f64>,
+    currency: Option<String>,
+}
+
+async fn operator_set_engine_price(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<EnginePriceBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_set_engine_price",
+            Some(json!({
+                "p_engine": id,
+                "p_per_minute": body.per_minute,
+                "p_per_call": body.per_call,
+                "p_currency": body.currency.unwrap_or_else(|| "INR".into()),
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine_price" }) }))
+}
+
+/// What each engine has earned, and on how many sessions nobody has priced.
+async fn operator_engine_revenue(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_engine_revenue", Some(json!({ "p_days": 30 })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine_revenue" }) }))
+}
+
+/// Settings an operator changes on a customer's behalf.
+///
+/// The patch is applied column by column in the database, so a key this route
+/// has never heard of cannot reach a column — and plan and status are
+/// deliberately absent, because they have their own function.
+async fn operator_set_tenant_settings(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(patch): Json<Value>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_set_tenant_settings",
+            Some(json!({ "p_org": id, "p_patch": patch })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "settings" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct EngineAccessBody {
+    engine_id: String,
+    /// `null` clears the override and returns the tenant to whatever the plan
+    /// says — the third state, which is what makes revoking possible without
+    /// editing the plan for everybody on it.
+    allowed: Option<bool>,
+}
+
+async fn operator_set_engine_access(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<EngineAccessBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_set_engine_access",
+            Some(json!({ "p_org": id, "p_engine": body.engine_id, "p_allowed": body.allowed })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "engine_access" }) }))
+}
+
+/// The people in a workspace.
+async fn operator_members(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_members", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "members" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct MemberActionBody {
+    user_id: Option<String>,
+    membership_id: Option<String>,
+    password: Option<String>,
+    email: Option<String>,
+    /// "set_password" | "send_link" | "remove"
+    action: String,
+}
+
+/// Getting a locked-out customer back in.
+///
+/// Three actions on one route because they are one job — the operator is on a
+/// support call and needs whichever works. Sending a link is preferred and
+/// listed first in the UI; a password is for somebody whose mail is the thing
+/// that is broken.
+async fn operator_member_action(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<MemberActionBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+
+    let data = match body.action.as_str() {
+        "set_password" => {
+            let user = body.user_id.ok_or_else(|| ApiError::BadRequest("user_id is required".into()))?;
+            let password = body
+                .password
+                .ok_or_else(|| ApiError::BadRequest("password is required".into()))?;
+            client
+                .database()
+                .rpc(
+                    "operator_set_member_password",
+                    Some(json!({ "p_org": id, "p_user": user, "p_password": password })),
+                )
+                .await
+                .map_err(|error| ApiError::upstream(error.to_string()))?
+        }
+        "send_link" => {
+            let email = body
+                .email
+                .ok_or_else(|| ApiError::BadRequest("email is required".into()))?;
+            // No origin: an invited member signs in at the console, and the
+            // operator is on a different host. `SITE_URL` is the right default
+            // here for exactly that reason.
+            match send_sign_in_link(&email, None, false).await {
+                Ok(()) => json!({ "sent": true }),
+                Err(problem) => json!({ "sent": false, "reason": problem }),
+            }
+        }
+        "remove" => {
+            let membership = body
+                .membership_id
+                .ok_or_else(|| ApiError::BadRequest("membership_id is required".into()))?;
+            client
+                .database()
+                .rpc(
+                    "operator_remove_member",
+                    Some(json!({ "p_org": id, "p_membership": membership })),
+                )
+                .await
+                .map_err(|error| ApiError::upstream(error.to_string()))?
+        }
+        other => return Err(ApiError::BadRequest(format!("no such action: {other}"))),
+    };
+
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "members" }) }))
+}
+
+async fn operator_tenant_usage(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_tenant_usage",
+            Some(json!({ "p_org": id, "p_days": 30 })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "usage" }) }))
+}
+
+async fn operator_tenant_billing(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_tenant_billing",
+            Some(json!({ "p_org": id, "p_days": 30 })),
+        )
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "billing" }) }))
+}
+
+async fn operator_tenant_config(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_tenant_config", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "config" }) }))
+}
+
 #[derive(serde::Deserialize)]
 struct EntitlementBody {
     kind: String,
@@ -2429,7 +3112,7 @@ async fn operator_create_tenant(
 
     let invited = match body.owner_email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
         None => json!({ "sent": false, "reason": "no owner address was given" }),
-        Some(email) => match send_sign_in_link(email).await {
+        Some(email) => match send_sign_in_link(email, None, true).await {
             Ok(()) => json!({ "sent": true, "to": email }),
             Err(problem) => {
                 warn!("tenant created but the invitation failed: {problem}");
@@ -2506,6 +3189,108 @@ async fn operator_delete_platform_key(
         .await
         .map_err(|error| ApiError::upstream(error.to_string()))?;
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "platform_keys" }) }))
+}
+
+async fn operator_numbers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_numbers", None)
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "numbers" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct NewNumberBody {
+    number: String,
+    label: Option<String>,
+    carrier: Option<String>,
+}
+
+async fn operator_add_number(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<NewNumberBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_add_number",
+            Some(json!({
+                "p_number": body.number,
+                "p_label": body.label,
+                "p_carrier": body.carrier,
+            })),
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "numbers" }) }))
+}
+
+#[derive(serde::Deserialize)]
+struct AssignNumberBody {
+    /// `null` releases it back to the pool.
+    org_id: Option<String>,
+}
+
+async fn operator_assign_number(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<AssignNumberBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_assign_number",
+            Some(json!({ "p_number_id": id, "p_org": body.org_id })),
+        )
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "numbers" }) }))
+}
+
+/// The templates a new workspace is built from.
+///
+/// Read-only for now, and the screen says so: these are seeded rows, and an
+/// editor for them is a different piece of work from being able to see what a
+/// tenant will get. Listing them is what stops "what does a new workspace
+/// contain" being a question only the database can answer.
+async fn operator_templates(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let rows = client
+        .database()
+        .from("templates")
+        .select("id,kind,audience,label,summary,sort_order,is_active")
+        .order("kind", supabase::types::OrderDirection::Ascending)
+        .execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data: rows, meta: json!({ "resource": "templates" }) }))
+}
+
+/// Seed a workspace from the templates it is entitled to.
+async fn operator_seed(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("seed_workspace", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "tenants" }) }))
 }
 
 async fn preflight_engine(
@@ -2952,11 +3737,17 @@ fn app(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/v1/auth/sign-in", post(sign_in))
         .route("/api/v1/auth/refresh", post(refresh_session))
+        .route("/api/v1/auth/sign-in-link", post(sign_in_link))
+        .route("/api/v1/auth/methods", post(auth_methods))
         .route("/api/v1/me", get(me))
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/operator/me", get(operator_me))
         .route("/api/v1/operator/keys", get(operator_platform_keys))
+        .route("/api/v1/operator/numbers", get(operator_numbers).post(operator_add_number))
+        .route("/api/v1/operator/numbers/{id}", post(operator_assign_number))
+        .route("/api/v1/operator/templates", get(operator_templates))
+        .route("/api/v1/operator/tenants/{id}/seed", post(operator_seed))
         .route(
             "/api/v1/operator/keys/{vendor}",
             post(operator_set_platform_key).delete(operator_delete_platform_key),
@@ -2966,6 +3757,31 @@ fn app(state: AppState) -> Router {
         .route(
             "/api/v1/operator/tenants/{id}/entitlements",
             get(operator_entitlements).post(operator_set_entitlement),
+        )
+        .route("/api/v1/engines", get(list_available_engines))
+        .route("/api/v1/settings/choices", get(setting_choices))
+        .route("/api/v1/operator/packs", get(operator_packs))
+        .route("/api/v1/operator/plans", get(operator_plans))
+        .route("/api/v1/operator/plans/{id}", get(operator_plans).patch(operator_set_plan))
+        .route("/api/v1/operator/periods", get(operator_billing_periods))
+        .route("/api/v1/operator/tenants/{id}/period", get(tenant_billing_period).post(operator_open_period))
+        .route("/api/v1/operator/engines", get(operator_engines).post(operator_create_engine))
+        .route(
+            "/api/v1/operator/engines/{id}",
+            get(operator_engine).patch(operator_update_engine),
+        )
+        .route("/api/v1/operator/engines/revenue", get(operator_engine_revenue))
+        .route("/api/v1/operator/engines/{id}/price", post(operator_set_engine_price))
+        .route("/api/v1/operator/tenants/{id}/usage", get(operator_tenant_usage))
+        .route("/api/v1/operator/tenants/{id}/billing", get(operator_tenant_billing))
+        .route(
+            "/api/v1/operator/tenants/{id}/config",
+            get(operator_tenant_config).patch(operator_set_tenant_settings),
+        )
+        .route("/api/v1/operator/tenants/{id}/engine-access", post(operator_set_engine_access))
+        .route(
+            "/api/v1/operator/tenants/{id}/members",
+            get(operator_members).post(operator_member_action),
         )
         .route("/api/v1/catalogue", get(capability_catalogue))
         .route("/api/v1/metrics", get(metrics))
@@ -3036,7 +3852,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = config.bind;
     let listener = tokio::net::TcpListener::bind(bind).await?;
     info!(%bind, "VoKoo control-plane API listening");
-    axum::serve(listener, app(AppState { config }))
+    axum::serve(listener, app(AppState { config, limiter: Arc::new(RateLimit::new()) }))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
