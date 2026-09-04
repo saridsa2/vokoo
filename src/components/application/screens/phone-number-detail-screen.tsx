@@ -21,6 +21,7 @@ import { InfoHint } from "@/components/base/tooltip/info-hint";
 import { Select } from "@/components/base/select/select";
 import { ArrowLeft } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type PhoneNumber = { id: string; number: string; label: string; status: string };
@@ -49,13 +50,13 @@ const EVENTS = [
 
 export const PhoneNumberDetailScreen = ({ numberId }: { numberId: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [number, setNumber] = useState<PhoneNumber | null>(null);
     const [flows, setFlows] = useState<Flow[]>([]);
     const [bindings, setBindings] = useState<Record<string, string>>({});
     const [busy, setBusy] = useState<string | null>(null);
     const [note, setNote] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!isReady || !context) return;
@@ -72,13 +73,13 @@ export const PhoneNumberDetailScreen = ({ numberId }: { numberId: string }) => {
                 setFlows(allFlows.data ?? []);
                 setBindings(Object.fromEntries((bound.data ?? []).map((row) => [row.trigger_event, row.flow_id])));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (live) notify.failure("Could not load this number", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [numberId, context, isReady]);
+    }, [numberId, context, isReady, notify]);
 
     // A flow only handles the event it was made for, so each list offers only
     // the flows that can actually answer it.
@@ -92,7 +93,6 @@ export const PhoneNumberDetailScreen = ({ numberId }: { numberId: string }) => {
         async (event: string, flowId: string | null) => {
             if (!context) return;
             setBusy(event);
-            setError(null);
             setNote(null);
             try {
                 await api.setNumberFlow(numberId, event, flowId, context);
@@ -111,12 +111,12 @@ export const PhoneNumberDetailScreen = ({ numberId }: { numberId: string }) => {
                           : `Bound, but ${flow?.name} is a draft — a call cannot reach it until it is published.`,
                 );
             } catch (problem) {
-                setError((problem as Error).message);
+                notify.failure("Could not bind the flow", problem);
             } finally {
                 setBusy(null);
             }
         },
-        [context, numberId, flows],
+        [context, numberId, flows, notify],
     );
 
     return (
@@ -137,7 +137,6 @@ export const PhoneNumberDetailScreen = ({ numberId }: { numberId: string }) => {
             </header>
 
             {note ? <p className="text-sm text-brand-secondary">{note}</p> : null}
-            {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
             <section className="flex max-w-2xl flex-col gap-5">
                 <h2 className="flex items-center gap-1.5 text-lg font-semibold text-primary">

@@ -29,6 +29,7 @@ import { SIP_SERVER, SipCredentials } from "@/components/application/screens/sip
 import { ArrowLeft } from "@/components/icons";
 import { api } from "@/utils/api-client";
 import { generateSipPassword } from "@/utils/sip-password";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type Member = {
@@ -66,12 +67,12 @@ type AgentExtension = {
 
 export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [agent, setAgent] = useState<AgentExtension | null>(null);
     const [name, setName] = useState("");
     const [busy, setBusy] = useState<string | null>(null);
     const [note, setNote] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
     /** Set for as long as a freshly rotated password is on screen. */
     const [rotated, setRotated] = useState<string | null>(null);
     const [members, setMembers] = useState<Member[]>([]);
@@ -91,19 +92,18 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
                 // Service accounts excluded: API keys are not somebody who owns a phone.
                 setMembers((people.data ?? []).filter((m) => !m.is_service));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (live) notify.failure("Could not load this agent", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [agentId, context, isReady]);
+    }, [agentId, context, isReady, notify]);
 
     const patch = useCallback(
         async (what: string, body: Partial<AgentExtension> & { sip_password?: string }, said: string) => {
             if (!context) return false;
             setBusy(what);
-            setError(null);
             setNote(null);
             try {
                 await api.update("agent-extensions", agentId, body, context);
@@ -111,13 +111,13 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
                 setNote(said);
                 return true;
             } catch (problem) {
-                setError((problem as Error).message);
+                notify.failure("Could not save the change", problem);
                 return false;
             } finally {
                 setBusy(null);
             }
         },
-        [agentId, context],
+        [agentId, context, notify],
     );
 
     const rotate = useCallback(async () => {
@@ -152,7 +152,6 @@ export const AgentDetailScreen = ({ agentId }: { agentId: string }) => {
             </header>
 
             {note ? <p className="text-sm text-brand-secondary">{note}</p> : null}
-            {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
             {agent ? (
                 <div className="flex max-w-2xl flex-col gap-8">

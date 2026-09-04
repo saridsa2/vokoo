@@ -33,6 +33,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { ScreenHeader } from "@/components/application/screen/screen-header";
 import { IconLock, Trash01, SearchLg } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 /** The types the SDK's `compileSchema` accepts, and nothing it does not. */
@@ -87,6 +88,7 @@ function toSchema(fields: Field[]): Shape["schema"] {
 export function SchemasScreen() {
     const router = useRouter();
     const { context, isReady } = useSession();
+    const notify = useNotify();
     const [shapes, setShapes] = useState<Shape[]>([]);
     /**
      * Who names each schema, by schema id.
@@ -99,7 +101,6 @@ export function SchemasScreen() {
     const [query, setQuery] = useState("");
     const [editing, setEditing] = useState<Shape | null>(null);
     const [creating, setCreating] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     const load = useCallback(async () => {
         if (!context) return;
@@ -134,9 +135,9 @@ export function SchemasScreen() {
             }
             setUsedBy(uses);
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not load the schemas", problem);
         }
-    }, [context]);
+    }, [context, notify]);
 
     useEffect(() => {
         if (isReady) void load();
@@ -171,8 +172,6 @@ export function SchemasScreen() {
             />
 
             <div className="min-h-0 flex-1 overflow-y-auto p-6">
-                {error ? <p className="text-sm text-error-primary">{error}</p> : null}
-
                 {visible.length === 0 ? (
                     <div className="rounded-xl border border-dashed border-secondary p-12 text-center">
                         <p className="text-sm font-medium text-primary">
@@ -285,18 +284,17 @@ function ShapeDialog({
     onSaved: (id?: string) => void;
 }) {
     const { context } = useSession();
+    const notify = useNotify();
     const [name, setName] = useState(shape?.name ?? "");
     const [description, setDescription] = useState(shape?.description ?? "");
     const [fields, setFields] = useState<Field[]>(
         shape ? toFields(shape.schema) : [{ name: "", type: "string", description: "", required: false }],
     );
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     const save = async () => {
         if (!context || !name.trim()) return;
         setSaving(true);
-        setError(null);
         const body = { name: name.trim(), description: description.trim(), schema: toSchema(fields) };
         try {
             if (shape) {
@@ -312,7 +310,7 @@ function ShapeDialog({
                 onSaved(data.id);
             }
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not save the schema", problem);
         } finally {
             setSaving(false);
         }
@@ -406,8 +404,6 @@ function ShapeDialog({
                                 Add a field
                             </Button>
                         </fieldset>
-
-                        {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
                         <div className="flex justify-end gap-2">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>

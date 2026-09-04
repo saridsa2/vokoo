@@ -39,6 +39,7 @@ import { Select } from "@/components/base/select/select";
 import { SipCredentials } from "@/components/application/screens/sip-credentials";
 import { api } from "@/utils/api-client";
 import { generateSipPassword } from "@/utils/sip-password";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useEventStream } from "@/hooks/use-event-stream";
 import { useSession } from "@/hooks/use-session";
 
@@ -77,6 +78,15 @@ const DUTY: Record<string, string> = {
 export const TeamScreen = () => {
     const { context, isReady } = useSession();
     const [people, setPeople] = useState<Person[] | null>(null);
+    /**
+     * The roster failing to load, and only that.
+     *
+     * It stays on the page rather than becoming a toast: the table below has
+     * nothing in it either way, and a message that disappears leaves an empty
+     * roster with no account of why — and the "Loading." line under it waiting
+     * for something that is never coming. What a person *does* here — adding a
+     * member, giving an extension — reports through `notify`.
+     */
     const [error, setError] = useState<string | null>(null);
     const [giving, setGiving] = useState<Person | null>(null);
     /**
@@ -267,12 +277,12 @@ export const TeamScreen = () => {
  */
 const AddMember = ({ onClose }: { onClose: () => void }) => {
     const { context } = useSession();
+    const notify = useNotify();
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [role, setRole] = useState("agent");
     const [extension, setExtension] = useState("");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [done, setDone] = useState<{ endpoint: string; password: string } | null>(null);
 
     const extensionOk = extension.trim() === "" || /^[0-9]{3,6}$/.test(extension.trim());
@@ -281,7 +291,6 @@ const AddMember = ({ onClose }: { onClose: () => void }) => {
     const submit = async () => {
         if (!context || !valid) return;
         setSaving(true);
-        setError(null);
         try {
             const { data } = await api.addMember<{
                 extension?: { endpoint: string };
@@ -301,7 +310,7 @@ const AddMember = ({ onClose }: { onClose: () => void }) => {
                 window.location.reload();
             }
         } catch (problem) {
-            setError(problem instanceof Error ? problem.message : "Could not add them");
+            notify.failure("Could not add the member", problem);
         } finally {
             setSaving(false);
         }
@@ -378,9 +387,6 @@ const AddMember = ({ onClose }: { onClose: () => void }) => {
                                         isInvalid={Boolean(extension) && !extensionOk}
                                     />
                                 </div>
-                                {error ? (
-                                    <p className="mt-4 text-sm text-error-primary">{error}</p>
-                                ) : null}
                                 <div className="mt-6 flex justify-end gap-3">
                                     <Button size="sm" color="secondary" onClick={onClose}>
                                         Cancel
@@ -431,9 +437,9 @@ const ROLES = [
  */
 const GiveExtension = ({ person, onClose }: { person: Person; onClose: () => void }) => {
     const { context } = useSession();
+    const notify = useNotify();
     const [extension, setExtension] = useState("");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [created, setCreated] = useState<{ endpoint: string; password: string } | null>(null);
 
     const valid = /^[0-9]{3,6}$/.test(extension);
@@ -441,7 +447,6 @@ const GiveExtension = ({ person, onClose }: { person: Person; onClose: () => voi
     const create = async () => {
         if (!context || !valid) return;
         setSaving(true);
-        setError(null);
         const password = generateSipPassword();
         try {
             const { data } = await api.create<{ endpoint: string }>(
@@ -461,7 +466,7 @@ const GiveExtension = ({ person, onClose }: { person: Person; onClose: () => voi
             // Asterisk will actually know.
             setCreated({ endpoint: data?.endpoint ?? "", password });
         } catch (problem) {
-            setError(problem instanceof Error ? problem.message : "Could not add the extension");
+            notify.failure("Could not add the extension", problem);
         } finally {
             setSaving(false);
         }
@@ -522,9 +527,6 @@ const GiveExtension = ({ person, onClose }: { person: Person; onClose: () => voi
                                         isInvalid={Boolean(extension) && !valid}
                                     />
                                 </div>
-                                {error ? (
-                                    <p className="mt-4 text-sm text-error-primary">{error}</p>
-                                ) : null}
                                 <div className="mt-6 flex justify-end gap-3">
                                     <Button size="sm" color="secondary" onClick={onClose}>
                                         Cancel

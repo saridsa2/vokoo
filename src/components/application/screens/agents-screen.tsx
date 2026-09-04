@@ -11,8 +11,9 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { ClockRewind, Copy01, SearchLg } from "@/components/icons";
 import { useResource } from "@/hooks/use-resource";
 import { useClipboard } from "@/hooks/use-clipboard";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
-import { api, ApiError } from "@/utils/api-client";
+import { api } from "@/utils/api-client";
 import { diffAgents } from "@/utils/agent-diff";
 import { modelsFor, type CapabilityScope } from "@/utils/capability-registry";
 import { reconcileModel, reconcileProvider, type Rewrite } from "@/utils/capability-reconcile";
@@ -103,74 +104,42 @@ const NEW_AGENT: Partial<Agent> = {
 };
 
 /**
- * What the attached engine resolves to, read-only.
+ * The engine this agent runs on: its name, and what it is for.
  *
- * Not a second set of selects: the engine already decided these, and an
- * editable copy here is how the same fact ends up in two places saying
- * different things. Editing them means opening the engine.
+ * **It used to print the models.** Three rows — Listening, Thinking, Speaking —
+ * each naming a provider, a model and a voice, read straight out of
+ * `engine.config`. That is the platform's product, arrived at by measuring real
+ * calls, and a customer who can read `bulbul:v3` can price it elsewhere.
+ *
+ * Since 0091 the tenant's engine list comes from `available_engines`, which
+ * returns a name and a description and no config at all — so there is nothing
+ * here to redact. The hiding is in the database, not in this component.
+ *
+ * No "Edit engine" link either: engines are composed in the operator portal,
+ * and a link to a screen this reader cannot open is worse than no link.
  */
-const EngineSummary = ({ engine }: { engine: EngineOption }) => {
-    const config = engine.config ?? {};
-    const steps =
-        engine.mode === "realtime"
-            ? [{ label: "Hears and speaks", stage: config.realtime }]
-            : [
-                  { label: "Listening", stage: config.stt },
-                  { label: "Thinking", stage: config.llm },
-                  { label: "Speaking", stage: config.tts },
-              ];
+const EngineSummary = ({ engine }: { engine: EngineOption }) => (
+    <div className="flex max-w-xl flex-col gap-1 rounded-lg bg-secondary p-4 ring-1 ring-secondary">
+        <span className="text-sm font-medium text-secondary">Runs through</span>
+        <span className="text-md text-primary">{engine.name}</span>
+        {engine.description ? (
+            <p className="text-sm text-tertiary">{engine.description}</p>
+        ) : null}
+    </div>
+);
 
-    return (
-        <div className="flex max-w-xl flex-col gap-3 rounded-lg bg-secondary p-4 ring-1 ring-secondary">
-            <div className="flex items-baseline justify-between gap-4">
-                <span className="text-sm font-medium text-secondary">Runs through</span>
-                <Button href={`/engines/${engine.id}`} color="link-color" size="sm">
-                    Edit engine
-                </Button>
-            </div>
-
-            {/* A fixed label column, so the values line up as a list rather than
-                drifting to the far edge of whatever width this card is given. */}
-            <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-4 gap-y-2">
-                {steps.map((step) => (
-                    <div key={step.label} className="contents">
-                        <dt className="self-baseline text-xs font-medium tracking-wide text-quaternary uppercase">
-                            {step.label}
-                        </dt>
-                        <dd className="flex min-w-0 flex-wrap items-baseline gap-x-2">
-                            {step.stage?.provider ? (
-                                <>
-                                    <span className="text-sm text-secondary">{step.stage.provider}</span>
-                                    <span className="truncate font-mono text-xs text-tertiary">
-                                        {step.stage.model ?? "no model"}
-                                    </span>
-                                    {step.stage.voice ? (
-                                        <span className="text-xs text-tertiary">as {step.stage.voice}</span>
-                                    ) : null}
-                                </>
-                            ) : (
-                                <span className="text-sm text-tertiary">Not chosen</span>
-                            )}
-                        </dd>
-                    </div>
-                ))}
-            </dl>
-        </div>
-    );
-};
-
+/** Exactly what `available_engines` returns — no `config`, no `mode`. */
 type EngineOption = {
     id: string;
     name: string;
-    mode: string;
-    status: string;
-    config: Record<string, { provider?: string; model?: string; voice?: string }> | null;
+    description: string | null;
 };
 
 export function AgentsScreen() {
     const { records, isLoading, error, create, refresh } = useResource<Agent>("agents");
     const { records: engines } = useResource<EngineOption>("engines");
     const { context } = useSession();
+    const notify = useNotify();
     const { copied, copy } = useClipboard();
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -181,7 +150,6 @@ export function AgentsScreen() {
     const [tab, setTab] = useState<(typeof TABS)[number]>("Persona");
     const [isReviewOpen, setIsReviewOpen] = useState(false);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-    const [publishError, setPublishError] = useState<string | null>(null);
     const [nextVersion, setNextVersion] = useState<number | null>(null);
     const [rewrites, setRewrites] = useState<Rewrite[]>([]);
 
@@ -315,7 +283,6 @@ export function AgentsScreen() {
     async function confirmPublish() {
         if (!draft || !context) return;
         setIsSaving(true);
-        setPublishError(null);
 
         try {
             await api.publishAgent(
@@ -352,7 +319,7 @@ export function AgentsScreen() {
             setRewrites([]);
             findings.resetSeen();
         } catch (cause) {
-            setPublishError(cause instanceof ApiError ? cause.message : String(cause));
+            notify.failure("Could not publish the agent", cause);
         } finally {
             setIsSaving(false);
         }
@@ -400,19 +367,16 @@ export function AgentsScreen() {
      * three different model ids in three places, none of them wrong on its own.
      */
     const attachEngine = (engineId: string | null) => {
-        const engine = engines.find((option) => option.id === engineId);
-        // Whichever step decides what to say: the single model on a realtime
-        // engine, the thinking step on a relay. Taking only `realtime` left a
-        // relay's agent still recording the Gemini model it used to run on.
-        const deciding = engine?.config?.realtime ?? engine?.config?.llm;
-        const speaking = engine?.config?.realtime ?? engine?.config?.tts;
+        // **It used to copy the engine's provider, model and voice onto the
+        // agent.** That was a mirror of the engine kept on the tenant's own
+        // row, which is both a second place for the same fact to live and a
+        // copy of the model names in a table the tenant can read — so hiding
+        // them on the engine would have hidden nothing.
+        //
+        // The bridge reads `agents.engine_id` and resolves the engine itself;
+        // it has never read these columns when an engine is attached.
         patch({
             engine_id: engineId,
-            ...(deciding?.provider ? { provider: deciding.provider } : {}),
-            ...(deciding?.model ? { model: deciding.model } : {}),
-            ...(speaking?.voice && speaking.provider && draft
-                ? { voice_config: { ...draft.voice_config, voice: `${speaking.provider}:${speaking.voice}` } }
-                : {}),
         });
     };
 
@@ -427,14 +391,9 @@ export function AgentsScreen() {
      * watching. Attaching a draft engine therefore looks like a change and is
      * not one, so the editor says so at the point of choosing.
      */
-    const engineHint = useMemo(() => {
-        const engine = engines.find((option) => option.id === draft?.engine_id);
-        if (!engine) return null;
-        if (engine.status !== "published") {
-            return `${engine.name} is a draft. Publish it to use it on calls.`;
-        }
-        return null;
-    }, [engines, draft?.engine_id]);
+    // `available_engines` returns published engines only, so there is no draft
+    // to warn about — a tenant cannot be offered one.
+    const engineHint = null;
 
     const modelItems = (draft ? modelsFor(catalogue, draft.provider) : []).map((model) => ({
         id: model.id,
@@ -658,10 +617,7 @@ export function AgentsScreen() {
                                         <Button
                                             size="sm"
                                             isDisabled={!isDirty || blockingCount > 0}
-                                            onClick={() => {
-                                                setPublishError(null);
-                                                setIsReviewOpen(true);
-                                            }}
+                                            onClick={() => setIsReviewOpen(true)}
                                         >
                                             Publish
                                         </Button>
@@ -738,10 +694,14 @@ export function AgentsScreen() {
                                             onSelectionChange={(key) => attachEngine(String(key) || null)}
                                             items={[
                                                 { id: "", label: "Server default", supportingText: "No engine" },
+                                                // The description, not the shape.
+                                                // "One model" versus "Relay" is
+                                                // how we built it, which is not
+                                                // a thing a customer chooses on.
                                                 ...engines.map((option) => ({
                                                     id: option.id,
-                                                    label: option.status === "published" ? option.name : `${option.name} (draft)`,
-                                                    supportingText: option.mode === "realtime" ? "One model" : "Relay",
+                                                    label: option.name,
+                                                    supportingText: option.description ?? undefined,
                                                 })),
                                             ]}
                                             hint={
@@ -815,7 +775,6 @@ export function AgentsScreen() {
                 nextVersion={nextVersion}
                 conflict={hasConflict ? {} : null}
                 isPublishing={isSaving}
-                error={publishError}
                 onConfirm={confirmPublish}
             />
 

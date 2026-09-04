@@ -26,13 +26,12 @@ type Props = {
     /** Set when the saved row moved under the draft. */
     conflict: { publishedAt?: string } | null;
     isPublishing: boolean;
-    error: string | null;
     onConfirm: () => void;
 };
 
 const KIND_COLOR = { added: "success", removed: "error", changed: "warning" } as const;
 
-export function AgentPublishDialog({ isOpen, onOpenChange, changes, nextVersion, conflict, isPublishing, error, onConfirm }: Props) {
+export function AgentPublishDialog({ isOpen, onOpenChange, changes, nextVersion, conflict, isPublishing, onConfirm }: Props) {
     // Group by column so a reader scans "Voice" once rather than five rows that
     // each repeat the tab name.
     const groups = changes.reduce<Record<string, FieldChange[]>>((accumulator, change) => {
@@ -108,12 +107,6 @@ export function AgentPublishDialog({ isOpen, onOpenChange, changes, nextVersion,
                                 </div>
                             )}
                         </div>
-
-                        {error && (
-                            <p className="border-t border-secondary px-6 py-3 text-sm text-error-primary" role="alert">
-                                {error}
-                            </p>
-                        )}
 
                         <footer className="flex justify-end gap-3 border-t border-secondary px-6 py-4">
                             <Button size="sm" color="secondary" isDisabled={isPublishing} onClick={() => onOpenChange(false)}>

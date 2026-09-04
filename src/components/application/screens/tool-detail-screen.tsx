@@ -18,6 +18,7 @@ import { InfoHint } from "@/components/base/tooltip/info-hint";
 import { Badge } from "@/components/base/badges/badges";
 import { ArrowLeft, ArrowRight, PlayCircle, TerminalSquare, IconTools } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type Tool = {
@@ -69,11 +70,13 @@ function sampleArgs(tool: Tool | null): string {
 
 export const ToolDetailScreen = ({ toolId }: { toolId: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [tool, setTool] = useState<Tool | null>(null);
     const [versions, setVersions] = useState<ToolVersion[]>([]);
     const [showing, setShowing] = useState<number | null>(null);
-    const [loadError, setLoadError] = useState<string | null>(null);
+    /** Why the screen has nothing to show. What went wrong is a notification. */
+    const [unopened, setUnopened] = useState(false);
 
     const [args, setArgs] = useState("{}");
     const [touched, setTouched] = useState(false);
@@ -98,15 +101,17 @@ export const ToolDetailScreen = ({ toolId }: { toolId: string }) => {
                 setVersions(rows.data ?? []);
                 setShowing(rows.data?.[0]?.version ?? null);
 
-            } catch (error) {
-                if (live) setLoadError((error as Error).message);
+            } catch (problem) {
+                if (!live) return;
+                setUnopened(true);
+                notify.failure("Could not open this tool", problem);
             }
         })();
 
         return () => {
             live = false;
         };
-    }, [toolId, context, isReady]);
+    }, [toolId, context, isReady, notify]);
 
     const version = useMemo(
         () => versions.find((row) => row.version === showing) ?? versions[0] ?? null,
@@ -135,10 +140,12 @@ export const ToolDetailScreen = ({ toolId }: { toolId: string }) => {
         }
     }, [tool, args, showing, context]);
 
-    if (loadError) {
+    if (unopened && !tool) {
         return (
             <div className="p-8">
-                <p className="text-md text-error-primary">{loadError}</p>
+                <p className="text-md text-tertiary">
+                    This tool could not be opened. It may have been deleted, or the request did not reach the server.
+                </p>
             </div>
         );
     }

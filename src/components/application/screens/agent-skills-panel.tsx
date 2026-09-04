@@ -21,6 +21,7 @@ import { Check, IconAgents } from "@/components/icons";
 import { InfoHint } from "@/components/base/tooltip/info-hint";
 import { Table, TableCard } from "@/components/application/table/table";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type Skill = { id: string; name: string; description: string; status: string };
@@ -30,6 +31,7 @@ type AgentSkill = { id: string; skill_id: string };
 
 export const AgentSkillsPanel = ({ agentId }: { agentId: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [skills, setSkills] = useState<Skill[]>([]);
     const [tools, setTools] = useState<Tool[]>([]);
@@ -37,7 +39,6 @@ export const AgentSkillsPanel = ({ agentId }: { agentId: string }) => {
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [saved, setSaved] = useState<Set<string>>(new Set());
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [note, setNote] = useState<string | null>(null);
 
     useEffect(() => {
@@ -69,13 +70,13 @@ export const AgentSkillsPanel = ({ agentId }: { agentId: string }) => {
                 if (!live) return;
                 setGrantsBySkill(Object.fromEntries(grants));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (live) notify.failure("Could not load the skills", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [agentId, context, isReady]);
+    }, [agentId, context, isReady, notify]);
 
     const changed = useMemo(
         () => selected.size !== saved.size || [...selected].some((id) => !saved.has(id)),
@@ -99,18 +100,17 @@ export const AgentSkillsPanel = ({ agentId }: { agentId: string }) => {
     const save = useCallback(async () => {
         if (!context) return;
         setSaving(true);
-        setError(null);
         try {
             const ids = skills.filter((skill) => selected.has(skill.id)).map((skill) => skill.id);
             await api.setAgentSkills(agentId, ids, context);
             setSaved(new Set(ids));
             setNote(ids.length === 0 ? "Saved. No skills attached." : "Saved.");
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not save the skills", problem);
         } finally {
             setSaving(false);
         }
-    }, [context, agentId, skills, selected]);
+    }, [context, agentId, skills, selected, notify]);
 
     return (
         <div className="flex flex-col gap-5">
@@ -125,7 +125,6 @@ export const AgentSkillsPanel = ({ agentId }: { agentId: string }) => {
             </div>
 
             {note ? <p className="text-sm text-brand-secondary">{note}</p> : null}
-            {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
             {skills.length === 0 ? (
                 <EmptyPanel />

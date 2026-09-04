@@ -23,6 +23,7 @@ import { ResourceListScreen } from "@/components/application/screens/resource-li
 import { Select } from "@/components/base/select/select";
 import { api } from "@/utils/api-client";
 import { slugify } from "@/components/application/screens/skills-screen";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 // The supporting text lands on the select trigger beside the label, on one
@@ -52,19 +53,28 @@ export const EnginesScreen = () => {
 
 const CreateEngineDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
     const { context } = useSession();
+    const notify = useNotify();
     const router = useRouter();
 
     const [name, setName] = useState("");
     const [mode, setMode] = useState("realtime");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /**
+     * A name clash, and nothing else.
+     *
+     * It stays beside the field because it is about what was typed — the reader
+     * has to change the name to get past it, and a message that names the field
+     * and then vanishes leaves them with nothing to act on. Every other way this
+     * can fail is the create failing, which goes to a notification.
+     */
+    const [nameTaken, setNameTaken] = useState(false);
 
     const slug = slugify(name);
 
     const create = async () => {
         if (!context || !name.trim()) return;
         setSaving(true);
-        setError(null);
+        setNameTaken(false);
         try {
             const { data } = await api.create<{ id: string }>(
                 "engines",
@@ -75,12 +85,11 @@ const CreateEngineDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () 
             setName("");
             router.push(`/engines/${data.id}`);
         } catch (problem) {
-            const message = (problem as Error).message;
-            setError(
-                /duplicate|unique/i.test(message)
-                    ? "An engine with a very similar name already exists. Try another."
-                    : message,
-            );
+            if (/duplicate|unique/i.test((problem as Error).message)) {
+                setNameTaken(true);
+            } else {
+                notify.failure("Could not create the engine", problem);
+            }
         } finally {
             setSaving(false);
         }
@@ -122,7 +131,11 @@ const CreateEngineDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () 
                             )}
                         </Select>
 
-                        {error ? <p className="text-sm text-error-primary">{error}</p> : null}
+                        {nameTaken ? (
+                            <p className="text-sm text-error-primary">
+                                An engine with a very similar name already exists. Try another.
+                            </p>
+                        ) : null}
 
                         <div className="flex justify-end gap-3">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>

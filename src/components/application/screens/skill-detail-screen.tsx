@@ -28,6 +28,7 @@ import { InfoHint } from "@/components/base/tooltip/info-hint";
 import { Table, TableCard } from "@/components/application/table/table";
 import { ArrowLeft, Check, Plus, Trash01 } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type Skill = {
@@ -49,6 +50,7 @@ type SkillTool = { id: string; tool_id: string; sort_order: number };
 
 export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [skill, setSkill] = useState<Skill | null>(null);
     // The edited copy. `skill` stays as it was loaded, so Save can tell what
@@ -60,7 +62,8 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
     const [granted, setGranted] = useState<Set<string>>(new Set());
     const [saved, setSaved] = useState<Set<string>>(new Set());
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /** Why the screen has nothing to show. What went wrong is a notification. */
+    const [unopened, setUnopened] = useState(false);
     const [note, setNote] = useState<string | null>(null);
 
     useEffect(() => {
@@ -83,13 +86,15 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
                 // Kept apart so the Save button can tell whether anything moved.
                 setSaved(new Set(ids));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (!live) return;
+                setUnopened(true);
+                notify.failure("Could not open this skill", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [skillId, context, isReady]);
+    }, [skillId, context, isReady, notify]);
 
     const toolsChanged = useMemo(
         () => granted.size !== saved.size || [...granted].some((id) => !saved.has(id)),
@@ -125,7 +130,6 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
     const save = useCallback(async () => {
         if (!context) return;
         setSaving(true);
-        setError(null);
         try {
             if (proseChanged && draft) {
                 // Only the fields this screen owns. Sending the whole row back
@@ -157,11 +161,11 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
                     : `Saved. Agents with this skill can now call ${ids.length === 1 ? "1 tool" : `${ids.length} tools`}.`,
             );
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not save this skill", problem);
         } finally {
             setSaving(false);
         }
-    }, [context, skillId, tools, granted, proseChanged, draft, collects]);
+    }, [context, skillId, tools, granted, proseChanged, draft, collects, notify]);
 
     /**
      * Publishing is what makes a skill reachable at all: both prompt composers
@@ -170,7 +174,6 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
     const publish = useCallback(async () => {
         if (!context || !skill) return;
         setSaving(true);
-        setError(null);
         const next = skill.status === "published" ? "draft" : "published";
         try {
             const updated = await api.update<Skill>("skills", skillId, { status: next }, context);
@@ -182,16 +185,21 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
                     : "Unpublished. No agent will offer this until it is published again.",
             );
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure(
+                next === "published" ? "Could not publish this skill" : "Could not unpublish this skill",
+                problem,
+            );
         } finally {
             setSaving(false);
         }
-    }, [context, skill, skillId]);
+    }, [context, skill, skillId, notify]);
 
-    if (error && !skill) {
+    if (unopened && !skill) {
         return (
             <div className="p-8">
-                <p className="text-md text-error-primary">{error}</p>
+                <p className="text-md text-tertiary">
+                    This skill could not be opened. It may have been deleted, or the request did not reach the server.
+                </p>
             </div>
         );
     }
@@ -264,7 +272,6 @@ export const SkillDetailScreen = ({ skillId }: { skillId: string }) => {
                     </h2>
 
                     {note ? <p className="text-sm text-brand-secondary">{note}</p> : null}
-                    {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
                     {/* Only the list scrolls. The heading and anything just
                         saved stay where they were put. */}

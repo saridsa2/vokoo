@@ -5,7 +5,8 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { SlideoutMenu } from "@/components/application/slideout-menus/slideout-menu";
 import { ClockRewind } from "@/components/icons";
-import { api, ApiError, type AccessContext } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
+import { api, type AccessContext } from "@/utils/api-client";
 import { diffAgents, formatValue, type FieldChange } from "@/utils/agent-diff";
 import { timeAgo } from "@/utils/format";
 
@@ -42,9 +43,10 @@ type Props = {
 };
 
 export function AgentVersionsPanel({ isOpen, onOpenChange, agentId, context, current, onRestored }: Props) {
+    const notify = useNotify();
+
     const [versions, setVersions] = useState<Version[]>([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<number | null>(null);
     const [restoring, setRestoring] = useState<number | null>(null);
 
@@ -53,7 +55,6 @@ export function AgentVersionsPanel({ isOpen, onOpenChange, agentId, context, cur
 
         let cancelled = false;
         setIsLoading(true);
-        setError(null);
 
         api.agentVersions<Version>(agentId, context)
             .then(({ data }) => {
@@ -62,7 +63,7 @@ export function AgentVersionsPanel({ isOpen, onOpenChange, agentId, context, cur
             })
             .catch((cause) => {
                 if (cancelled) return;
-                setError(cause instanceof ApiError ? cause.message : String(cause));
+                notify.failure("Could not load the version history", cause);
                 setVersions([]);
             })
             .finally(() => {
@@ -72,20 +73,19 @@ export function AgentVersionsPanel({ isOpen, onOpenChange, agentId, context, cur
         return () => {
             cancelled = true;
         };
-    }, [isOpen, agentId, context]);
+    }, [isOpen, agentId, context, notify]);
 
     async function restore(version: number) {
         if (!agentId || !context) return;
         if (!window.confirm(`Republish version ${version}? This appends a new version; nothing is erased.`)) return;
 
         setRestoring(version);
-        setError(null);
         try {
             await api.restoreAgentVersion(agentId, version, context);
             onRestored();
             onOpenChange(false);
         } catch (cause) {
-            setError(cause instanceof ApiError ? cause.message : String(cause));
+            notify.failure(`Could not restore version ${version}`, cause);
         } finally {
             setRestoring(null);
         }
@@ -108,13 +108,7 @@ export function AgentVersionsPanel({ isOpen, onOpenChange, agentId, context, cur
                     <SlideoutMenu.Content>
                         {isLoading && <p className="text-sm text-tertiary">Loading history…</p>}
 
-                        {error && (
-                            <p className="text-sm text-error-primary" role="alert">
-                                {error}
-                            </p>
-                        )}
-
-                        {!isLoading && !error && ordered.length === 0 && (
+                        {!isLoading && ordered.length === 0 && (
                             <p className="text-sm text-tertiary">
                                 No versions yet. The first publish of this agent will start the history.
                             </p>

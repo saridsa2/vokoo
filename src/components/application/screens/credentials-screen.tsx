@@ -10,6 +10,7 @@ import { ScreenHeader } from "@/components/application/screen/screen-header";
 import { AlertCircle, CheckCircle, IconLock, RefreshCcw02, Share04, Trash01 } from "@/components/icons";
 import { useCatalogue } from "@/hooks/use-catalogue";
 import type { CatalogueVendor } from "@/utils/capability-registry";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 import { ApiError, api } from "@/utils/api-client";
 import { timeAgo } from "@/utils/format";
@@ -82,9 +83,17 @@ const TABS = [
 export function CredentialsScreen() {
     const { context, isReady } = useSession();
     const { catalogue } = useCatalogue();
+    const notify = useNotify();
 
     const [connected, setConnected] = useState<Credential[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    /**
+     * Only the load of the connected keys, which stays on the page rather than
+     * becoming a toast. The vendor list is drawn from the catalogue either way,
+     * so a failure here leaves every account reading "Not connected" — a
+     * message that vanishes would leave that lie standing. Everything a person
+     * *does* on this screen reports through `notify`.
+     */
     const [error, setError] = useState<string | null>(null);
     const [editing, setEditing] = useState<VendorSlot | null>(null);
     const [tab, setTab] = useState("llm");
@@ -129,7 +138,6 @@ export function CredentialsScreen() {
         if (!context) return;
         setRefreshing(true);
         setRefreshed(null);
-        setError(null);
         try {
             const { data } = await api.refreshCatalogue<{
                 refreshed: { id: string; models: number; voices: number; error: string | null }[];
@@ -144,7 +152,7 @@ export function CredentialsScreen() {
                       : `Updated ${rows.length} from the providers.`,
             );
         } catch (cause) {
-            setError(cause instanceof ApiError ? cause.message : String(cause));
+            notify.failure("Could not ask the providers what they offer", cause);
         } finally {
             setRefreshing(false);
         }
@@ -157,7 +165,7 @@ export function CredentialsScreen() {
             await api.deleteVendorKey(slot.id, context);
             await refresh();
         } catch (cause) {
-            setError(cause instanceof ApiError ? cause.message : String(cause));
+            notify.failure(`Could not remove the ${slot.label} key`, cause);
         }
     }
 
@@ -372,17 +380,16 @@ function CredentialDialog({
     onSaved: () => void;
 }) {
     const { context } = useSession();
+    const notify = useNotify();
     const [secret, setSecret] = useState("");
     const [isSaving, setIsSaving] = useState(false);
     const [isTesting, setIsTesting] = useState(false);
     const [verdict, setVerdict] = useState<{ ok: boolean; text: string } | null>(null);
-    const [error, setError] = useState<string | null>(null);
 
     // Clear on open, so a key typed for one provider can never be submitted
     // against another.
     useEffect(() => {
         setSecret("");
-        setError(null);
         setVerdict(null);
     }, [slot]);
 
@@ -402,7 +409,6 @@ function CredentialDialog({
     async function test() {
         if (!slot || !context || !secret.trim()) return;
         setIsTesting(true);
-        setError(null);
         try {
             const { data } = await api.testVendorKey(slot.id, secret.trim(), context);
             // The server answers in vendor ids because that is what it routes
@@ -422,7 +428,9 @@ function CredentialDialog({
                         },
             );
         } catch (cause) {
-            setError(cause instanceof ApiError ? cause.message : String(cause));
+            // The key itself never reaches the message — `what` is a fixed
+            // sentence and the cause is the server's, not the secret's.
+            notify.failure(`Could not check the ${slot.label} key`, cause);
         } finally {
             setIsTesting(false);
         }
@@ -431,13 +439,12 @@ function CredentialDialog({
     async function save() {
         if (!slot || !context || !secret.trim()) return;
         setIsSaving(true);
-        setError(null);
         try {
             await api.setVendorKey({ vendor: slot.id, secret: secret.trim(), label: slot.label }, context);
             setSecret("");
             onSaved();
         } catch (cause) {
-            setError(cause instanceof ApiError ? cause.message : String(cause));
+            notify.failure(`Could not save the ${slot.label} key`, cause);
         } finally {
             setIsSaving(false);
         }
@@ -477,12 +484,6 @@ function CredentialDialog({
                                 >
                                     {verdict.ok ? <CheckCircle className="size-4" /> : <AlertCircle className="size-4" />}
                                     {verdict.text}
-                                </p>
-                            )}
-
-                            {error && (
-                                <p className="text-sm text-error-primary" role="alert">
-                                    {error}
                                 </p>
                             )}
                         </div>

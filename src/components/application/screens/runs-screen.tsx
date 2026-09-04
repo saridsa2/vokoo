@@ -34,6 +34,7 @@ import { Select } from "@/components/base/select/select";
 import { SearchLg } from "@/components/icons";
 import { TerminalSquare } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type ToolRun = {
@@ -111,6 +112,7 @@ export const RunsScreen = () => {
 
 const FunctionExecutions = ({ filter }: { filter?: string }) => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [runs, setRuns] = useState<ToolRun[] | null>(null);
     const [open, setOpen] = useState<string | null>(null);
@@ -139,7 +141,9 @@ const FunctionExecutions = ({ filter }: { filter?: string }) => {
             return JSON.stringify(run).toLowerCase().includes(needle);
         });
     }, [runs, query, outcome, tool]);
-    const [error, setError] = useState<string | null>(null);
+    /** Why the list is empty, rather than what went wrong — the failure itself
+     *  is raised as a notification. */
+    const [unavailable, setUnavailable] = useState(false);
 
     useEffect(() => {
         if (!isReady || !context) return;
@@ -149,13 +153,15 @@ const FunctionExecutions = ({ filter }: { filter?: string }) => {
                 const { data } = await api.toolRuns<ToolRun>(filter, context);
                 if (live) setRuns(data ?? []);
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (!live) return;
+                setUnavailable(true);
+                notify.failure("Could not load the runs", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [context, isReady, filter]);
+    }, [context, isReady, filter, notify]);
 
     // Counted from what is on screen rather than fetched separately, so the
     // summary and the list can never disagree — including when a filter is on.
@@ -182,8 +188,6 @@ const FunctionExecutions = ({ filter }: { filter?: string }) => {
                     </Button>
                 </div>
             ) : null}
-
-            {error ? <p className="text-md text-error-primary">{error}</p> : null}
 
             {runs && runs.length > 0 ? (
                 // One row, not two. The counts are a caption on the filters —
@@ -250,7 +254,9 @@ const FunctionExecutions = ({ filter }: { filter?: string }) => {
             ) : null}
 
             {runs === null ? (
-                <p className="text-sm text-tertiary">Loading…</p>
+                // A screen that says "Loading…" after the request has already
+                // failed is waiting for something that is not coming.
+                <p className="text-sm text-tertiary">{unavailable ? "The runs could not be loaded." : "Loading…"}</p>
             ) : visible.length === 0 ? (
                 <div className="flex flex-col items-start gap-2 rounded-lg bg-secondary p-8 ring-1 ring-primary">
                     <p className="text-md font-medium text-primary">

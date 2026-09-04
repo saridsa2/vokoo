@@ -27,6 +27,7 @@ import type { Diagram } from "@/lib/architecture-model";
 import { diagramToEngineConfig, engineToDiagram, type EngineMode, type EngineRow } from "@/lib/engine-diagram";
 import type { EngineOption } from "@/components/stackplane/recovered-editor-host";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useCatalogue } from "@/hooks/use-catalogue";
 import { useSession } from "@/hooks/use-session";
 
@@ -53,11 +54,19 @@ const NODE_FOR_STAGE: Record<string, string> = {
 export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
     const { context, isReady } = useSession();
     const { catalogue } = useCatalogue();
+    const notify = useNotify();
 
     const [engine, setEngine] = useState<EngineRow | null>(null);
     const [diagram, setDiagram] = useState<Diagram | null>(null);
     const [connected, setConnected] = useState<string[]>([]);
-    const [error, setError] = useState<string | null>(null);
+    /**
+     * The engine could not be opened at all.
+     *
+     * Kept as state rather than raised as a notification because there is no
+     * board to stand behind the message — the screen has nothing else to show,
+     * so it says so where the board would have been.
+     */
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [checking, setChecking] = useState(false);
     const [verdict, setVerdict] = useState<string | null>(null);
 
@@ -67,18 +76,24 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
         (async () => {
             try {
                 const [detail, keys] = await Promise.all([
-                    api.get<EngineRow>("engines", engineId, context),
+                    // The operator's route, not the generic resource:
+                    // `engines` left that allowlist in 0091 because a generic
+                    // route selects `*`, and `config` is the model names.
+                    api.operatorEngine<EngineRow>(engineId, context),
                     // The bridge resolves each step's key per call and refuses
                     // the call when one is missing. Knowing it here turns a
                     // failure the caller hears into a word in the list.
-                    api.vendorKeys<{ vendor: string }>(context),
+                    //
+                    // The platform's keys now, not the workspace's — they were
+                    // folded in 0090, and a tenant reads none of them.
+                    api.operatorPlatformKeys<{ vendor: string }>(context),
                 ]);
                 if (!live) return;
                 setEngine(detail.data);
                 setDiagram(engineToDiagram(detail.data));
                 setConnected((keys.data ?? []).map((row) => row.vendor));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (live) setLoadError((problem as Error).message);
             }
         })();
         return () => {
@@ -141,8 +156,7 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
             setEngine(next);
             setDiagram(engineToDiagram(next));
             try {
-                await api.update<EngineRow>(
-                    "engines",
+                await api.operatorUpdateEngine(
                     engineId,
                     // Back to a draft: the published chain no longer exists, and
                     // a call must not reach a shape nobody has configured.
@@ -150,10 +164,10 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
                     context,
                 );
             } catch (problem) {
-                setError((problem as Error).message);
+                notify.failure("Could not change the shape", problem);
             }
         },
-        [context, engine, engineId],
+        [context, engine, engineId, notify],
     );
 
     /**
@@ -168,7 +182,6 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
         if (!context) return;
         setChecking(true);
         setVerdict(null);
-        setError(null);
         try {
             const { data } = await api.preflightEngine<{
                 ok: boolean;
@@ -183,19 +196,18 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
                           .join("  ·  "),
             );
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not test the engine", problem);
         } finally {
             setChecking(false);
         }
-    }, [context, engineId]);
+    }, [context, engineId, notify]);
 
     const save = useCallback(
         async (edited: Diagram) => {
             if (!context || !engine) return false;
             try {
                 const config = diagramToEngineConfig(edited, engine.mode);
-                await api.update<EngineRow>(
-                    "engines",
+                await api.operatorUpdateEngine(
                     engineId,
                     { name: edited.name, description: edited.description, config },
                     context,
@@ -244,8 +256,7 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
                 ];
                 if (unpaid.length > 0) return `No key connected for ${unpaid.join(", ")}.`;
 
-                await api.update<EngineRow>(
-                    "engines",
+                await api.operatorUpdateEngine(
                     engineId,
                     { name: edited.name, description: edited.description, config, status: "published" },
                     context,
@@ -259,12 +270,12 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
         [context, engine, engineId, engineOptions, connected],
     );
 
-    if (error) {
+    if (loadError) {
         return (
             <div className="grid h-full place-items-center p-8">
                 <div className="max-w-md text-center">
                     <p className="text-sm font-medium text-primary">Could not open this engine</p>
-                    <p className="mt-1 text-sm text-tertiary">{error}</p>
+                    <p className="mt-1 text-sm text-tertiary">{loadError}</p>
                 </div>
             </div>
         );
@@ -291,7 +302,12 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
             // a step, so no field here can reference anything.
             board="engine"
             shapeIsFixed
-            backHref="/engines"
+            // `/engines` was the tenant route. It is not merely the wrong
+            // destination now — that screen still resolved on a host serving
+            // both products, listed the same engines under their public names,
+            // and so read as the platform list while being a different screen
+            // that cannot edit any of them.
+            backHref="/platform/engines"
             publishedMessage="Published. Agents on this engine use it from the next call."
             toolbarSlot={
                 <>
@@ -311,7 +327,9 @@ export const EngineDetailScreen = ({ engineId }: { engineId: string }) => {
                     />
                 </>
             }
-            notice={verdict ?? error ?? undefined}
+            // Only the verdict: a load failure replaces this whole screen, so it
+            // could never have reached the board's notice line.
+            notice={verdict ?? undefined}
             engineOptions={engineOptions}
             connectedVendors={connected}
         />

@@ -10,6 +10,7 @@ import { SearchLg } from "@/components/icons";
 import { ScreenHeader } from "@/components/application/screen/screen-header";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 import { useResource } from "@/hooks/use-resource";
 import type { Flow } from "@/utils/flow-graph";
@@ -201,16 +202,15 @@ function NewFlowDialog({
     onClose: () => void;
 }) {
     const { context } = useSession();
+    const notify = useNotify();
     const router = useRouter();
 
     const [name, setName] = useState("");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
 
     const create = async () => {
         if (!context || !name.trim()) return;
         setSaving(true);
-        setError(null);
         try {
             const { data } = await api.create<{ id: string }>(
                 "flows",
@@ -246,7 +246,7 @@ function NewFlowDialog({
             setName("");
             router.push(`/flows/${data.id}`);
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure(`Could not create the ${kind.noun}`, problem);
         } finally {
             setSaving(false);
         }
@@ -271,8 +271,6 @@ function NewFlowDialog({
                             onChange={(value) => setName(String(value))}
                             isRequired
                         />
-
-                        {error ? <p className="text-sm text-error-primary">{error}</p> : null}
 
                         <div className="flex justify-end gap-2">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>

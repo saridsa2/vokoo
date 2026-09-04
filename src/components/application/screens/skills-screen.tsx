@@ -21,6 +21,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { Input } from "@/components/base/input/input";
 import { ResourceListScreen } from "@/components/application/screens/resource-list-screen";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 /** A slug the database will accept, derived so nobody has to think about it. */
@@ -52,18 +53,25 @@ export const SkillsScreen = () => {
 
 const CreateSkillDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
     const { context } = useSession();
+    const notify = useNotify();
     const router = useRouter();
 
     const [name, setName] = useState("");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /**
+     * Only the taken-name refusal, which is about the field above it. Anything
+     * else that goes wrong is a notification — a message naming the name you
+     * typed belongs beside where you type it, not in a corner that clears
+     * itself.
+     */
+    const [nameTaken, setNameTaken] = useState(false);
 
     const slug = slugify(name);
 
     const create = async () => {
         if (!context || !name.trim()) return;
         setSaving(true);
-        setError(null);
+        setNameTaken(false);
         try {
             const { data } = await api.create<{ id: string }>(
                 "skills",
@@ -82,12 +90,8 @@ const CreateSkillDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () =
             setName("");
             router.push(`/skills/${data.id}`);
         } catch (problem) {
-            const message = (problem as Error).message;
-            setError(
-                /duplicate|unique/i.test(message)
-                    ? "A skill with a very similar name already exists. Try another."
-                    : message,
-            );
+            if (/duplicate|unique/i.test((problem as Error).message)) setNameTaken(true);
+            else notify.failure("Could not create the skill", problem);
         } finally {
             setSaving(false);
         }
@@ -112,8 +116,14 @@ const CreateSkillDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () =
                             label="Name"
                             placeholder="Book an appointment"
                             value={name}
-                            onChange={(value) => setName(String(value))}
+                            onChange={(value) => {
+                                setName(String(value));
+                                // The refusal was about the name that was sent,
+                                // so it stops applying the moment it changes.
+                                setNameTaken(false);
+                            }}
                             isRequired
+                            isInvalid={nameTaken}
                             autoFocus
                             hint={slug ? `Referred to as ${slug}` : undefined}
                             onKeyDown={(event) => {
@@ -121,7 +131,11 @@ const CreateSkillDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () =
                             }}
                         />
 
-                        {error ? <p className="text-sm text-error-primary">{error}</p> : null}
+                        {nameTaken ? (
+                            <p className="text-sm text-error-primary">
+                                A skill with a very similar name already exists. Try another.
+                            </p>
+                        ) : null}
 
                         <div className="flex justify-end gap-3">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>

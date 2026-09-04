@@ -21,6 +21,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { ArrowLeft, IconLock, IconUnlock, Trash01 } from "@/components/icons";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 /** The types the SDK's `compileSchema` accepts, and nothing it does not. */
@@ -75,6 +76,7 @@ function toSchema(fields: Field[]): Schema["schema"] {
 
 export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
     const { context, isReady } = useSession();
+    const notify = useNotify();
 
     const [schema, setSchema] = useState<Schema | null>(null);
     const [name, setName] = useState("");
@@ -82,7 +84,9 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
     const [fields, setFields] = useState<Field[]>([]);
     const [saving, setSaving] = useState(false);
     const [saved, setSaved] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /** Why the screen has nothing to show, rather than what went wrong — the
+     *  failure itself is raised as a notification. */
+    const [unopened, setUnopened] = useState(false);
     /** Tools that named this schema. Deleting or changing it reaches them. */
     const [usedBy, setUsedBy] = useState<{ id: string; name: string }[]>([]);
 
@@ -101,13 +105,15 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                 const tools = await api.list<{ id: string; name: string; schema_id: string | null }>("tools", context);
                 if (live) setUsedBy((tools.data ?? []).filter((tool) => tool.schema_id === schemaId));
             } catch (problem) {
-                if (live) setError((problem as Error).message);
+                if (!live) return;
+                setUnopened(true);
+                notify.failure("Could not open this schema", problem);
             }
         })();
         return () => {
             live = false;
         };
-    }, [schemaId, context, isReady]);
+    }, [schemaId, context, isReady, notify]);
 
     // Recomputed as you type. This is the whole point of the right pane.
     const compiled = useMemo(() => toSchema(fields), [fields]);
@@ -130,12 +136,11 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
     const setLock = async (locked: boolean) => {
         if (!context || !schema || schema.origin === "push") return;
         setSaving(true);
-        setError(null);
         try {
             await api.update("structured-outputs", schema.id, { locked }, context);
             setSchema({ ...schema, locked });
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure(locked ? "Could not lock the schema" : "Could not unlock the schema", problem);
         } finally {
             setSaving(false);
         }
@@ -144,7 +149,6 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
     const save = async () => {
         if (!context || !schema) return;
         setSaving(true);
-        setError(null);
         setSaved(false);
         try {
             await api.update(
@@ -155,18 +159,20 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
             );
             setSaved(true);
         } catch (problem) {
-            setError((problem as Error).message);
+            notify.failure("Could not save the schema", problem);
         } finally {
             setSaving(false);
         }
     };
 
-    if (error && !schema) {
+    if (unopened && !schema) {
         return (
             <div className="grid h-full place-items-center p-8">
                 <div className="max-w-md text-center">
                     <p className="text-sm font-medium text-primary">Could not open this schema</p>
-                    <p className="mt-1 text-sm text-tertiary">{error}</p>
+                    <p className="mt-1 text-sm text-tertiary">
+                        It may have been deleted, or the request did not reach the server.
+                    </p>
                 </div>
             </div>
         );
@@ -243,8 +249,6 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                         )}
                     </p>
                 ) : null}
-
-                {error ? <p className="text-sm text-error-primary">{error}</p> : null}
             </header>
 
             <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 lg:px-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:overflow-hidden">
