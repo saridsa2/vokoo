@@ -1,39 +1,67 @@
 "use client";
+import type { FC } from "react";
+import type { IconProps } from "@/components/icons";
 
 import { motion, useInView } from "motion/react";
+import { Cube, Sparkles, Workflow } from "@/components/icons";
 import Link from "next/link";
 import { useRef, type ReactNode } from "react";
 import { ArrowChip } from "./arrow-chip";
 import { RevealHeadline } from "./reveal-headline";
 
+// The shim's icon signature. Was `LucideIcon`; icons come from
+// `@/components/icons` in this project, so the type follows them.
+type MarketingIcon = FC<IconProps>;
+
 const easeOutExpo = [0.33, 1, 0.68, 1] as const;
 
-/**
- * `tone`, `iconClass`, `indexClass` and `icon` were four fields describing a
- * filled tile and a 64px glyph, both of which went when the cards did. Left in
- * place they would read as styling the section still applies.
- */
 interface Tile {
+
   index: string;
   title: string;
   body: string;
+  icon: MarketingIcon;
+
+  tone: string;
+
+  iconClass: string;
+
+  indexClass: string;
 }
 
 const TILES: Tile[] = [
   {
     index: "01.",
     title: "Start with what you already follow",
+
     body: "Give us the protocol your department already works to. We turn it into something that carries itself out. Nobody has to sit and build it.",
+    icon: Workflow,
+    tone: "bg-accent text-accent-foreground",
+
+    iconClass: "text-accent-foreground/85",
+    indexClass: "text-accent-foreground/55",
   },
   {
     index: "02.",
     title: "It rings every patient",
+
     body: "On the day it should, in the language they speak, at home or wherever they have gone. It asks what your protocol asks, and listens to the reply.",
+    icon: Cube,
+
+    tone: "bg-foreground/[0.08] text-foreground",
+    iconClass: "text-foreground/70",
+    indexClass: "text-foreground/45",
   },
   {
     index: "03.",
     title: "You hear back the same day",
+
     body: "If something is wrong a nurse comes on the line while the patient is still there. Either way, what they said is in your records by the evening.",
+    icon: Sparkles,
+
+    tone: "bg-foreground/[0.04] text-foreground",
+    iconClass: "text-foreground/70",
+    indexClass: "text-foreground/45",
   },
 ];
 
@@ -73,8 +101,20 @@ export function Product(): ReactNode {
 A protocol on paper is a protocol that waits for somebody.
             </RevealHeadline>
 
-            {/* Seven sentences here, saying what the heading above and the
-                three cards below already say. Cut. */}
+            <motion.p
+              initial={{ opacity: 0, y: 8 }}
+              animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
+              transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
+              className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
+            >
+              Every department has one. It says who should be called, when,
+              and what to ask them. It is agreed, written down, and then it
+              runs on whoever has a free afternoon. A follow-up made a
+              fortnight late is a follow-up that did not happen, and nothing
+              anywhere records that it did not. Sarvathra takes the protocol
+              you already work to and makes it happen for every patient, on
+              time, without anybody having to remember.
+            </motion.p>
 
             <motion.div
               initial={{ opacity: 0, y: 8 }}
@@ -106,7 +146,9 @@ A protocol on paper is a protocol that waits for somebody.
 
         ].join(" ")}
       >
-        {TILES.map((tile, i) => (
+        {TILES.map((tile, i) => {
+          const Icon = tile.icon;
+          return (
             <motion.article
               key={tile.index}
               initial={{ opacity: 0, y: 20 }}
@@ -120,40 +162,55 @@ A protocol on paper is a protocol that waits for somebody.
 
               className="relative flex"
             >
-              {/* **No card.** These were three filled tiles — one near-black,
-                  two grey — 380px tall with 48px of padding. Three of those in
-                  a row is a slide, and every other section on the page was
-                  doing the same thing.
-
-                  What is left is a hairline above the type and nothing else:
-                  no fill, no border on three sides, no minimum height. The
-                  column gap does the separating, and the ink is the page's
-                  own. */}
               <div
                 className={[
-                  "relative flex flex-1 flex-col",
-                  "border-t border-foreground/15 pt-6 pr-10 max-[1100px]:pr-0",
-                  "max-[1100px]:pb-10",
+                  "relative flex flex-1 flex-col justify-between",
+
+                  "min-h-[380px] max-[850px]:min-h-[260px]",
+                  "p-12 max-[850px]:p-8",
+
+                  "transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  tile.tone,
                 ].join(" ")}
               >
-                {/* The 64px icon is gone with the card. At that size inside a
-                    filled tile it was the loudest thing in the section and it
-                    said nothing the heading did not. The index stays as a
-                    small numeral — it is the only ornament left, and it earns
-                    its place by numbering a sequence. */}
-                <span className="font-mono text-xs tracking-[0.2em] text-foreground/40 uppercase">
-                  {tile.index}
-                </span>
+                <div className="flex items-start justify-between">
+                  <Icon
+                    className={tile.iconClass}
+                    size={64}
+                    aria-hidden
+                  />
+                  <span
+                    className={[
+                      "font-mono text-xs uppercase tracking-[0.2em]",
+                      tile.indexClass,
+                    ].join(" ")}
+                  >
+                    {tile.index}
+                  </span>
+                </div>
 
-                <h3 className="mt-4 text-2xl leading-tight font-medium tracking-tight max-[850px]:text-xl">
-                  {tile.title}
-                </h3>
-                <p className="mt-3 max-w-[38ch] text-sm leading-relaxed text-foreground/60">
-                  {tile.body}
-                </p>
+                <div>
+                  <h3 className="text-2xl max-[850px]:text-xl font-medium leading-tight tracking-tight">
+                    {tile.title}
+                  </h3>
+                  <p
+                    className={[
+                      "mt-3 text-sm leading-relaxed",
+
+                      i === 0 && "text-accent-foreground/75",
+                      i === 1 && "text-foreground/65",
+                      i === 2 && "text-foreground/60",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    {tile.body}
+                  </p>
+                </div>
               </div>
             </motion.article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
