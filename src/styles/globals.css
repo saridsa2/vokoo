@@ -17,7 +17,13 @@
 @plugin "tailwindcss-react-aria-components";
 @plugin "tailwindcss-animate";
 
-@custom-variant dark (&:where(.dark-mode, .dark-mode *));
+/* Two class names, one variant. The console toggles `.dark-mode`; the React
+   Bits templates the marketing site is built from toggle `.dark`, which is what
+   next-themes writes by default and what every `dark:` class in those
+   components was authored against. Renaming one of them would mean editing
+   either 59 vendored console components or 28 template ones — this is the same
+   decision in one line. */
+@custom-variant dark (&:where(.dark-mode, .dark-mode *, .dark, .dark *));
 @custom-variant label (& [data-label]);
 @custom-variant focus-input-within (&:has(input:focus));
 

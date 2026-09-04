@@ -110,6 +110,19 @@
     --color-paper: var(--paper);
     --color-paper-soft: var(--paper-soft);
     --color-paper-quiet: var(--paper-quiet);
+
+    /* The Security template sets headings in a serif, body in Geist and labels
+       in Geist Mono. The console has none of the three, so they are declared
+       here and loaded by the marketing layout rather than the root one — the
+       console must not pay for three font families it never renders.
+       `--font-mono` overrides `theme.css`'s stack; it is a `@theme inline`
+       mapping and so applies everywhere, which is why the marketing layout is
+       also the only place the Geist variables are defined: with no
+       `--font-geist-mono` in scope the console falls through to the same
+       ui-monospace it had. */
+    --font-serif: var(--font-source-serif), ui-serif, Georgia, "Times New Roman", serif;
+    --font-sans: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+    --font-mono: var(--font-geist-mono), ui-monospace, "Roboto Mono", SFMono-Regular, Menlo, monospace;
 }
 
 /**
@@ -137,4 +150,38 @@
    problem the mark had. White reads on it at any point in the animation. */
 [data-site="marketing"] .hero-surface :focus-visible {
     outline-color: #ffffff;
+}
+
+/**
+ * Two classes the Security template's markup depends on.
+ *
+ * `.skip-to-content` is the keyboard shortcut past the navigation, parked off
+ * screen until focused — the same job our own skip link does, restyled to the
+ * template's markup so the component works unedited.
+ *
+ * `.focus-ring` is applied by hand to controls the template wants a ring on.
+ * The `:focus-visible` rule above already covers everything; this exists so
+ * the class is not inert on the elements that carry it.
+ */
+[data-site="marketing"] .skip-to-content {
+    position: absolute;
+    left: -9999px;
+    top: 1rem;
+    z-index: 9999;
+    padding: 0.75rem 1rem;
+    background: var(--background);
+    border: 2px solid var(--brand-cyan);
+    border-radius: 0.375rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: var(--foreground);
+}
+
+[data-site="marketing"] .skip-to-content:focus {
+    left: 1rem;
+}
+
+[data-site="marketing"] .focus-ring:focus-visible {
+    outline: 2px solid var(--brand-cyan);
+    outline-offset: 2px;
 }

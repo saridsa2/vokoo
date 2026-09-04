@@ -7,6 +7,7 @@ import {
     faAnglesLeft,
     faAnglesRight,
     faArrowDown,
+    faArrowDownRight,
     faArrowLeft,
     faArrowLeftLong,
     faArrowRight,
@@ -15,6 +16,8 @@ import {
     faArrowRotateRight,
     faArrowsRotate,
     faArrowUpFromBracket,
+    faArrowUpRight,
+    faBadgeCheck,
     faBars,
     faBell,
     faBolt,
@@ -38,6 +41,7 @@ import {
     faCircleXmark,
     faClock,
     faClockRotateLeft,
+    faCloud,
     faCloudArrowUp,
     faCode,
     faComments,
@@ -60,6 +64,7 @@ import {
     faHeadset,
     faKey,
     faLanguage,
+    faLaptopMobile,
     faLayerGroup,
     faLifeRing,
     faLock,
@@ -75,9 +80,11 @@ import {
     faPhoneVolume,
     faPlug,
     faPlus,
+    faRadar,
     faRectangleList,
     faRightFromBracket,
     faScissors,
+    faShieldCheck,
     faShieldHalved,
     faSlidersUp,
     faSpinnerThird,
@@ -96,6 +103,16 @@ import {
     faWrench,
     faXmark,
 } from "@awesome.me/kit-9a13e121e5/icons/duotone/solid";
+
+/* Brand marks are the one set with no duotone: a company's logo has its own
+   geometry and Font Awesome ships them in `classic/brands` only. Imported
+   separately rather than reached for directly in a component, so the rule
+   that icons come from this file still holds. */
+import {
+    faGithub,
+    faLinkedin,
+    faYoutube,
+} from "@awesome.me/kit-9a13e121e5/icons/classic/brands";
 
 import "@fortawesome/fontawesome-svg-core/styles.css";
 
@@ -306,3 +323,47 @@ export const Workflow = icon(faDiagramProject);
 export const Sparkles = icon(faWandMagicSparkles);
 export const Moon = icon(faMoon);
 export const LayerGroup = icon(faLayerGroup);
+
+/* Names the React Bits Security template imports from lucide-react.
+ *
+ * The template arrived with 8 lucide import lines. They are remapped here
+ * rather than left in place: this project's rule is that a component imports
+ * icons from this file, so the set, the style and the duotone opacities are
+ * decided once. Leaving lucide in would also have broken on the first build —
+ * our lucide is v1, where `Github` no longer exists. */
+export const CircleCheck = icon(faCircleCheck);
+export const UsersRound = icon(faUsers);
+export const Github = icon(faGithub);
+export const Linkedin = icon(faLinkedin);
+export const Youtube = icon(faYoutube);
+
+/* The rest of the names the Security template imports, mapped onto the kit.
+ *
+ * Where Font Awesome has no exact counterpart the nearest glyph is used and
+ * said so here, because an icon that means something slightly different is a
+ * thing nobody notices until a reader does:
+ *   `MonitorSmartphone` -> a laptop-and-phone pair, the same "on every device"
+ *   claim, and `Search` -> the magnifier the console already uses. */
+export const ArrowDownRight = icon(faArrowDownRight);
+export const ArrowUpRight = icon(faArrowUpRight);
+export const BadgeCheck = icon(faBadgeCheck);
+export const Bell = icon(faBell);
+export const Cloud = icon(faCloud);
+export const FileText = icon(faFileLines);
+export const Gauge = icon(faGaugeHigh);
+export const Menu = icon(faBars);
+export const MonitorSmartphone = icon(faLaptopMobile);
+export const Radar = icon(faRadar);
+export const Search = icon(faMagnifyingGlass);
+export const ShieldCheck = icon(faShieldCheck);
+export const Timer = icon(faStopwatch);
+
+/**
+ * The template types its icon props as lucide's `LucideIcon`.
+ *
+ * Exported here as our own component signature rather than edited out of every
+ * call site: the components pass an icon around as a value, and this is the
+ * type that value has. Named for the import it replaces so the template's
+ * files read unchanged.
+ */
+export type LucideIcon = FC<IconProps>;
