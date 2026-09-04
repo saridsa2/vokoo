@@ -3,6 +3,7 @@ import { config } from "@fortawesome/fontawesome-svg-core";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import type { CSSProperties, FC } from "react";
 import {
+    // VoKoo navigation and screen icons (not part of the Untitled UI name set).
     faAnglesLeft,
     faAnglesRight,
     faArrowDown,
@@ -12,14 +13,18 @@ import {
     faArrowRightLong,
     faArrowRotateLeft,
     faArrowRotateRight,
-    faArrowUpFromBracket,
     faArrowsRotate,
+    faArrowUpFromBracket,
     faBars,
     faBell,
+    faBolt,
     faBook,
     faBookOpen,
     faBox,
+    faBracketsCurly,
+    faBuilding,
     faCalendar,
+    faChartSimple,
     faCheck,
     faChevronDown,
     faChevronLeft,
@@ -32,67 +37,64 @@ import {
     faCircleQuestion,
     faCircleXmark,
     faClock,
+    faClockRotateLeft,
     faCloudArrowUp,
     faCode,
+    faComments,
+    faCompass,
     faCopy,
     faCube,
+    faDiagramProject,
     faDownload,
     faEllipsisVertical,
     faEye,
     faEyeSlash,
     faFileCode,
-    faGear,
-    faLayerGroup,
-    faLifeRing,
-    faMagnifyingGlass,
-    faMinus,
-    faMoon,
-    faPen,
-    faPenToSquare,
-    faPlus,
-    faRightFromBracket,
-    faScissors,
-    faSpinnerThird,
-    faStar,
-    faTerminal,
-    faTrash,
-    faUpDown,
-    faUser,
-    faWandMagicSparkles,
-    faXmark,
-    // VoKoo navigation and screen icons (not part of the Untitled UI name set).
-    faBuilding,
-    faChartSimple,
-    faClockRotateLeft,
-    faComments,
-    faDiagramProject,
+    faFileLines,
     faFlask,
     faFolder,
     faGaugeHigh,
+    faGaugeSimpleHigh,
+    faGear,
     faGrid2,
     faHeadset,
     faKey,
-    faMicrophoneLines,
-    faPaperPlane,
-    faPhone,
-    faPhoneVolume,
-    faRectangleList,
-    faTriangleExclamation,
-    faFileLines,
-    faGaugeSimpleHigh,
     faLanguage,
+    faLayerGroup,
+    faLifeRing,
     faLock,
     faLockOpen,
+    faMagnifyingGlass,
+    faMicrophoneLines,
+    faMinus,
+    faMoon,
+    faPaperPlane,
+    faPen,
+    faPenToSquare,
+    faPhone,
+    faPhoneVolume,
+    faPlug,
+    faPlus,
+    faRectangleList,
+    faRightFromBracket,
+    faScissors,
     faShieldHalved,
     faSlidersUp,
+    faSpinnerThird,
+    faStar,
     faStopwatch,
     faSun,
+    faTerminal,
     faTowerBroadcast,
+    faTrash,
+    faTriangleExclamation,
+    faUpDown,
+    faUser,
     faUserGroup,
     faUsers,
-    faBracketsCurly,
-    faPlug,
+    faWandMagicSparkles,
     faWrench,
+    faXmark,
 } from "@awesome.me/kit-9a13e121e5/icons/duotone/solid";
 
 import "@fortawesome/fontawesome-svg-core/styles.css";
@@ -132,7 +134,7 @@ const DUOTONE_OPACITY = {
     "--fa-secondary-opacity": "0.45",
 };
 
-type IconProps = {
+export type IconProps = {
     className?: string;
     /** Untitled UI sizes some icons in pixels rather than with a class. */
     size?: number;
@@ -287,3 +289,20 @@ export const IconStopwatch = icon(faStopwatch);
 export const IconBroadcast = icon(faTowerBroadcast);
 export const IconGauge = icon(faGaugeSimpleHigh);
 export const IconDocument = icon(faFileLines);
+
+/* --------------------------------------------------------- marketing site */
+/* Added for the sarvathra.ai homepage, which was authored against
+   lucide-react. The icons come through this shim like every other icon in the
+   project, so the set, the style and the duotone opacities stay decided in one
+   place — see the rule in CLAUDE.md.
+
+   lucide-react remains installed: `animated-composer.tsx` predates that rule
+   and still imports from it. Removing the package to tidy up broke that file,
+   which is the argument for the rule rather than against it. */
+export const Cube = icon(faCube);
+export const Bolt = icon(faBolt);
+export const Compass = icon(faCompass);
+export const Workflow = icon(faDiagramProject);
+export const Sparkles = icon(faWandMagicSparkles);
+export const Moon = icon(faMoon);
+export const LayerGroup = icon(faLayerGroup);

@@ -1,0 +1,92 @@
+/**
+ * Tokens for the marketing site, scoped so they cannot reach the console.
+ *
+ * The site was lifted from the React Bits Shader Template, which brings its own
+ * token names — `--background`, `--foreground`, `--muted`, `--card`, `--accent`,
+ * `--border`, `--ring`. **None of them collide with ours**, which are
+ * `--color-brand-*`, `--color-neutral-*` and the semantic `bg-primary` /
+ * `text-primary` names: every one of the seven has zero definitions in
+ * `theme.css` or `vokoo-brand.css`. Checked, not assumed.
+ *
+ * ## The one thing that did collide
+ *
+ * `vokoo-brand.css` sets every radius token to `0`, because **controls are
+ * square** — a decision made for the console and correct there. Dropped into
+ * the marketing site unchanged it squares every card, pill and rounded shader
+ * frame the template is built around, which is not the same design at all.
+ *
+ * So the radii are restored, and only inside `[data-site="marketing"]`. Scoping
+ * it this way rather than lifting the override globally is what keeps the
+ * console square: the two answers are both right, for different surfaces, and
+ * neither should have to know about the other.
+ *
+ * ## Why the palette is not the console's ink ramp
+ *
+ * The console grades warm grey to black. The mark does not: it is a teal-to-blue
+ * gradient, and that is the brand's actual colour. A marketing page in the
+ * console's austere ink would be consistent with the product and wrong about the
+ * company.
+ */
+
+[data-site="marketing"] {
+    /* Sampled from `public/sarvathra-mark@2x.png`, the same three stops the
+       hero shader runs on. */
+    --brand-teal: #15576e;
+    --brand-cyan: #1080a8;
+    --brand-blue: #0f61eb;
+
+    --background: #ffffff;
+    --foreground: #0a0a0a;
+    --muted: #f5f5f5;
+    --muted-foreground: #737373;
+    --border: #e5e5e5;
+    --ring: var(--brand-cyan);
+    --card: #fafafa;
+    --card-foreground: #0a0a0a;
+    --accent: #0a0a0a;
+    --accent-foreground: #ffffff;
+
+    /* Undoing the console's square rule for this subtree only. The values are
+       Tailwind's own defaults, which is what the template was authored
+       against. */
+    --radius-xs: 0.125rem;
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --radius-2xl: 1rem;
+    --radius-3xl: 1.5rem;
+}
+
+.dark [data-site="marketing"],
+[data-site="marketing"].dark {
+    --background: #0a0a0a;
+    --foreground: #fafafa;
+    --muted: #171717;
+    --muted-foreground: #a3a3a3;
+    --border: #262626;
+    --ring: var(--brand-cyan);
+    --card: #171717;
+    --card-foreground: #fafafa;
+    --accent: #fafafa;
+    --accent-foreground: #0a0a0a;
+}
+
+/* The template's components use `bg-background`, `text-foreground` and friends.
+   Tailwind v4 resolves those from `@theme`, which is global — so the mapping
+   lives here once and the values above are what change per surface. */
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-border: var(--border);
+    --color-ring: var(--ring);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-brand-teal: var(--brand-teal);
+    --color-brand-cyan: var(--brand-cyan);
+    --color-brand-blue: var(--brand-blue);
+}

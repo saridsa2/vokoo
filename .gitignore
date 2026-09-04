@@ -59,3 +59,8 @@ bridge/target/
 # else's build output, and it already broke `npm run build` once by putting
 # unresolved imports into the TypeScript program — see tsconfig `exclude`.
 indus.sarvam.ai/
+
+# The React Bits Shader Template, kept as a reference while the marketing
+# site is lifted out of it. It carries its own .git and is somebody else's
+# template — the parts we use live in src/, not here.
+HOMEPAGE_REF/

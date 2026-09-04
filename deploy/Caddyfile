@@ -42,6 +42,21 @@ sip.sarvathra.ai {
 # both blocks proxy the same upstream and the Host header does the routing.
 # ---------------------------------------------------------------------------
 
+# The public site. Same upstream, same process — the Host header is what
+# selects it, exactly as it does for the two below.
+#
+# `www` redirects rather than serving a second copy: two hostnames answering
+# with the same page is one page competing with itself for its own search
+# ranking, and a `permanent` redirect is what tells a crawler which one counts.
+sarvathra.ai {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+www.sarvathra.ai {
+	redir https://sarvathra.ai{uri} permanent
+}
+
 console.sarvathra.ai {
 	encode gzip
 	reverse_proxy 127.0.0.1:3000

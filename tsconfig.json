@@ -42,6 +42,12 @@
         // type check, which `npm run build` runs — the same way a copied site
         // dump under `indus.sarvam.ai/` broke it once already.
         "bridge/vendor",
+        // The React Bits Shader Template, kept as a reference. It has its
+        // own `@/*` paths that resolve to its own tree, and lucide-react
+        // which this project does not install — so every one of its files
+        // fails to resolve in our program. Third time this shape has
+        // broken the build: `indus.sarvam.ai`, then `bridge/vendor`.
+        "HOMEPAGE_REF",
         "node_modules",
         "supabase/functions",
         "packages",
