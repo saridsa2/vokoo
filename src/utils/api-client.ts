@@ -464,6 +464,18 @@ export const api = {
      * caller and validated by the database, and a rejected id in a URL is a 404
      * that reads as a routing mistake.
      */
+    /** Every billing period one workspace has had, newest first. */
+    operatorTenantPeriods: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/periods`, {}, asOperator(context)),
+
+    /** Record that a closed period was paid. */
+    operatorSettlePeriod: <T>(periodId: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/periods/${periodId}/settle`,
+            { method: "POST" },
+            asOperator(context),
+        ),
+
     operatorCreatePlan: <T>(plan: Record<string, unknown>, context: AccessContext) =>
         request<T>(
             "/api/v1/operator/plans",

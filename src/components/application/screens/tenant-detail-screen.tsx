@@ -101,10 +101,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-const PLANS = [
-    { id: "starter", label: "Starter" },
-    { id: "growth", label: "Growth" },
-];
+type PlanOption = { id: string; label: string; is_active: boolean };
 
 export const TenantDetailScreen = ({ id }: { id: string }) => {
     const { context, isReady } = useSession();
@@ -113,6 +110,15 @@ export const TenantDetailScreen = ({ id }: { id: string }) => {
     const [tenant, setTenant] = useState<Tenant | null>(null);
     const [suspending, setSuspending] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // **Fetched, not a literal.** This was a hardcoded pair — Starter and
+    // Growth — while the database has held four since 0099 and can hold any
+    // number since 0105. Two of a tenant's four possible plans were
+    // unreachable from the screen that assigns them, and a plan added today
+    // would never have appeared.
+    const [plans, setPlans] = useState<PlanOption[]>([]);
+    // A closed period nobody has paid blocks the move (0107). Read here so the
+    // selector can say why rather than refusing after the click.
+    const [owed, setOwed] = useState(0);
 
     const loadTenant = useCallback(() => {
         if (!context) return;
@@ -131,6 +137,20 @@ export const TenantDetailScreen = ({ id }: { id: string }) => {
     useEffect(() => {
         if (isReady && context) loadTenant();
     }, [isReady, context, loadTenant]);
+
+    useEffect(() => {
+        if (!isReady || !context) return;
+        api.operatorPlans<PlanOption>(context)
+            .then(({ data }) => setPlans(data ?? []))
+            .catch(() => setPlans([]));
+        api.operatorTenantPeriods<{ status: string; settled_at: string | null }>(id, context)
+            .then(({ data }) =>
+                setOwed(
+                    (data ?? []).filter((row) => row.status === "closed" && !row.settled_at).length,
+                ),
+            )
+            .catch(() => setOwed(0));
+    }, [isReady, context, id]);
 
     return (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -169,18 +189,49 @@ export const TenantDetailScreen = ({ id }: { id: string }) => {
 
                     {tenant ? (
                         <div className="flex items-center gap-2">
-                            <Select
-                                aria-label="Plan"
-                                selectedKey={tenant.plan}
-                                onSelectionChange={(key) =>
-                                    void api
-                                        .operatorSetTenant(id, { plan: String(key) }, context!)
-                                        .then(loadTenant)
-                                }
-                                items={PLANS}
-                            >
-                                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                            </Select>
+                            <span className="flex items-center gap-1.5">
+                                <Select
+                                    aria-label="Plan"
+                                    selectedKey={tenant.plan}
+                                    // A plan cannot be moved while the
+                                    // workspace owes for a closed period. The
+                                    // control is disabled rather than the
+                                    // change being refused afterwards — the
+                                    // refusal is correct either way, but a
+                                    // dropdown that accepts a choice and then
+                                    // undoes it reads as a bug.
+                                    isDisabled={owed > 0}
+                                    onSelectionChange={(key) => {
+                                        if (!context || String(key) === tenant.plan) return;
+                                        void api
+                                            .operatorSetTenant(id, { plan: String(key) }, context)
+                                            .then(loadTenant)
+                                            // This had no catch at all, so
+                                            // every refusal — including the new
+                                            // one — was silent and the old plan
+                                            // simply stayed on screen.
+                                            .catch((problem) =>
+                                                notify.failure("Something went wrong", problem),
+                                            );
+                                    }}
+                                    items={plans.filter(
+                                        // A withdrawn plan is not offered, but
+                                        // one already in use stays listed —
+                                        // otherwise the selector cannot show
+                                        // what this workspace is actually on.
+                                        (option) => option.is_active || option.id === tenant.plan,
+                                    )}
+                                >
+                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                </Select>
+                                {owed > 0 ? (
+                                    <InfoHint
+                                        title="An invoice is pending"
+                                        description={`${owed} closed billing period${owed === 1 ? " is" : "s are"} unpaid. Record payment on the Billing tab, and the plan can be changed.`}
+                                        className="text-warning-primary"
+                                    />
+                                ) : null}
+                            </span>
                             <Button
                                 size="sm"
                                 color={
@@ -396,6 +447,8 @@ const BillingTab = ({ id, plan }: { id: string; plan?: string }) => {
         <>
             <BillingPeriod id={id} />
 
+            <Invoices id={id} />
+
             <dl className="grid grid-cols-2 gap-px border border-secondary bg-secondary lg:grid-cols-4">
                 <Figure label="Plan" value={plan ? plan[0].toUpperCase() + plan.slice(1) : "—"} />
                 <Figure label="Billable sessions" value={billing.sessions.toLocaleString()} />
@@ -467,6 +520,163 @@ type PeriodRow = {
  * over yet. Saying so on screen is cheaper than a customer discovering in
  * October that September never closed.
  */
+type InvoiceRow = {
+    id: string;
+    starts_at: string | null;
+    ends_at: string | null;
+    plan_id: string | null;
+    price: number | null;
+    currency: string | null;
+    included_minutes: number | null;
+    used_minutes: number | null;
+    overage_minutes: number | null;
+    total: number | null;
+    status: "open" | "closed";
+    settled_at: string | null;
+};
+
+/**
+ * What this workspace has been billed, and what is still owed.
+ *
+ * A closed period is the invoice — it carries the dates, the plan, the price
+ * agreed and the allowance, all snapshotted when it opened, so it says what was
+ * owed even after the plan has moved on. `settled_at` is the other end of it.
+ *
+ * **An unpaid one blocks a plan change** (0107), which is why it is on screen
+ * rather than a fact only the database holds: a refusal with nowhere to go and
+ * look is a dead end.
+ *
+ * The open period is listed and cannot be settled. It is a month in progress,
+ * not a bill, and offering the button on it would invite somebody to mark a
+ * month paid halfway through.
+ */
+const Invoices = ({ id }: { id: string }) => {
+    const { context } = useSession();
+    const notify = useNotify();
+    const [rows, setRows] = useState<InvoiceRow[] | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [settling, setSettling] = useState<InvoiceRow | null>(null);
+
+    const load = useCallback(() => {
+        if (!context) return;
+        api.operatorTenantPeriods<InvoiceRow>(id, context)
+            .then(({ data }) => setRows(data ?? []))
+            .catch((problem) => notify.failure("Something went wrong", problem));
+    }, [context, id]);
+
+    useEffect(load, [load]);
+
+    // A period still open is not a bill, so it is not counted here.
+    const owed = (rows ?? []).filter((row) => row.status === "closed" && !row.settled_at);
+
+    // One period and it is the open one: there is nothing to call history yet,
+    // and an empty table under a heading reads as something that failed to load.
+    if (rows !== null && rows.every((row) => row.status === "open")) return null;
+
+    return (
+        <section className="border border-secondary p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+                <h2 className="text-sm font-medium text-primary">Invoices</h2>
+                {owed.length > 0 ? (
+                    <span className="text-sm text-warning-primary">
+                        {owed.length} unpaid — the plan cannot be changed until they are settled
+                    </span>
+                ) : null}
+            </div>
+
+            {rows === null ? (
+                <p className="mt-3 text-sm text-tertiary">Loading.</p>
+            ) : (
+                <ul className="mt-3 flex flex-col gap-2">
+                    {rows.map((row) => (
+                        <li
+                            key={row.id}
+                            className="flex flex-wrap items-center justify-between gap-3 border border-secondary px-3 py-2"
+                        >
+                            <span className="flex flex-wrap items-center gap-3">
+                                <span className="text-primary">{monthOf(row.starts_at)}</span>
+                                <span className="text-xs text-quaternary">{row.plan_id ?? "—"}</span>
+                                <span className="tabular-nums text-sm text-tertiary">
+                                    {row.total === null
+                                        ? "—"
+                                        : `${row.currency ?? "INR"} ${Number(row.total).toFixed(0)}`}
+                                </span>
+                                <span className="text-xs text-quaternary">
+                                    {Number(row.used_minutes ?? 0)} min used
+                                </span>
+                            </span>
+
+                            <span className="flex items-center gap-3">
+                                {row.status === "open" ? (
+                                    <Badge size="sm" color="brand">
+                                        in progress
+                                    </Badge>
+                                ) : row.settled_at ? (
+                                    <Badge size="sm" color="success">
+                                        paid {new Date(row.settled_at).toLocaleDateString()}
+                                    </Badge>
+                                ) : (
+                                    <>
+                                        <Badge size="sm" color="warning">
+                                            unpaid
+                                        </Badge>
+                                        <Button
+                                            size="sm"
+                                            color="secondary"
+                                            isLoading={busy === row.id}
+                                            onClick={() => setSettling(row)}
+                                        >
+                                            Record payment
+                                        </Button>
+                                    </>
+                                )}
+                            </span>
+                        </li>
+                    ))}
+                </ul>
+            )}
+
+            {/* Confirmed, because it is a claim about money that somebody else
+                will act on and there is no route here to take it back. */}
+            {settling ? (
+                <ConfirmDialog
+                    title={`Record ${monthOf(settling.starts_at)} as paid?`}
+                    body={
+                        <>
+                            {settling.currency ?? "INR"}{" "}
+                            {settling.total === null ? "—" : Number(settling.total).toFixed(0)} on
+                            the {settling.plan_id ?? "—"} plan. This says the money arrived, and
+                            nothing here can undo it.
+                        </>
+                    }
+                    confirmLabel="Record payment"
+                    tone="neutral"
+                    isBusy={busy === settling.id}
+                    onCancel={() => setSettling(null)}
+                    onConfirm={() => {
+                        if (!context) return;
+                        setBusy(settling.id);
+                        void api
+                            .operatorSettlePeriod(settling.id, context)
+                            .then(() => {
+                                setSettling(null);
+                                load();
+                            })
+                            .catch((problem) => notify.failure("Something went wrong", problem))
+                            .finally(() => setBusy(null));
+                    }}
+                />
+            ) : null}
+        </section>
+    );
+};
+
+/** "September 2026", or the id's stand-in when a period has no start. */
+function monthOf(iso: string | null): string {
+    if (!iso) return "—";
+    return new Date(iso).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
 const BillingPeriod = ({ id }: { id: string }) => {
     const { context } = useSession();
     const notify = useNotify();

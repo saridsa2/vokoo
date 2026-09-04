@@ -3079,6 +3079,40 @@ async fn operator_tenant_usage(
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "usage" }) }))
 }
 
+/// Every billing period one workspace has had.
+///
+/// A closed period with no `settled_at` is an invoice nobody has paid, and it
+/// is what blocks a plan change — so it has to be visible somewhere, and this
+/// is that somewhere.
+async fn operator_tenant_periods(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_tenant_periods", Some(json!({ "p_org": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "periods" }) }))
+}
+
+/// Record that a closed period was paid.
+async fn operator_settle_period(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("operator_settle_period", Some(json!({ "p_period": id })))
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({ "resource": "periods" }) }))
+}
+
 async fn operator_tenant_billing(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -3828,6 +3862,8 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/settings/choices", get(setting_choices))
         .route("/api/v1/operator/packs", get(operator_packs))
         .route("/api/v1/operator/plans", get(operator_plans).post(operator_create_plan))
+        .route("/api/v1/operator/tenants/{id}/periods", get(operator_tenant_periods))
+        .route("/api/v1/operator/periods/{id}/settle", post(operator_settle_period))
         .route("/api/v1/operator/plans/{id}", get(operator_plans).patch(operator_set_plan))
         .route("/api/v1/operator/periods", get(operator_billing_periods))
         .route("/api/v1/operator/tenants/{id}/period", get(tenant_billing_period).post(operator_open_period))
