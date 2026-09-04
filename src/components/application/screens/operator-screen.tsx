@@ -33,6 +33,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { api } from "@/utils/api-client";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
 
 type Tenant = {
@@ -65,16 +66,15 @@ const PLANS = [
 
 export const OperatorScreen = () => {
     const { context, isReady } = useSession();
+    const notify = useNotify();
     const [tenants, setTenants] = useState<Tenant[] | null>(null);
-    const [error, setError] = useState<string | null>(null);
-    const [open, setOpen] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
 
     const load = useCallback(() => {
         if (!context) return;
         api.operatorTenants<Tenant>(context)
             .then(({ data }) => setTenants(data ?? []))
-            .catch((problem) => setError((problem as Error).message));
+            .catch((problem) => notify.failure("Something went wrong", problem));
     }, [context]);
 
     useEffect(() => {
@@ -96,119 +96,81 @@ export const OperatorScreen = () => {
                 </Button>
             </header>
 
-            {error ? <p className="text-sm text-error-primary">{error}</p> : null}
+            {/* **Cards, not a table.** A tenant is not one fact per column —
+                it is a customer whose name, plan, state and shape you take in
+                at once before deciding whether to open it. A row of eight
+                right-aligned numbers makes you read across to answer "is this
+                one working", which is the question that brought you here.
 
-            <div className="overflow-x-auto border border-secondary">
-                <table className="w-full min-w-[60rem] border-collapse text-sm">
-                    <thead>
-                        <tr className="border-b border-secondary bg-secondary text-left">
-                            <Th>Workspace</Th>
-                            <Th>Plan</Th>
-                            <Th>Status</Th>
-                            <Th align="right">Members</Th>
-                            <Th align="right">Agents</Th>
-                            <Th align="right">Numbers</Th>
-                            <Th align="right">Calls 30d</Th>
-                            <Th align="right" />
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {(tenants ?? []).map((tenant) => (
-                            <tr key={tenant.id} className="border-b border-secondary last:border-0">
-                                <Td>
-                                    <span className="text-primary">{tenant.name}</span>
-                                    <span className="ml-2 font-mono text-xs text-quaternary">
+                Everything that changes a tenant moved inside the card's own
+                screen. A plan dropdown and a Suspend button sitting in a list
+                are one mis-click from changing the wrong customer, and neither
+                is a thing you do while scanning. */}
+            <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {(tenants ?? []).map((tenant) => (
+                    <li key={tenant.id}>
+                        <a
+                            href={`/platform/tenants/${tenant.id}`}
+                            // Hover darkens the card's own border and nothing
+                            // else. Filling it with `bg-secondary_hover` read as
+                            // a grey slab that swallowed the border — the card
+                            // lost its outline at exactly the moment it was
+                            // being pointed at, so the hovered one looked like a
+                            // different kind of object rather than the same one,
+                            // lit.
+                            className="flex h-full flex-col gap-4 border border-secondary bg-primary p-5 transition duration-100 ease-linear hover:border-primary focus-visible:outline-2 focus-visible:outline-offset-2"
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="truncate text-md font-medium text-primary">
+                                        {tenant.name}
+                                    </p>
+                                    <p className="mt-0.5 truncate font-mono text-xs text-quaternary">
                                         {tenant.slug}
-                                    </span>
-                                </Td>
-                                <Td>
-                                    <Select
-                                        aria-label={`Plan for ${tenant.name}`}
-                                        selectedKey={tenant.plan}
-                                        onSelectionChange={(key) =>
-                                            void api
-                                                .operatorSetTenant(
-                                                    tenant.id,
-                                                    { plan: String(key) },
-                                                    context!,
-                                                )
-                                                .then(load)
-                                        }
-                                        items={PLANS}
-                                    >
-                                        {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                                    </Select>
-                                </Td>
-                                <Td>
-                                    <Badge
-                                        size="sm"
-                                        color={tenant.status === "active" ? "success" : "gray"}
-                                    >
-                                        {tenant.status}
-                                    </Badge>
-                                </Td>
-                                <Td align="right" mono>{tenant.members}</Td>
-                                <Td align="right" mono>{tenant.agents}</Td>
-                                <Td align="right" mono>{tenant.numbers}</Td>
-                                <Td align="right" mono>{tenant.calls_30d}</Td>
-                                <Td align="right">
-                                    <div className="flex justify-end gap-1">
-                                        <Button
-                                            size="sm"
-                                            color="link-color"
-                                            onClick={() =>
-                                                setOpen(open === tenant.id ? null : tenant.id)
-                                            }
-                                        >
-                                            {open === tenant.id ? "Hide" : "Entitlements"}
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            color={
-                                                tenant.status === "active"
-                                                    ? "link-destructive"
-                                                    : "link-gray"
-                                            }
-                                            onClick={() =>
-                                                void api
-                                                    .operatorSetTenant(
-                                                        tenant.id,
-                                                        {
-                                                            status:
-                                                                tenant.status === "active"
-                                                                    ? "suspended"
-                                                                    : "active",
-                                                        },
-                                                        context!,
-                                                    )
-                                                    .then(load)
-                                            }
-                                        >
-                                            {tenant.status === "active" ? "Suspend" : "Reinstate"}
-                                        </Button>
-                                    </div>
-                                </Td>
-                            </tr>
-                        ))}
-                        {tenants?.length === 0 ? (
-                            <tr>
-                                <td colSpan={8} className="px-4 py-6 text-tertiary">
-                                    No tenants.
-                                </td>
-                            </tr>
-                        ) : null}
-                    </tbody>
-                </table>
-            </div>
+                                    </p>
+                                </div>
+                                <Badge
+                                    size="sm"
+                                    color={tenant.status === "active" ? "success" : "gray"}
+                                >
+                                    {tenant.status}
+                                </Badge>
+                            </div>
 
-            {tenants === null && !error ? <p className="text-sm text-tertiary">Loading.</p> : null}
+                            <dl className="grid grid-cols-4 gap-3">
+                                <Stat label="Members" value={tenant.members} />
+                                <Stat label="Agents" value={tenant.agents} />
+                                <Stat label="Numbers" value={tenant.numbers} />
+                                <Stat label="Calls 30d" value={tenant.calls_30d} />
+                            </dl>
 
-            {open ? (
-                <Entitlements
-                    tenant={tenants?.find((t) => t.id === open)}
-                    onClose={() => setOpen(null)}
-                />
+                            <div className="mt-auto flex items-center justify-between gap-3 border-t border-secondary pt-3">
+                                <span className="text-xs text-quaternary capitalize">
+                                    {tenant.plan}
+                                </span>
+                                <span className="text-xs text-quaternary">
+                                    {/* When they were last used, not when they
+                                        signed up. A workspace created in March
+                                        with no call since is the one worth
+                                        opening, and a creation date hides it. */}
+                                    {tenant.last_call_at
+                                        ? `last call ${relative(tenant.last_call_at)}`
+                                        : "no calls yet"}
+                                </span>
+                            </div>
+                        </a>
+                    </li>
+                ))}
+            </ul>
+
+            {tenants?.length === 0 ? (
+                <p className="border border-dashed border-secondary p-6 text-sm text-tertiary">
+                    No workspaces yet. Creating one seeds it from the templates it is entitled to,
+                    so it can answer a call the day it is made.
+                </p>
             ) : null}
+
+            {tenants === null ? <p className="text-sm text-tertiary">Loading.</p> : null}
 
             {adding ? (
                 <NewTenant
@@ -220,13 +182,6 @@ export const OperatorScreen = () => {
                 />
             ) : null}
 
-            <p className="max-w-3xl border border-dashed border-secondary p-4 text-sm text-tertiary">
-                <strong className="text-primary">Suspension is stored and not enforced.</strong>{" "}
-                The bridge has to refuse a call for a suspended organisation, and does not yet —
-                so this marks a tenant rather than stopping one. Entitlements are stored and read
-                by nothing: making the catalogue filter on them is the change that touches the
-                engine composer and the agent editor, and it is the next piece.
-            </p>
         </div>
     );
 };
@@ -246,12 +201,12 @@ export const OperatorScreen = () => {
  */
 const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) => {
     const { context } = useSession();
+    const notify = useNotify();
     const [name, setName] = useState("");
     const [slug, setSlug] = useState("");
     const [email, setEmail] = useState("");
     const [plan, setPlan] = useState("starter");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [done, setDone] = useState<{ slug: string; sent: boolean; reason?: string } | null>(null);
 
     // Suggested from the name, and editable — it is permanent, so it should not
@@ -268,7 +223,6 @@ const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () 
     const submit = async () => {
         if (!context || !valid) return;
         setSaving(true);
-        setError(null);
         try {
             const { data } = await api.operatorCreateTenant<{
                 tenant: { slug: string };
@@ -288,7 +242,7 @@ const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () 
                 reason: data?.invitation?.reason,
             });
         } catch (problem) {
-            setError(problem instanceof Error ? problem.message : "Could not create it");
+            notify.failure("Could not create it", problem);
         } finally {
             setSaving(false);
         }
@@ -363,9 +317,6 @@ const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () 
                                         {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                     </Select>
                                 </div>
-                                {error ? (
-                                    <p className="mt-4 text-sm text-error-primary">{error}</p>
-                                ) : null}
                                 <div className="mt-6 flex justify-end gap-3">
                                     <Button size="sm" color="secondary" onClick={onClose}>
                                         Cancel
@@ -395,132 +346,29 @@ const NewTenant = ({ onClose, onCreated }: { onClose: () => void; onCreated: () 
  * result, because "why can this tenant not use Gemini" has two possible answers
  * and a single tick cannot distinguish them.
  */
-const Entitlements = ({ tenant, onClose }: { tenant?: Tenant; onClose: () => void }) => {
-    const { context } = useSession();
-    const [rows, setRows] = useState<Entitlement[] | null>(null);
 
-    const load = useCallback(() => {
-        if (!context || !tenant) return;
-        api.operatorEntitlements<Entitlement>(tenant.id, context)
-            .then(({ data }) => setRows(data ?? []))
-            .catch(() => setRows([]));
-    }, [context, tenant?.id]);
-
-    useEffect(load, [load]);
-
-    if (!tenant) return null;
-
-    const set = (row: Entitlement, allowed: boolean | null) =>
-        void api
-            .operatorSetEntitlement(
-                tenant.id,
-                { kind: row.kind, item_id: row.item_id, allowed },
-                context!,
-            )
-            .then(load);
-
-    return (
-        <section className="flex flex-col gap-3 border border-secondary p-5">
-            <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-lg font-semibold text-primary">
-                    {tenant.name} · what it may reach
-                </h2>
-                <Button size="sm" color="link-gray" onClick={onClose}>
-                    Close
-                </Button>
-            </div>
-            <p className="text-sm text-tertiary">
-                On the <strong className="text-primary">{tenant.plan}</strong> plan. Inherit takes
-                whatever the plan says; grant and deny override it for this tenant alone.
-            </p>
-
-            <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
-                    <thead>
-                        <tr className="border-b border-secondary text-left">
-                            <Th>Item</Th>
-                            <Th>Kind</Th>
-                            <Th>Plan</Th>
-                            <Th align="right">This tenant</Th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {(rows ?? []).map((row) => (
-                            <tr
-                                key={`${row.kind}:${row.item_id}`}
-                                className="border-b border-secondary last:border-0"
-                            >
-                                <Td>
-                                    <span className={row.effective ? "text-primary" : "text-tertiary"}>
-                                        {row.label}
-                                    </span>
-                                </Td>
-                                <Td muted>{row.kind}</Td>
-                                <Td muted>{row.by_plan ? "allows" : "does not"}</Td>
-                                <Td align="right">
-                                    <div className="flex justify-end gap-1">
-                                        {(
-                                            [
-                                                ["Inherit", null],
-                                                ["Grant", true],
-                                                ["Deny", false],
-                                            ] as const
-                                        ).map(([label, value]) => (
-                                            <button
-                                                key={label}
-                                                type="button"
-                                                onClick={() => set(row, value)}
-                                                className={`px-2 py-1 text-xs transition duration-100 ease-linear ${
-                                                    row.override === value
-                                                        ? "bg-brand-solid text-white"
-                                                        : "text-tertiary hover:bg-primary_hover"
-                                                }`}
-                                            >
-                                                {label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </Td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-            {rows === null ? <p className="text-sm text-tertiary">Loading.</p> : null}
-        </section>
-    );
-};
-
-const Th = ({ children, align }: { children?: React.ReactNode; align?: "right" }) => (
-    <th
-        scope="col"
-        className={`px-4 py-2.5 text-xs font-medium text-tertiary ${
-            align === "right" ? "text-right" : "text-left"
-        }`}
-    >
-        {children}
-    </th>
+/** One number on a card. Four of them read as a shape, not as a row. */
+const Stat = ({ label, value }: { label: string; value: number }) => (
+    <div>
+        <dt className="text-[0.6875rem] tracking-wide text-quaternary uppercase">{label}</dt>
+        <dd className="mt-0.5 text-lg font-light tabular-nums text-primary">{value}</dd>
+    </div>
 );
 
-const Td = ({
-    children,
-    align,
-    mono,
-    muted,
-}: {
-    children: React.ReactNode;
-    align?: "right";
-    mono?: boolean;
-    muted?: boolean;
-}) => (
-    <td
-        className={[
-            "px-4 py-3",
-            align === "right" ? "text-right" : "text-left",
-            mono ? "font-mono tabular-nums" : "",
-            muted ? "text-tertiary" : "text-primary",
-        ].join(" ")}
-    >
-        {children}
-    </td>
-);
+/**
+ * "3 days ago" rather than a date.
+ *
+ * On a card the question is how long since, and a reader converting
+ * "2026-08-31" into that themselves is doing arithmetic to answer it.
+ */
+function relative(iso: string): string {
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return "unknown";
+    const minutes = Math.round((Date.now() - then) / 60000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return days === 1 ? "yesterday" : `${days}d ago`;
+}
