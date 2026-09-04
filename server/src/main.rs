@@ -623,18 +623,34 @@ impl RateLimit {
 
 /// Who is calling, as well as this can be known behind a reverse proxy.
 ///
-/// Caddy sets `x-forwarded-for` and the leftmost entry is the client. A client
-/// can forge that header, but it reaches this process only through Caddy, which
-/// appends rather than replaces — so a forged value shifts a real one along
-/// instead of hiding it. Good enough to slow a script down, which is all this
-/// is for.
+/// Who to count a request against.
+///
+/// **The last entry, not the first.** Caddy *appends* the peer address to
+/// whatever `x-forwarded-for` arrived, so a client sending
+/// `x-forwarded-for: 1.2.3.4` produces `1.2.3.4, <real client>` — and reading
+/// the leftmost entry, which is what this did, keys the limiter on a string the
+/// caller chooses. A script that varies that header gets a fresh allowance on
+/// every request, which is not a slower oracle, it is an unlimited one.
+///
+/// The rightmost entry is the only one Caddy wrote, so it is the only one a
+/// client cannot set. It is the address of whatever connected to Caddy, which
+/// for a direct caller is the caller.
+///
+/// This is load-bearing rather than incidental: `account_sign_in_methods`
+/// answers whether an address has a password, and the argument for shipping
+/// that oracle at all was that it could not be called quickly.
 fn caller_key(headers: &HeaderMap) -> String {
     headers
         .get("x-forwarded-for")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(|value| value.trim().to_owned())
-        .unwrap_or_else(|| "unknown".into())
+        .and_then(|value| value.rsplit(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        // No header at all means nothing is in front of us. One bucket for all
+        // such callers is deliberately strict — it cannot be widened by
+        // sending a header, which is the property that matters here.
+        .unwrap_or_else(|| "direct".into())
 }
 
 /// Which ways this address can sign in.
@@ -663,8 +679,11 @@ async fn auth_methods(
         return Err(ApiError::BadRequest("an email address is required".into()));
     }
 
+    // Namespaced, so this and the link route hold separate allowances. Sharing
+    // one bucket would let a burst of link requests lock somebody out of the
+    // sign-in form itself.
     if !state.limiter.allow(
-        &caller_key(&headers),
+        &format!("methods:{}", caller_key(&headers)),
         10,
         std::time::Duration::from_secs(60),
     ) {
@@ -696,6 +715,7 @@ async fn auth_methods(
 /// "no such account" would turn this into a way to test which addresses have
 /// accounts here, one request at a time.
 async fn sign_in_link(
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
@@ -707,6 +727,25 @@ async fn sign_in_link(
         .to_owned();
     if email.is_empty() {
         return Err(ApiError::BadRequest("an email address is required".into()));
+    }
+
+    // **GoTrue's own limit is per address, and that is the wrong axis here.**
+    // It stops somebody asking for the same person's link repeatedly; it does
+    // nothing about one caller walking a list of addresses, which sends real
+    // mail from our domain to every account that exists. The cost of that is
+    // not ours alone — a burst of unwanted sign-in links is what gets a
+    // sending domain reported.
+    //
+    // Six a minute is generous for a person who mistyped their address twice
+    // and stingy for a script.
+    if !state.limiter.allow(
+        &format!("link:{}", caller_key(&headers)),
+        6,
+        std::time::Duration::from_secs(60),
+    ) {
+        return Err(ApiError::BadRequest(
+            "Too many links requested. Wait a minute and try again.".into(),
+        ));
     }
 
     let origin = headers
@@ -2427,7 +2466,7 @@ async fn send_sign_in_link(
         return Err("SUPABASE_ANON_KEY is not set, so no invitation can be sent".into());
     }
 
-    let mut body = json!({ "email": email, "create_user": create_user });
+    let body = json!({ "email": email, "create_user": create_user });
     let mut redirect: Option<String> = None;
 
     // Where the link lands, when the caller named somewhere.

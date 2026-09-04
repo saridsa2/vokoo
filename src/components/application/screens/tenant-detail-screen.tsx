@@ -45,7 +45,7 @@ import { Input } from "@/components/base/input/input";
 import { Button } from "@/components/base/buttons/button";
 import { Chart } from "@/components/application/charts/chart";
 import { DataTable, type DataColumn } from "@/components/application/table/data-table";
-import { Select } from "@/components/base/select/select";
+import { Select, type SelectItemType } from "@/components/base/select/select";
 import { Tabs } from "@/components/application/tabs/tabs";
 import { api } from "@/utils/api-client";
 import { useNotify } from "@/components/application/notifications/notification-provider";
@@ -581,6 +581,35 @@ type Config = {
     numbers: Array<{ id: string; number: string; label: string; carrier: string; bound: boolean }>;
 };
 
+type TimezoneChoice = { name: string; utc_offset: string };
+
+/**
+ * What the timezone and reader fields may be set to.
+ *
+ * **Fetched, not written here.** Both were free-text boxes over closed sets, and
+ * both fail late: a mistyped zone sends a caller to a clinic the flow believes
+ * is open, and a mistyped reader fails after the caller has hung up, inside a
+ * post-call flow, where the only evidence is a log line.
+ *
+ * The lists come from the database — `timezone_choices()` reads Postgres's own
+ * `pg_timezone_names`, and `reader_choices()` reads the `can_read` columns that
+ * `host()` in the bridge works from. A list typed into this file would be a
+ * second copy free to disagree with what the server will accept, which is the
+ * fault this project keeps recording against itself.
+ *
+ * The dropdown is the courtesy; `operator_set_tenant_settings` refuses a bad
+ * value whatever sends it.
+ */
+type Choices = {
+    timezones: TimezoneChoice[];
+    readers: Array<{
+        provider_id: string;
+        provider_label: string;
+        model_id: string;
+        model_label: string;
+    }>;
+};
+
 /**
  * How a workspace is set up — and now, how it is changed.
  *
@@ -598,6 +627,7 @@ const ConfigurationTab = ({ id }: { id: string }) => {
     const { context } = useSession();
     const notify = useNotify();
     const [config, setConfig] = useState<Config | null>(null);
+    const [choices, setChoices] = useState<Choices | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState<string | null>(null);
 
@@ -609,6 +639,55 @@ const ConfigurationTab = ({ id }: { id: string }) => {
     }, [context, id]);
 
     useEffect(load, [load]);
+
+    // Fetched once and not with `load`: the lists do not change when a setting
+    // is saved, and refetching 518 timezones on every keystroke-committed edit
+    // is work nobody asked for.
+    useEffect(() => {
+        if (!context) return;
+        api.settingChoices<Choices>(context)
+            .then(({ data }) => setChoices(data ?? null))
+            // Deliberately quiet. The fields disable themselves without the
+            // lists, which says what happened; a toast on a background fetch
+            // interrupts somebody editing something else entirely.
+            .catch(() => undefined);
+    }, [context]);
+
+    // Distinct providers, in the order the server returned them — the query
+    // orders by `sort_order`, so the first is the one to offer first.
+    const readerProviders = useMemo(() => {
+        const seen = new Map<string, { id: string; label: string }>();
+        for (const row of choices?.readers ?? []) {
+            if (!seen.has(row.provider_id)) {
+                seen.set(row.provider_id, { id: row.provider_id, label: row.provider_label });
+            }
+        }
+        return [...seen.values()];
+    }, [choices]);
+
+    // `SelectItemType` is the kit's own item shape — `id`, `label`,
+    // `supportingText` — so the list is mapped into it once here rather than
+    // each row being reshaped at render.
+    const timezoneItems = useMemo<SelectItemType[]>(
+        () =>
+            (choices?.timezones ?? []).map((zone) => ({
+                id: zone.name,
+                label: zone.name,
+                // Already carries its sign. The server formats it, because a
+                // "UTC+" written here would be wrong for every zone west of
+                // Greenwich.
+                supportingText: `UTC${zone.utc_offset}`,
+            })),
+        [choices],
+    );
+
+    const readerModels = useMemo(
+        () =>
+            (choices?.readers ?? [])
+                .filter((row) => row.provider_id === config?.intelligence_provider)
+                .map((row) => ({ id: row.model_id, label: row.model_label })),
+        [choices, config?.intelligence_provider],
+    );
 
     const save = (patch: Record<string, unknown>, what: string) => {
         if (!context) return;
@@ -808,23 +887,99 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                         />
                     </Setting>
 
-                    <Setting label="Timezone" hint="The business day this workspace is measured in.">
-                        <Editable
-                            value={config.timezone ?? ""}
-                            placeholder="not set"
-                            busy={saving === "timezone"}
-                            onCommit={(v) => save({ timezone: v }, "timezone")}
-                        />
+                    <Setting
+                        label="Timezone"
+                        hint="The business day this workspace is measured in — opening hours, the day's call counts, the boundary of a billing period."
+                    >
+                        {/* A ComboBox rather than a Select: 518 zones is a list
+                            you type at, not one you scroll. */}
+                        <Select.ComboBox
+                            aria-label="Timezone"
+                            size="sm"
+                            placeholder={config.timezone ?? "not set"}
+                            selectedKey={config.timezone ?? null}
+                            isDisabled={saving === "timezone" || !choices}
+                            items={timezoneItems}
+                            onSelectionChange={(key) =>
+                                key && key !== config.timezone
+                                    ? save({ timezone: String(key) }, "timezone")
+                                    : undefined
+                            }
+                        >
+                            {(zone: SelectItemType) => (
+                                <Select.Item id={zone.id} supportingText={zone.supportingText}>
+                                    {zone.label}
+                                </Select.Item>
+                            )}
+                        </Select.ComboBox>
                     </Setting>
 
+                    {/* Two selects rather than one list of provider·model pairs:
+                        the provider is the decision — it is what decides which
+                        API the bridge speaks — and the model is a choice within
+                        it. Flattening them would read as eight unrelated
+                        options. */}
                     <Setting
                         label="Reader"
-                        hint="Which model reads finished calls. Not editable here yet — it is a workspace-wide choice with its own screen to come."
+                        hint="Which model reads a finished call into a shape. Only providers serving an API this platform speaks are offered."
                     >
-                        <span className="text-sm text-tertiary">
-                            {config.intelligence_provider
-                                ? `${config.intelligence_provider} · ${config.intelligence_model ?? "default"}`
-                                : "not set"}
+                        <span className="flex flex-wrap items-center gap-2">
+                            <Select
+                                aria-label="Reader provider"
+                                size="sm"
+                                placeholder="not set"
+                                selectedKey={config.intelligence_provider ?? null}
+                                isDisabled={saving === "reader" || !choices}
+                                items={readerProviders}
+                                onSelectionChange={(key) => {
+                                    if (!key || key === config.intelligence_provider) return;
+                                    // The stored model belongs to the old
+                                    // provider and the database refuses the
+                                    // pair, so the first model of the new one
+                                    // goes with it. Saving the provider alone
+                                    // would fail on a rule the reader cannot
+                                    // see.
+                                    const first = choices?.readers.find(
+                                        (row) => row.provider_id === key,
+                                    );
+                                    save(
+                                        {
+                                            intelligence_provider: String(key),
+                                            intelligence_model: first?.model_id ?? null,
+                                        },
+                                        "reader",
+                                    );
+                                }}
+                            >
+                                {(row: SelectItemType) => (
+                                    <Select.Item id={row.id}>{row.label}</Select.Item>
+                                )}
+                            </Select>
+                            <Select
+                                aria-label="Reader model"
+                                size="sm"
+                                placeholder="model"
+                                selectedKey={config.intelligence_model ?? null}
+                                isDisabled={
+                                    saving === "reader" || !config.intelligence_provider || !choices
+                                }
+                                items={readerModels}
+                                onSelectionChange={(key) =>
+                                    key && key !== config.intelligence_model
+                                        ? save({
+                                              // Sent together: the check is on
+                                              // the pair, and a model with no
+                                              // provider named is refused.
+                                              intelligence_provider: config.intelligence_provider,
+                                              intelligence_model: String(key),
+                                          }, "reader")
+                                        : undefined
+                                }
+                            >
+                                {(row: SelectItemType) => (
+                                    <Select.Item id={row.id}>{row.label}</Select.Item>
+                                )}
+                            </Select>
                         </span>
                     </Setting>
                 </div>
