@@ -38,6 +38,10 @@ export const SECTION_ACCENTS: Record<string, NavAccent> = {
     // Where you land. Warm and closest to the brand's own ink, because this is
     // the console reporting on itself rather than a kind of work.
     Overview: { primary: "#B45309", secondary: "#FDE3C0" },
+    // The people. A deep teal, which is the one pair taken from the mark rather
+    // than from Sarvam's set — this is the only section that is about patients
+    // rather than about software, and it should read as the brand's own.
+    Care: { primary: "#15576E", secondary: "#CFE4EC" },
 };
 
 /**
@@ -50,6 +54,10 @@ export const SECTION_ACCENTS: Record<string, NavAccent> = {
  */
 const SECTION_OF: Record<string, keyof typeof SECTION_ACCENTS> = {
     "/dashboard": "Overview",
+
+    "/patients": "Care",
+    "/cohorts": "Care",
+    "/enrolments": "Care",
 
     "/composer": "Composer",
     "/integrations": "Composer",

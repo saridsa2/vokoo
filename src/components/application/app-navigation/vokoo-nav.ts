@@ -1,10 +1,13 @@
 import {
     IconAgents,
+    IconCohorts,
     IconDashboard,
     IconCallFlows,
     IconCallLogs,
+    IconEnrolments,
     IconEvals,
     IconFiles,
+    IconPatients,
     IconIntegrations,
     IconLock,
     IconOrganization,
@@ -43,6 +46,28 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         // under a verb would put it behind one.
         label: "Overview",
         items: [{ label: "Dashboard", href: "/dashboard", icon: IconDashboard }],
+    },
+    {
+        // **Who the product is for**, and the only section that is about people
+        // rather than about software. It sits second because everything below
+        // it serves this: a flow is drawn for a path, an agent speaks it, a
+        // number carries it — all of it to reach the patients listed here.
+        //
+        // A new heading rather than a home in Build or Configure. Nothing here
+        // is authored the way a prompt is, and nothing here is a runtime
+        // setting the way a key is. Filing a patient under either would make
+        // that heading mean two things, which is the mistake the Build /
+        // Configure split was made to undo.
+        label: "Care",
+        items: [
+            { label: "Patients", href: "/patients", icon: IconPatients },
+            { label: "Cohorts", href: "/cohorts", icon: IconCohorts },
+            // Its own entry rather than a tab inside a cohort: an enrolment is
+            // read from both ends — everyone on this path, and every path this
+            // patient is on — and burying it under one of them makes the other
+            // question unanswerable.
+            { label: "Enrolments", href: "/enrolments", icon: IconEnrolments },
+        ],
     },
     {
         label: "Composer",

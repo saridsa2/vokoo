@@ -6,6 +6,9 @@ import { FlowsWorkspaceScreen } from "@/components/application/screens/flows-wor
 import { RunsScreen } from "@/components/application/screens/runs-screen";
 import { SchemasScreen } from "@/components/application/screens/schemas-screen";
 import { SkillsScreen } from "@/components/application/screens/skills-screen";
+import { PatientsScreen } from "@/components/application/screens/patients-screen";
+import { CohortsScreen } from "@/components/application/screens/cohorts-screen";
+import { EnrolmentsScreen } from "@/components/application/screens/enrolments-screen";
 import { OrganizationScreen } from "@/components/application/screens/settings-screens";
 
 /**
@@ -67,6 +70,21 @@ const SCREENS: Record<string, ScreenDefinition> = {
         description: "Named shapes — what a tool takes, and what a call gets read into.",
         resource: "structured-outputs",
     },
+    patients: {
+        title: "Patients",
+        description: "The people a care path is followed for.",
+        resource: "patients",
+    },
+    cohorts: {
+        title: "Cohorts",
+        description: "One care path, and the patients on it.",
+        resource: "cohorts",
+    },
+    enrolments: {
+        title: "Enrolments",
+        description: "Who is on which path, and how far along.",
+        resource: "enrolments",
+    },
     runs: { title: "Runs", description: "Every tool a call ran, with what it was asked and what it gave back.", resource: "call-events" },
     "call-logs": { title: "Call Logs", description: "Every call, with transcript and recording.", resource: "call-logs" },
     metrics: { title: "Metrics", description: "Operational dashboard.", resource: "metrics" },
@@ -118,6 +136,12 @@ export default async function ConsoleScreen({
     if (route === "runs") return <RunsScreen />;
     if (route === "structured-outputs") return <SchemasScreen />;
     if (route === "skills") return <SkillsScreen />;
+    // The care population. Each owns its create dialog, so none of the three is
+    // a plain list screen — a "Add Patient" button that does nothing is worse
+    // than no button.
+    if (route === "patients") return <PatientsScreen />;
+    if (route === "cohorts") return <CohortsScreen />;
+    if (route === "enrolments") return <EnrolmentsScreen />;
     // **No `engines` and no `settings/credentials`.** Both left the
     // navigation when the platform took over the intelligence, but a route
     // that is merely unlinked is still reachable by URL and by any stale link

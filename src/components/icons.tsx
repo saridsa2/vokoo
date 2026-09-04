@@ -63,10 +63,12 @@ import {
     faGear,
     faGrid2,
     faHeadset,
+    faHeartPulse,
     faKey,
     faLanguage,
     faLaptopMobile,
     faLayerGroup,
+    faListCheck,
     faLifeRing,
     faLock,
     faLockOpen,
@@ -100,6 +102,7 @@ import {
     faUser,
     faUserGroup,
     faUsers,
+    faUsersMedical,
     faWandMagicSparkles,
     faWrench,
     faXmark,
@@ -286,6 +289,14 @@ export const IconCallLogs = icon(faRectangleList);
 // and `IconTools` (a wrench), both of which they previously borrowed — Calls
 // was still wearing the magic wand from when the section was called VoKoo Labs.
 export const IconCallFlows = icon(faPhoneVolume);
+
+/* The care population. A pulse for the person, a group-with-a-cross for the
+   cohort, and a checked list for enrolment — three distinct silhouettes at
+   20px, which is what the rail actually renders. `IconAgents` already wears
+   plain `faUsers`, so a cohort cannot have it. */
+export const IconPatients = icon(faHeartPulse);
+export const IconCohorts = icon(faUsersMedical);
+export const IconEnrolments = icon(faListCheck);
 export const IconIntegrations = icon(faPlug);
 // A shape is a schema. `IconFiles` is a folder, which Files already wears.
 export const IconShapes = icon(faBracketsCurly);

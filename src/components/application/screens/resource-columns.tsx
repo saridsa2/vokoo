@@ -58,7 +58,106 @@ const statusCell = (field = "status") =>
 
 const updated = (field = "updated_at") => (row: Row) => timeAgo(row[field] as string);
 
+/** An embedded row's field, e.g. the flow behind a cohort. */
+const embedded = (embed: string, field: string) => (row: Row) => {
+    const nested = row[embed] as Record<string, unknown> | null | undefined;
+    return (nested?.[field] as string) || "—";
+};
+
+/** A date with no time. `started_on` is a day, not an instant. */
+const onDate = (field: string) => (row: Row) => {
+    const value = row[field] as string | null;
+    if (!value) return "—";
+    // Parsed as a plain date rather than through `dateTime`, which would apply
+    // the reader's timezone and can move a date a day either way.
+    const [y, m, d] = value.split("-").map(Number);
+    if (!y || !m || !d) return value;
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+    });
+};
+
+/**
+ * How far into their path a patient is.
+ *
+ * The number every other screen will be derived from: a contact is due on the
+ * day the path names, counted from this patient's own start. Two patients on
+ * one path are at different points in it, which is the whole reason enrolment
+ * carries a date.
+ */
+const dayOfPath = (row: Row) => {
+    const value = row.started_on as string | null;
+    if (!value) return "—";
+    const [y, m, d] = value.split("-").map(Number);
+    if (!y || !m || !d) return "—";
+    const start = Date.UTC(y, m - 1, d);
+    const now = new Date();
+    const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+    const days = Math.floor((today - start) / 86_400_000);
+    if (days < 0) return `starts in ${-days}d`;
+    return `day ${days}`;
+};
+
 export const RESOURCE_VIEWS: Record<string, ResourceView> = {
+    patients: {
+        title: "Patients",
+        description: "The people a care path is followed for.",
+        resource: "patients",
+        createLabel: "Add Patient",
+        emptyTitle: "No patients yet",
+        emptyBody:
+            "A patient is a person, not an enrolment. Somebody can be on a GLP-1 path and postpartum at the same time, so they are one record here and enrolled on each cohort separately.",
+        columns: [
+            { id: "full_name", label: "Name", render: text("full_name") },
+            { id: "phone", label: "Phone", render: (row) => phoneNumber(row.phone as string) },
+            // The hospital's own number. Without it an outcome written back to
+            // their HIS has nothing to match on at the other end.
+            { id: "mrn", label: "MRN", render: text("mrn"), secondary: true },
+            { id: "language", label: "Language", render: text("language"), secondary: true },
+            { id: "created_at", label: "Added", render: updated("created_at"), secondary: true },
+        ],
+    },
+
+    cohorts: {
+        title: "Cohorts",
+        description: "One care path, and the patients on it.",
+        resource: "cohorts",
+        createLabel: "Create Cohort",
+        emptyTitle: "No cohorts yet",
+        emptyBody:
+            "A cohort is one care path and the patients following it. Every patient on it gets their own agent, running their own dates rather than a shared schedule.",
+        columns: [
+            { id: "name", label: "Name", render: text("name") },
+            // The care path itself, by name. A cohort is *defined* by its path,
+            // so showing the id here would be the same fault the phone-number
+            // list had when it printed a UUID for the flow that answers a call.
+            { id: "flow", label: "Care path", render: embedded("flows", "name") },
+            { id: "pack", label: "Pack", render: embedded("packs", "label"), secondary: true },
+            { id: "status", label: "Status", render: statusCell() },
+            { id: "updated_at", label: "Updated", render: updated(), secondary: true },
+        ],
+    },
+
+    enrolments: {
+        title: "Enrolments",
+        description: "Who is on which path, and how far along.",
+        resource: "enrolments",
+        createLabel: "Enrol Patient",
+        emptyTitle: "No enrolments yet",
+        emptyBody:
+            "Enrolling a patient on a cohort sets the day their path begins. Every contact the path asks for is counted from that day, so two patients enrolled a week apart are never at the same point.",
+        columns: [
+            { id: "patient", label: "Patient", render: embedded("patients", "full_name") },
+            { id: "cohort", label: "Cohort", render: embedded("cohorts", "name") },
+            { id: "started_on", label: "Started", render: onDate("started_on") },
+            { id: "day", label: "Progress", render: dayOfPath },
+            { id: "status", label: "Status", render: statusCell() },
+        ],
+    },
+
     "agent-extensions": {
         // "Team", not "Agents". An agent here is a person and an agent under
         // Build is a prompt, and two screens headed the same word leave the
