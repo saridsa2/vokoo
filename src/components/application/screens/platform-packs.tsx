@@ -58,6 +58,7 @@ type Pack = {
     is_active: boolean;
     agents: number;
     flows: number;
+    skills: number;
     /** Public names of the engines this pack puts a customer on. */
     engines: string[];
     workspaces: number;
@@ -143,7 +144,30 @@ export const PlatformPacksScreen = () => {
                                             {pack.agents} agent{pack.agents === 1 ? "" : "s"}
                                             {" · "}
                                             {pack.flows} flow{pack.flows === 1 ? "" : "s"}
+                                            {pack.skills > 0 ? (
+                                                <>
+                                                    {" · "}
+                                                    {pack.skills} skill{pack.skills === 1 ? "" : "s"}
+                                                </>
+                                            ) : null}
                                         </Line>
+                                        {/* A skill with no tool behind it is a
+                                            described capability the agent
+                                            cannot yet perform. Said on the card
+                                            because it is the one thing a new
+                                            customer has to supply, and a pack
+                                            that looks complete is how it goes
+                                            unsupplied. */}
+                                        {pack.skills > 0 ? (
+                                            <Line
+                                                term="Not included"
+                                                hint="A tool cannot authenticate when shipped in a pack — ctx.secrets is empty on every invocation — and the ones behind these skills are mocks that invent availability. The customer connects what actually reads their diary."
+                                            >
+                                                <span className="text-warning-primary">
+                                                    tools — the skills arrive empty
+                                                </span>
+                                            </Line>
+                                        ) : null}
                                         <Line
                                             term="Runs on"
                                             hint="Named, not copied — the engine stays the platform's, so a change to it reaches every workspace on it at once. Seeding the pack grants the workspace the right to use it, so what arrives is one working set rather than agents pointing at something they may not run."
