@@ -424,6 +424,29 @@ const UsageTab = ({ id }: { id: string }) => {
 
 /* ------------------------------------------------------------------ billing */
 
+/**
+ * What this workspace has cost, what it has been billed, and what is owed.
+ *
+ * ## Two things are not in "priced so far", and neither is a setting
+ *
+ * **A realtime call records nothing.** `src/services/realtime/*.rs` carries no
+ * `BillingCollector` at all, so a workspace whose engine is Gemini Live or
+ * OpenAI Realtime shows a cost of zero however much it is used. Only the relay
+ * shape meters its stt, llm and tts.
+ *
+ * **Nothing emits `call_second`**, so the carrier's own charge — the largest
+ * fixed cost per line — is unmeasured on every call of either shape.
+ *
+ * Both are producers that do not exist yet rather than rates somebody forgot to
+ * enter, which is why they cannot appear in `unpriced_vendors`: that counts
+ * quantities that *were* measured and have no rate. A missing producer measures
+ * nothing, so it leaves no trace in the ledger to count.
+ *
+ * The screen says "priced so far" rather than "cost" for exactly this reason,
+ * and reports unpriced quantities beside the total instead of folding them in.
+ * A call nobody has priced and a call that cost nothing are different facts,
+ * and reporting the second as the first is how a wrong invoice goes out.
+ */
 const BillingTab = ({ id, plan }: { id: string; plan?: string }) => {
     const { context } = useSession();
     const notify = useNotify();
@@ -483,13 +506,6 @@ const BillingTab = ({ id, plan }: { id: string; plan?: string }) => {
                     ))}
                 </section>
             ) : null}
-
-            {/* Both of these are producers that do not exist yet, not settings.
-                Said because a total that silently omits a whole engine shape is
-                worse than one that admits it — but said once, in a line. */}
-            <p className="text-sm text-quaternary">
-                Not metered on any workspace: realtime calls, and the carrier&rsquo;s own minutes.
-            </p>
         </>
     );
 };
