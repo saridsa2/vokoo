@@ -53,3 +53,30 @@ locally against that address. That is a deliberate loose end.
 
 `CORS_ORIGIN` takes comma-separated origins. One value meant deploying broke
 local work and local work broke the deployment.
+
+## Build with `npm run build:deploy`, never `npm run build`
+
+`NEXT_PUBLIC_*` is inlined into the bundle **at build time**, and Next.js loads
+`.env.local` *after* `.env.production` — in a production build as well. So a
+plain `npm run build` on a development machine bakes in whatever the developer
+points at.
+
+It did. The deployed console called `http://212.38.94.176:8081`, the VPS by raw
+IP over plain HTTP, from an HTTPS page — so it was both the wrong host and
+blocked as mixed content. The correct `.env.production` was sitting on the
+server the whole time and could do nothing, because the value had already been
+compiled in.
+
+`build:deploy` exports `.env.production` as real environment variables before
+running the build, and a shell variable beats every `.env` file.
+
+**The check, which is two seconds and would have caught this:**
+
+```bash
+grep -rlo "212.38" .next/static | head        # expect nothing
+grep -rlo "api.sarvathra.ai" .next/static | head   # expect a chunk
+```
+
+Worth doing after any build that is about to be rsynced, because nothing else
+fails: the bundle compiles, deploys and serves perfectly while pointing at a
+host the browser will refuse to call.

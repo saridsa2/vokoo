@@ -52,12 +52,21 @@ export const NavItemBase = ({ current, type, badge, href, icon: Icon, children, 
                 "size-5 shrink-0 text-fg-quaternary transition-inherit-all group-hover/item:text-fg-quaternary_hover",
                 !iconOnly && "mr-2",
                 current && "text-fg-quaternary_hover",
-                // Font Awesome's own animation, once. A selected item stays
-                // selected, so an infinite one would be a permanent movement in
-                // the corner of the eye; a single beat marks the arrival and
-                // stops. FA disables it under `prefers-reduced-motion`, so the
-                // colour still carries the state on its own.
-                current && "fa-beat",
+                // **No `fa-beat` here, and the reason is worth keeping.** It was
+                // added to mark the arrival once — `--fa-animation-iteration-count: 1`
+                // — on the reasoning that a permanent animation on a permanently
+                // selected item is movement in the corner of the eye.
+                //
+                // The reasoning was right and the mechanism could not deliver
+                // it. A CSS animation restarts whenever its element is
+                // re-rendered, and this icon re-renders whenever the sidebar
+                // does — a session refresh, a collapse, a route change, any
+                // parent state. So "once, on arrival" became exactly the
+                // permanent bounce it was written to avoid.
+                //
+                // An animation that cannot be guaranteed to run once should not
+                // be run at all. The colour pair already says which item is
+                // selected, and it says it without moving.
             )}
             style={
                 accent
@@ -68,11 +77,6 @@ export const NavItemBase = ({ current, type, badge, href, icon: Icon, children, 
                           // a neutral icon. A selected one is carrying a colour
                           // pair on purpose, so it is shown at full strength.
                           "--fa-secondary-opacity": "1",
-                          "--fa-animation-iteration-count": "1",
-                          "--fa-animation-duration": "0.5s",
-                          // The default beat scales to 1.25, which at 20px
-                          // jumps the row. Just enough to notice.
-                          "--fa-beat-scale": "1.12",
                       } as CSSProperties)
                     : undefined
             }

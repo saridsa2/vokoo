@@ -6,8 +6,6 @@ import { FlowsWorkspaceScreen } from "@/components/application/screens/flows-wor
 import { RunsScreen } from "@/components/application/screens/runs-screen";
 import { SchemasScreen } from "@/components/application/screens/schemas-screen";
 import { SkillsScreen } from "@/components/application/screens/skills-screen";
-import { EnginesScreen } from "@/components/application/screens/engines-screen";
-import { CredentialsScreen } from "@/components/application/screens/credentials-screen";
 import { OrganizationScreen } from "@/components/application/screens/settings-screens";
 
 /**
@@ -120,8 +118,12 @@ export default async function ConsoleScreen({
     if (route === "runs") return <RunsScreen />;
     if (route === "structured-outputs") return <SchemasScreen />;
     if (route === "skills") return <SkillsScreen />;
-    if (route === "engines") return <EnginesScreen />;
-    if (route === "settings/credentials") return <CredentialsScreen />;
+    // **No `engines` and no `settings/credentials`.** Both left the
+    // navigation when the platform took over the intelligence, but a route
+    // that is merely unlinked is still reachable by URL and by any stale link
+    // — and these two would render a screen whose every write the database now
+    // refuses, which reads as a bug rather than as a screen that moved.
+    // They are at /platform/engines and /platform/keys.
     if (route === "settings/organization") return <OrganizationScreen />;
     // One population, one screen. Redirected rather than removed: this is a
     // link people already have.

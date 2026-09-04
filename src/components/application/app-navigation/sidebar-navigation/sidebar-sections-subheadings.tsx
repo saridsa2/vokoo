@@ -17,12 +17,24 @@ interface SidebarNavigationSectionsSubheadingsProps {
     items: Array<{ label: string; items: NavItemType[] }>;
     /** Render as an icon rail. The shell decides; this only draws it. */
     isCollapsed?: boolean;
+    /**
+     * What sits above the account card, in place of the workspace name.
+     *
+     * The platform portal has no workspace — an operator is a member of none —
+     * and without this the card would print whichever workspace they happen to
+     * belong to, at the foot of a screen that is about all of them. Passed by
+     * the shell rather than sniffed from the route, for the reason the canvas
+     * already records: a component that guesses its context from a path is one
+     * that guesses wrong the day the path changes.
+     */
+    contextLabel?: string;
 }
 
 export const SidebarNavigationSectionsSubheadings = ({
     activeUrl = "/",
     items,
     isCollapsed = false,
+    contextLabel,
 }: SidebarNavigationSectionsSubheadingsProps) => {
     // 68px fits a 20px icon with the same padding the expanded item uses, so
     // the icons do not shift horizontally when the rail expands.
@@ -108,7 +120,7 @@ export const SidebarNavigationSectionsSubheadings = ({
                         : "flex shrink-0 flex-col gap-5 px-2 py-4 lg:gap-6 lg:px-4 lg:py-4"
                 }
             >
-                <VokooAccountCard iconOnly={isCollapsed} />
+                <VokooAccountCard iconOnly={isCollapsed} contextLabel={contextLabel} />
             </div>
 
         </aside>

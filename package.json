@@ -10,7 +10,8 @@
         "test:cli": "node --test packages/cli/src/*.test.ts",
         "test": "npm run test:sdk && npm run test:cli",
         "catalogue:sync": "node scripts/sync-node-catalogue.mjs",
-        "catalogue:check": "node scripts/sync-node-catalogue.mjs --check"
+        "catalogue:check": "node scripts/sync-node-catalogue.mjs --check",
+        "build:deploy": "env $(grep -v '^#' .env.production | grep -v '^$' | xargs) next build"
     },
     "dependencies": {
         "@awesome.me/kit-9a13e121e5": "^1.0.7",
@@ -34,7 +35,7 @@
         "qr-code-styling": "^1.9.2",
         "react": "^19.2.4",
         "react-aria": "^3.47.0",
-        "react-aria-components": "^1.20.0",
+        "react-aria-components": "^1.21.0",
         "react-dom": "^19.2.4",
         "react-hotkeys-hook": "^5.2.4",
         "tailwind-merge": "^3.6.0",

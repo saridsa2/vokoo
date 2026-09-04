@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { SidebarNavigationSectionsSubheadings } from "@/components/application/app-navigation/sidebar-navigation/sidebar-sections-subheadings";
-import { Tooltip } from "@/components/base/tooltip/tooltip";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
 import { ChevronLeftDouble, ChevronRightDouble } from "@/components/icons";
 import { isFullScreenRoute, NAV_SECTIONS, SPLIT_SCREEN_ROUTES } from "@/components/application/app-navigation/vokoo-nav";
 import { SignInScreen } from "@/components/application/auth/sign-in-screen";

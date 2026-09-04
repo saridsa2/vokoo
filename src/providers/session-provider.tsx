@@ -84,6 +84,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // Read after mount, never during render: localStorage does not exist on the
     // server, so reading it during render would make the two passes disagree.
     useEffect(() => {
+        // **A sign-in link is answered wherever it lands, not only at
+        // `/auth/callback`.**
+        //
+        // GoTrue redirects to `SITE_URL` when a link carries no `redirect_to`,
+        // which puts the tokens in the fragment of the *root* — and the root is
+        // the sign-in screen, which ignored them. The symptom was a link that
+        // "keeps taking me to the login page": the session was in the URL the
+        // whole time and nothing read it.
+        //
+        // Two real cases produce such a link: every invitation, which is sent
+        // server-side with no browser origin to name, and every link issued
+        // before the callback route existed.
+        //
+        // Handling it here rather than on one page means the route the link
+        // happens to land on stops mattering.
+        if (typeof window !== "undefined" && window.location.hash.includes("access_token=")) {
+            const hash = window.location.hash;
+            // Out of the address bar before anything else can read it: a live
+            // refresh token must not sit in history or in a copied URL.
+            window.history.replaceState(null, "", window.location.pathname + window.location.search);
+            window.location.replace(`/auth/callback${hash}`);
+            return;
+        }
+
         const stored = readSession();
 
         // A stored session whose access token is spent but which carries a
@@ -126,14 +150,38 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // console.
         const { data: mine } = await api.myOrganizations<Organization>(data.session.access_token);
         const belongs = mine ?? [];
+
+        // **An operator is a member of no workspace**, deliberately — that is
+        // what makes the platform portal a different product rather than a
+        // privileged corner of one. So an empty membership list is two states,
+        // not one, and refusing both was refusing the operator their own
+        // account: `pop@sarvathra.ai` could not sign in anywhere.
+        //
+        // Asked here rather than inferred from the email or from a name, and
+        // asked only when the list is empty, so the common sign-in still costs
+        // one request.
         if (belongs.length === 0) {
-            throw new Error(
-                "That account is not a member of any workspace. Ask an owner to add you.",
-            );
+            const { data: who } = await api
+                .operatorMe<{ operator: boolean }>({
+                    accessToken: data.session.access_token,
+                    organizationId: "",
+                })
+                .catch(() => ({ data: { operator: false } }));
+
+            if (!who?.operator) {
+                throw new Error(
+                    "That account is not a member of any workspace. Ask an owner to add you.",
+                );
+            }
+            setIsOperator(true);
         }
+
         setOrganizations(belongs);
+        // Empty for an operator. Every operator route drops `x-org-id`, and the
+        // console's own screens are unreachable without a membership, so there
+        // is nothing for it to be.
         const chosen =
-            belongs.find((org) => org.id === PREFERRED_ORG_ID)?.id ?? belongs[0].id;
+            belongs.find((org) => org.id === PREFERRED_ORG_ID)?.id ?? belongs[0]?.id ?? "";
 
         const next: StoredSession = {
             accessToken: data.session.access_token,

@@ -68,21 +68,46 @@ export const DataTable = <T extends { id: string }>({
     if (rows.length === 0 && empty) return <>{empty}</>;
 
     return (
-        <div className="overflow-hidden rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
-            {/* The table scrolls sideways inside its own card, so the page
-                itself never scrolls horizontally. */}
-            <div className="overflow-x-auto">
+        // **The card is the scroll container, and the header stays put.**
+        //
+        // It used to size itself to every row and hand the overflow upward, so
+        // the column headings scrolled off at row eight and the rest of the
+        // table was a grid of unlabelled values. `flex-1 min-h-0` makes the card
+        // take the height it is given instead of the height it wants, and the
+        // body scrolls inside it.
+        //
+        // `min-h-0` is the half that is easy to miss: a flex item will not
+        // shrink below its content without it, so the card would still grow to
+        // 23 rows and scroll nothing. Both axes scroll here, which is why the
+        // inner element is `overflow-auto` rather than `overflow-x-auto` — a
+        // wide table still scrolls sideways within its own card.
+        //
+        // In a parent that is not a flex container, `flex-1` and `min-h-0` are
+        // inert and the card sizes to its content as it always did.
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
+            <div className="min-h-0 flex-1 overflow-auto">
                 <table className={cx("w-full border-collapse", minWidthClassName)}>
                     <caption className="sr-only">{label}</caption>
-                    <thead>
+                    {/* `sticky` goes on the cells, not on `<thead>` or
+                        `<tr>`: a table row is not a positioned box in every
+                        engine, and the versions that ignore it fail silently —
+                        the header simply scrolls away and nothing says why.
+
+                        The background is opaque and required. A transparent
+                        sticky header lets the rows travel visibly underneath
+                        it, which reads as a rendering fault rather than as a
+                        pinned heading. */}
+                    <thead className="sticky top-0 z-10">
                         <tr className="border-b border-secondary bg-secondary">
-                            {expandable ? <th scope="col" className="w-10 px-3 py-3" /> : null}
+                            {expandable ? (
+                                <th scope="col" className="sticky top-0 w-10 bg-secondary px-3 py-3" />
+                            ) : null}
                             {columns.map((column) => (
                                 <th
                                     key={column.id}
                                     scope="col"
                                     className={cx(
-                                        "px-6 py-3 text-left text-xs font-semibold whitespace-nowrap text-tertiary",
+                                        "sticky top-0 bg-secondary px-6 py-3 text-left text-xs font-semibold whitespace-nowrap text-tertiary",
                                         column.className,
                                     )}
                                 >

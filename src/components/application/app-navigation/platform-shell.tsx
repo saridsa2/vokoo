@@ -1,28 +1,26 @@
 "use client";
 
 /**
- * Chrome around the platform portal — a different product from the console.
+ * Chrome around the platform portal.
  *
- * ## Why this is not a section of the console
+ * **The same shell as the console**, deliberately — `SidebarNavigationSectionsSubheadings`
+ * with different sections, not a second layout. I first built this as a thin
+ * top bar on the reasoning that an operator should be able to tell at a glance
+ * that they had left a workspace. That was wrong twice over: it read as
+ * unfinished, and it would have read worse with six sections in it. What tells
+ * you which product you are in is the sidebar's own heading and what the
+ * sections contain, not a different arrangement of the page.
  *
- * It was, for about an hour, and that was wrong in three ways worth writing
- * down because each is easy to re-introduce.
+ * It is also one less thing to keep in step. A second layout is a second place
+ * to fix a collapse bug, a second set of spacing decisions, and a second answer
+ * to how a screen scrolls.
  *
- * **The organisation header.** A console session carries `x-org-id` on every
- * request. An operator browsing tenants would be simultaneously signed into one
- * of them, and a mis-scoped query would read tenant data through a session that
- * happened to have both. Nothing here sends that header, and the shell has no
- * organisation to send.
+ * ## Still a different product
  *
- * **The vocabulary.** "Platform › Tenants" sitting under Composer and Build
- * makes the console's own words ambiguous — is "Agents" your agents, or a
- * tenant's? Two products in one navigation is two meanings for every noun.
- *
- * **Blast radius.** A screen that ships in the same bundle as every tenant
- * screen runs in a session that can reach `operator_*`. Separating the route
- * tree is half of that; the other half is a separate origin, which arrives when
- * this is deployed at its own host and a console session's storage cannot reach
- * it at all.
+ * Separate route group, separate hostname, and no `x-org-id` on any request —
+ * see `src/middleware.ts` and `asOperator()`. An operator is a member of no
+ * tenant, so a console session's storage cannot reach this and every query goes
+ * through a definer guarded by `is_platform_admin()`.
  *
  * ## The gate here is a courtesy
  *
@@ -36,17 +34,23 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/base/buttons/button";
-import { LogOut01 } from "@/components/icons";
+import { ChevronLeftDouble, ChevronRightDouble } from "@/components/icons";
+import { PLATFORM_SECTIONS } from "@/components/application/app-navigation/platform-nav";
+import { SidebarNavigationSectionsSubheadings } from "@/components/application/app-navigation/sidebar-navigation/sidebar-sections-subheadings";
 import { SignInScreen } from "@/components/application/auth/sign-in-screen";
+import { Tooltip, TooltipTrigger } from "@/components/base/tooltip/tooltip";
+import { useNavCollapse } from "@/hooks/use-nav-collapse";
 import { useSession } from "@/hooks/use-session";
-
-const NAV = [{ label: "Tenants", href: "/platform" }];
 
 export function PlatformShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const { session, isReady, isOperator, signOut } = useSession();
+    const nav = useNavCollapse(false);
 
-    if (!isReady) {
+    // Both gates, as the console does: the stored session is only readable
+    // after mount, and the pin preference is read in an effect — rendering
+    // before either lands flashes the wrong thing for a frame.
+    if (!isReady || !nav.isReady) {
         return <div className="min-h-dvh bg-primary" />;
     }
 
@@ -54,21 +58,14 @@ export function PlatformShell({ children }: { children: ReactNode }) {
         return <SignInScreen />;
     }
 
-    // `isOperator` starts false and becomes true when the check answers, so a
-    // real operator would see the refusal for a frame. Waiting on the session's
-    // own readiness is not enough — this is a second, later answer.
     if (!isOperator) {
         return (
             <main className="grid min-h-dvh place-items-center bg-primary p-6">
                 <div className="flex max-w-md flex-col gap-3 border border-secondary p-6">
                     <h1 className="text-lg font-semibold text-primary">Not for this account</h1>
                     <p className="text-sm text-tertiary">
-                        This is the platform portal — it manages the workspaces on this
-                        installation rather than anything inside one. {session.email} is not an
-                        operator.
-                    </p>
-                    <p className="text-sm text-tertiary">
-                        If you were looking for your own workspace, it is at the console.
+                        This portal manages the workspaces on this installation rather than
+                        anything inside one. {session.email} is not an operator.
                     </p>
                     <div className="flex gap-2 pt-2">
                         <Button size="sm" href="/">
@@ -84,39 +81,47 @@ export function PlatformShell({ children }: { children: ReactNode }) {
     }
 
     return (
-        <div className="flex h-dvh min-h-0 flex-col bg-primary">
-            {/* A bar, not the console's sidebar. Different chrome is the point:
-                somebody should be able to tell at a glance that they are not
-                inside a workspace, before they read a single label. */}
-            <header className="flex shrink-0 items-center gap-6 border-b border-secondary px-6 py-3">
-                <span className="text-sm font-semibold tracking-wide text-primary uppercase">
-                    Sarvathra Platform
-                </span>
-                <nav className="flex items-center gap-1">
-                    {NAV.map((item) => (
-                        <Button
-                            key={item.href}
-                            size="sm"
-                            color={pathname === item.href ? "secondary" : "link-gray"}
-                            href={item.href}
-                        >
-                            {item.label}
-                        </Button>
-                    ))}
-                </nav>
-                <div className="ml-auto flex items-center gap-3">
-                    <span className="text-sm text-tertiary">{session.email}</span>
-                    <Button
-                        size="sm"
-                        color="tertiary"
-                        iconLeading={LogOut01}
-                        onClick={signOut}
-                        aria-label="Sign out"
-                    />
-                </div>
-            </header>
+        <div className="flex h-dvh flex-col overflow-hidden bg-primary lg:flex-row">
+            <SidebarNavigationSectionsSubheadings
+                activeUrl={pathname}
+                items={PLATFORM_SECTIONS}
+                isCollapsed={nav.isCollapsed}
+                contextLabel="Sarvathra Platform"
+            />
+            {/* The same divider and collapse handle the console has. It lives
+                out here rather than in the sidebar because the sidebar is
+                `overflow-hidden`, so anything on its outer edge is clipped. */}
+            <div className="relative hidden w-px shrink-0 bg-secondary lg:block">
+                <Tooltip
+                    title={nav.isCollapsed ? "Show labels" : "Collapse to icons"}
+                    description="Remembered on this browser."
+                    placement="right"
+                >
+                    {/* `TooltipTrigger`, not a plain `<button>`: React Aria's
+                        `TooltipTrigger` passes its hover and focus props to a
+                        React Aria `Button`, and a DOM button never receives
+                        them — so this tooltip had never once opened. It does
+                        not error, it simply does nothing, which is why it
+                        survived. */}
+                    <TooltipTrigger
+                        aria-label={
+                            nav.isCollapsed
+                                ? "Show navigation labels"
+                                : "Collapse navigation to icons"
+                        }
+                        onClick={() => nav.setCollapsed(!nav.isCollapsed)}
+                        className="absolute top-1/2 left-1/2 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-none bg-primary text-fg-quaternary ring-1 ring-secondary transition duration-100 ease-linear hover:text-fg-secondary hover:ring-primary focus-visible:outline-2 focus-visible:outline-offset-2"
+                    >
+                        {nav.isCollapsed ? (
+                            <ChevronRightDouble className="size-3.5" aria-hidden="true" />
+                        ) : (
+                            <ChevronLeftDouble className="size-3.5" aria-hidden="true" />
+                        )}
+                    </TooltipTrigger>
+                </Tooltip>
+            </div>
 
-            <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
     );
 }

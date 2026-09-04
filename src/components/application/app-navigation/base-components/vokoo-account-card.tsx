@@ -18,7 +18,10 @@ import { useSession } from "@/hooks/use-session";
  * Replaces Untitled UI's `NavAccountCard`, which renders a hardcoded demo user
  * ("Caitlyn King") and offers no way to sign out.
  */
-export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
+export function VokooAccountCard({
+    iconOnly,
+    contextLabel,
+}: { iconOnly?: boolean; contextLabel?: string } = {}) {
     const { session, signOut, organizations, switchOrganization, context } = useSession();
     const [naming, setNaming] = useState(false);
 
@@ -40,7 +43,7 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
     const initials =
         (words.length > 1 ? words[0][0] + words[words.length - 1][0] : words[0]?.slice(0, 2) ?? "VK").toUpperCase();
 
-    const displayName = here?.member_name || words.join(" ") || localPart;
+    const displayName = (contextLabel ? null : here?.member_name) || words.join(" ") || localPart;
 
     if (iconOnly) {
         // Sign out stays reachable rather than being hidden behind expanding
@@ -65,13 +68,20 @@ export function VokooAccountCard({ iconOnly }: { iconOnly?: boolean } = {}) {
         <div className="flex flex-col gap-2">
             {/* Which workspace, above who you are. Two different facts, and
                 they were briefly sharing one line — a name over an
-                organisation reads as a greeting. */}
-            {here && !canSwitch ? (
+                organisation reads as a greeting.
+                A `contextLabel` replaces it outright: the platform portal is
+                about every workspace and belongs to none, so printing one
+                there would name a tenancy the screen is not in. */}
+            {contextLabel ? (
+                <p className="truncate px-1 text-xs font-medium text-tertiary uppercase">
+                    {contextLabel}
+                </p>
+            ) : here && !canSwitch ? (
                 <p className="truncate px-1 text-xs font-medium text-tertiary uppercase">
                     {here.name}
                 </p>
             ) : null}
-            {canSwitch ? (
+            {canSwitch && !contextLabel ? (
                 <label className="flex flex-col gap-1">
                     <span className="sr-only">Workspace</span>
                     <select

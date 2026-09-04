@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { NotificationProvider } from "@/components/application/notifications/notification-provider";
 import { RouteProvider } from "@/providers/router-provider";
 import { SessionProvider } from "@/providers/session-provider";
 import { Theme } from "@/providers/theme";
@@ -72,7 +73,12 @@ export default function RootLayout({
             <body className="bg-primary antialiased">
                 <RouteProvider>
                     <Theme>
-                        <SessionProvider>{children}</SessionProvider>
+                        <SessionProvider>
+                            {/* Inside the session provider, so a note about an
+                                expired session is raised by something that can
+                                already see the session. */}
+                            <NotificationProvider>{children}</NotificationProvider>
+                        </SessionProvider>
                     </Theme>
                 </RouteProvider>
             </body>

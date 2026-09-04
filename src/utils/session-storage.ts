@@ -40,7 +40,22 @@ export function readSession(): StoredSession | null {
         if (!raw) return null;
 
         const session = JSON.parse(raw) as StoredSession;
-        if (!session.accessToken || !session.organizationId) return null;
+
+        // **An empty `organizationId` is valid.** It is what an operator has:
+        // a platform administrator belongs to no workspace, which is the whole
+        // reason the portal is a separate product, and every operator route
+        // strips `x-org-id` deliberately.
+        //
+        // This check used to reject it, so an operator's session was written by
+        // the sign-in and discarded by the very next read — the console then
+        // rendered the sign-in screen over a session that existed. `pop@…`, the
+        // only account that belongs to no workspace, could not stay signed in
+        // by link or by password, and nothing anywhere failed loudly.
+        //
+        // The rule was correct when written: there was one product, and a
+        // session without a workspace could do nothing. The operator portal
+        // made it false and nothing rechecked it.
+        if (!session.accessToken) return null;
 
         // An expired token with no refresh token is a dead session: drop it so
         // callers render sign-in instead of firing requests that all 401.

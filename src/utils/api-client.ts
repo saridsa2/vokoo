@@ -118,6 +118,37 @@ export const api = {
             body: JSON.stringify({ email, password }),
         }),
 
+    /**
+     * Which ways this address can sign in.
+     *
+     * Answers `{ password, link }`. A link-only account and an address with no
+     * account answer identically, so a caller learns whether to draw a password
+     * field and never whether an account exists. Rate limited server-side.
+     */
+    authMethods: (email: string) =>
+        request<{ password: boolean; link: boolean }>("/api/v1/auth/methods", {
+            method: "POST",
+            body: JSON.stringify({ email }),
+        }),
+
+    /**
+     * Mail a link that signs you in.
+     *
+     * No token and no organisation: this is what somebody without a password
+     * uses. The destination comes from the browser's own `Origin`, which the
+     * control plane checks — so a link asked for on the platform portal lands
+     * on the platform portal, and one asked for anywhere else is refused there
+     * rather than here.
+     *
+     * Always resolves. The server answers the same way whether or not the
+     * address is known, so there is nothing to branch on.
+     */
+    signInLink: (email: string) =>
+        request<{ sent: boolean }>("/api/v1/auth/sign-in-link", {
+            method: "POST",
+            body: JSON.stringify({ email }),
+        }),
+
     /** Exchange a refresh token for a new access token. */
     refresh: (refreshToken: string) =>
         request<{ session: SupabaseSession }>("/api/v1/auth/refresh", {
@@ -342,6 +373,199 @@ export const api = {
         request<unknown>(
             `/api/v1/operator/tenants/${id}`,
             { method: "POST", body: JSON.stringify(change) },
+            asOperator(context),
+        ),
+
+    operatorPlatformKeys: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/keys", {}, asOperator(context)),
+
+    operatorSetPlatformKey: (
+        vendor: string,
+        body: { secret: string; label?: string },
+        context: AccessContext,
+    ) =>
+        request<unknown>(
+            `/api/v1/operator/keys/${vendor}`,
+            { method: "POST", body: JSON.stringify(body) },
+            asOperator(context),
+        ),
+
+    operatorDeletePlatformKey: (vendor: string, context: AccessContext) =>
+        request<unknown>(
+            `/api/v1/operator/keys/${vendor}`,
+            { method: "DELETE" },
+            asOperator(context),
+        ),
+
+    operatorNumbers: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/numbers", {}, asOperator(context)),
+
+    operatorAddNumber: (
+        body: { number: string; label?: string; carrier?: string },
+        context: AccessContext,
+    ) =>
+        request<unknown>(
+            "/api/v1/operator/numbers",
+            { method: "POST", body: JSON.stringify(body) },
+            asOperator(context),
+        ),
+
+    /** `org_id: null` releases the number back to the pool. */
+    operatorAssignNumber: (id: string, org_id: string | null, context: AccessContext) =>
+        request<unknown>(
+            `/api/v1/operator/numbers/${id}`,
+            { method: "POST", body: JSON.stringify({ org_id }) },
+            asOperator(context),
+        ),
+
+    operatorTemplates: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/templates", {}, asOperator(context)),
+
+    operatorSeed: <T>(id: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/tenants/${id}/seed`,
+            { method: "POST", body: "{}" },
+            asOperator(context),
+        ),
+
+    /**
+     * One tenant, in the three shapes its detail screen asks for.
+     *
+     * Separate calls because the tabs are separate: opening Configuration
+     * should not re-read a month of calls, and changing the usage window
+     * should not re-read the workspace's settings.
+     */
+    /**
+     * Engines, on the operator's side of the wall.
+     *
+     * The tenant's `/api/v1/engines` returns a name and a description; these
+     * return the whole row, config included. Two routes for two audiences,
+     * which is the same split `available_engines` makes in the database.
+     */
+    /** The starter packs a new workspace can be built from. */
+    /** The price list. */
+    /**
+     * What the reader and timezone fields may be set to.
+     *
+     * Fetched rather than hard-coded, so a dropdown can never offer a value the
+     * database will refuse — and the reader list stays the one the bridge works
+     * from.
+     */
+    settingChoices: <T>(context: AccessContext) =>
+        request<T>("/api/v1/settings/choices", {}, asOperator(context)),
+
+    operatorPlans: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/plans", {}, asOperator(context)),
+
+    operatorSetPlan: <T>(id: string, patch: Record<string, unknown>, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/plans/${id}`,
+            { method: "PATCH", body: JSON.stringify(patch) },
+            asOperator(context),
+        ),
+
+    /** Every workspace's current billing period. */
+    operatorPeriods: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/periods", {}, asOperator(context)),
+
+    /** One workspace's period: allowance, use and what is owed. */
+    operatorTenantPeriod: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/period`, {}, asOperator(context)),
+
+    /** Open this month's period. Idempotent inside the same month. */
+    operatorOpenPeriod: <T>(id: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/tenants/${id}/period`,
+            { method: "POST" },
+            asOperator(context),
+        ),
+
+    operatorPacks: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/packs", {}, asOperator(context)),
+
+    operatorEngines: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/engines", {}, asOperator(context)),
+
+    operatorEngine: <T>(id: string, context: AccessContext) =>
+        request<T>(`/api/v1/operator/engines/${id}`, {}, asOperator(context)),
+
+    operatorUpdateEngine: <T>(id: string, patch: Record<string, unknown>, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/engines/${id}`,
+            { method: "PATCH", body: JSON.stringify(patch) },
+            asOperator(context),
+        ),
+
+    operatorCreateEngine: <T>(name: string, mode: string, context: AccessContext) =>
+        request<T>(
+            "/api/v1/operator/engines",
+            { method: "POST", body: JSON.stringify({ name, mode }) },
+            asOperator(context),
+        ),
+
+    operatorSetEnginePrice: <T>(
+        id: string,
+        price: { per_minute: number | null; per_call: number | null; currency: string },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/operator/engines/${id}/price`,
+            { method: "POST", body: JSON.stringify(price) },
+            asOperator(context),
+        ),
+
+    operatorEngineRevenue: <T>(context: AccessContext) =>
+        request<T[]>("/api/v1/operator/engines/revenue", {}, asOperator(context)),
+
+    operatorTenantUsage: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/usage`, {}, asOperator(context)),
+
+    operatorTenantBilling: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/billing`, {}, asOperator(context)),
+
+    operatorTenantConfig: <T>(id: string, context: AccessContext) =>
+        request<T>(`/api/v1/operator/tenants/${id}/config`, {}, asOperator(context)),
+
+    /** Settings an operator changes on a customer's behalf. */
+    operatorSetTenantSettings: <T>(id: string, patch: Record<string, unknown>, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/tenants/${id}/config`,
+            { method: "PATCH", body: JSON.stringify(patch) },
+            asOperator(context),
+        ),
+
+    /** Which engines this workspace may point an agent at. `null` = ask the plan. */
+    operatorSetEngineAccess: <T>(
+        id: string,
+        engineId: string,
+        allowed: boolean | null,
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/operator/tenants/${id}/engine-access`,
+            { method: "POST", body: JSON.stringify({ engine_id: engineId, allowed }) },
+            asOperator(context),
+        ),
+
+    /** The people in a workspace. */
+    operatorMembers: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/operator/tenants/${id}/members`, {}, asOperator(context)),
+
+    /** Getting a locked-out customer back in: send a link, set a password, or remove. */
+    operatorMemberAction: <T>(
+        id: string,
+        body: {
+            action: "send_link" | "set_password" | "remove";
+            user_id?: string;
+            membership_id?: string;
+            password?: string;
+            email?: string;
+        },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/operator/tenants/${id}/members`,
+            { method: "POST", body: JSON.stringify(body) },
             asOperator(context),
         ),
 

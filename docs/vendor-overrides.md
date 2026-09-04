@@ -191,3 +191,82 @@ build against edition 2021 or against `reqwest`.
 `bridge/src/services/tts/elevenlabs.rs` is ours, written against the wire
 protocol, because it has to be a `FrameHandler` in rustvani's pipeline rather
 than a standalone client. It shares nothing with this tree.
+
+---
+
+## `vendor/aisdk` — a provider-agnostic LLM client, with two changes
+
+**On the VPS:** `/opt/vokoo/rustvani/vendor/aisdk`
+**Upstream:** `github.com/lazy-hq/aisdk` at `c5905120` (8 August 2026)
+**Marked with:** `// ---- VOKOO OVERRIDE ----`
+
+### Why it is vendored rather than pinned
+
+Two of its choices are wrong for a tool schema authored at **runtime**. The
+crate is built for schemas derived from a Rust type at compile time, where both
+choices are correct; ours are written by a customer in the console and loaded
+from `structured_outputs`, so there is no type to derive from.
+
+Neither can be reached from outside the crate: one is a hardcoded literal, the
+other a struct field's serde behaviour.
+
+### The changes
+
+**1. `src/providers/openai/conversions.rs` — `strict` is asked, not asserted.**
+
+It was `strict: true`, hardcoded. OpenAI then refuses any schema whose
+`required` does not name every property:
+
+```
+'required' is required to be supplied and to be an array
+including every key in properties. Missing 'appointment_at'.
+```
+
+A customer's shape has genuinely optional fields, and both ways of satisfying
+strict mode corrupt it: naming every field required makes the model invent
+values for things the call never mentioned, and dropping the optional ones
+loses them. So `schema_satisfies_strict()` asks whether the schema already
+qualifies — a compliant one keeps the guarantee, one with optional fields is
+sent non-strict. **Nothing is rewritten either way**: the schema the author
+wrote is the schema the model is shown.
+
+Measured after: `gpt-4.1-mini` read a real call and returned five of six
+fields, omitting `follow_up_needed` because the call did not mention it. That
+is the field the old behaviour would have forced it to invent.
+
+**2. `src/providers/anthropic/client/types.rs` — `#[serde(default)]` on `AnthropicUsage`.**
+
+Every usage field was required. MiniMax serves the Anthropic Messages API
+*shape* and sends no `cache_creation`, so a successful HTTP 200 was rejected
+while decoding, reported as `missing field cache_creation` — which reads as our
+bug and is a provider that has no such concept. The container default costs
+Anthropic proper nothing, since it sends every field.
+
+### How to tell whether they are still applied
+
+```bash
+ssh vokoo 'grep -rc "VOKOO OVERRIDE" /opt/vokoo/rustvani/vendor/aisdk/src/providers/openai/conversions.rs \
+                                     /opt/vokoo/rustvani/vendor/aisdk/src/providers/anthropic/client/types.rs'
+# expect 2 and 1
+```
+
+And the behavioural check, which is the one that matters — a dry run on a
+finished call must return a reading on **both** providers:
+
+```bash
+TOKEN=$(grep ^BRIDGE_INTERNAL_TOKEN= /opt/vokoo/rustvani/bridge.env | cut -d= -f2-)
+curl -s -X POST localhost:8080/flow/dryrun -H 'Content-Type: application/json' \
+  -H "x-vokoo-internal: $TOKEN" -d '{"flow_id":"<post-call flow>","ucid":"<a finished call>"}'
+```
+
+### Worth sending upstream
+
+The `strict` one is a plain bug for anybody with a runtime schema, and the fix
+is small. Offering it costs nothing and would shrink this entry to one item.
+
+### What it is used for
+
+`src/vokoo/intelligence.rs` only, today — reading a finished call into a shape.
+It is off the call path deliberately: realtime is bidirectional audio over a
+WebSocket, which this crate does not do, and the relay's LLM step streams into
+a live pipeline where the carrier ends the call if our socket errors.

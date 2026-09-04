@@ -80,15 +80,19 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         // something, an engine picks providers, a key is pasted in. Filing a
         // provider key beside an agent made one heading mean two things.
         label: "Configure",
-        items: [
-            { label: "Phone Numbers", href: "/phone-numbers", icon: IconPhoneNumbers },
-            { label: "Engines", href: "/engines", icon: IconVoiceLibrary },
-            // "Providers", not "Provider Keys": the screen is where you say
-            // which vendors this organisation uses, and a key is how you say
-            // it. Naming it after the credential describes the form field
-            // rather than the decision.
-            { label: "Providers", href: "/settings/credentials", icon: IconLock },
-        ],
+        // **Engines and Providers are gone, and not because they were unused.**
+        //
+        // The platform supplies the intelligence. Which model hears, which
+        // thinks, which speaks and in what order is the product — `Hindi relay
+        // (Sarvam)` exists because Sarvam beat ElevenLabs at both ends on real
+        // calls, which is a finding somebody paid for — and a customer who can
+        // read it can shop it. Engines are the platform's as of migration 0091;
+        // provider keys became the platform's in 0090.
+        //
+        // What a tenant does here is stitch call flows, which is the part that
+        // is theirs. An agent still names the engine it runs on; it just names
+        // it, rather than being shown what it is made of.
+        items: [{ label: "Phone Numbers", href: "/phone-numbers", icon: IconPhoneNumbers }],
     },
     {
         label: "Observe",

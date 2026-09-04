@@ -45,6 +45,18 @@ export function middleware(request: NextRequest) {
     const isPlatformHost = PLATFORM_HOSTS.some((prefix) => host.startsWith(prefix));
     const isPlatformPath = pathname === "/platform" || pathname.startsWith("/platform/");
 
+    // Where a sign-in link lands, and it belongs to both products.
+    //
+    // The link is issued by one GoTrue for one installation; which portal the
+    // recipient should end up in is a property of the account, not of the
+    // hostname the link happens to carry. So the page exists on both hosts and
+    // decides for itself — see `src/app/auth/callback/page.tsx`. 404-ing it
+    // here would make an operator's link dead on the console host, which is
+    // exactly where `SITE_URL` sends every link that names no redirect.
+    if (pathname.startsWith("/auth/")) {
+        return NextResponse.next();
+    }
+
     if (isPlatformHost) {
         // The portal serves its own routes and the sign-in that guards them.
         // Everything else belongs to the other product and does not exist here.

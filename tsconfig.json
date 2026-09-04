@@ -37,6 +37,11 @@
         ".next/dev/types/**/*.ts"
     ],
     "exclude": [
+        // The vendored Rust crate ships TypeScript examples with their own
+        // dependencies. Left in the program they put unresolved imports in the
+        // type check, which `npm run build` runs — the same way a copied site
+        // dump under `indus.sarvam.ai/` broke it once already.
+        "bridge/vendor",
         "node_modules",
         "supabase/functions",
         "packages",
