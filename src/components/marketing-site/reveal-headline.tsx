@@ -27,13 +27,22 @@ export function RevealHeadline({
   as: Tag = "h2",
   className,
   id,
-  stagger = 0.07,
+  stagger = 0.05,
   delay = 0,
-  amount = 0.5,
+  amount = 0.15,
   mutedFrom,
 }: RevealHeadlineProps): ReactNode {
   const ref = useRef<HTMLHeadingElement>(null);
 
+  // **0.15, not 0.5.** Each word is covered by a solid block that slides away,
+  // so before the trigger fires the heading is a row of filled rectangles. At
+  // half-visible the reveal only began once the heading was already in the
+  // middle of the screen, and a fast scroll caught it mid-cover — which on a
+  // healthcare page reads as redacted text rather than as an animation.
+  //
+  // Firing as the heading enters means it has resolved by the time anybody is
+  // looking at it, and the effect is still there for a reader arriving at
+  // reading speed.
   const inView = useInView(ref, { once: true, amount });
 
   const words = children.split(/(\s+)/);

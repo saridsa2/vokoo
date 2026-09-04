@@ -25,19 +25,19 @@ const PILLARS: Pillar[] = [
   {
     tag: "01 — the voice",
     title: "It sounds like a person",
-    body: "Sub-quarter-second to first word, so there is no gap where a patient wonders whether anybody is there. Trained on Indian speech, so it gets the name right the first time.",
+    body: "Sub-quarter-second to first word, so there is no pause where a patient wonders whether anybody is there. Trained on Indian speech, so it gets the name right the first time.",
     icon: Compass,
   },
   {
-    tag: "02 — the handover",
-    title: "It knows when to step aside",
-    body: "Ask for a person and you get one. If anything on the line breaks, the call is handed to your desk rather than left in silence — the platform knows within seconds, and the patient never finds out.",
+    tag: "02 — escalation",
+    title: "It knows what it must not handle",
+    body: "A symptom is not a question an agent answers. It is carried to a nurse, with what the patient said, in the same call. Ask for a person and you get one.",
     icon: LayerGroup,
   },
   {
-    tag: "03 — outbound",
-    title: "It works both ways",
-    body: "One journey, drawn once, running in either direction — answering the enquiry and placing the reminder, the follow-up and the results-ready call.",
+    tag: "03 — at scale",
+    title: "One pathway, every patient on it",
+    body: "Drawn once and run across a whole cohort — the cycle reminder, the pre-op instruction, the adherence check — without a coordinator dialling any of them.",
     icon: Bolt,
   },
 ];
@@ -73,7 +73,7 @@ export function Pillars(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Built for the way a clinic actually reaches a patient.
+Built for a call a patient on treatment will answer.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -81,9 +81,8 @@ Built for the way a clinic actually reaches a patient.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
             >
-              A phone line is unforgiving in ways a chat window is not. There
-              is no scrollback, no spinner, and no second chance at a sentence
-              the patient did not catch.
+              No scrollback, no spinner, and no second chance at a sentence
+              somebody three days past a cycle did not catch.
             </motion.p>
           </div>
         </div>

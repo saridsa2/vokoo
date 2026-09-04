@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { ArrowChip } from "@/components/marketing-site/arrow-chip";
 
 /**
- * The foot of the page, and where "talk to us" actually leads.
+ * The foot of the page, and where "talk to us" leads.
  *
  * **Three of the template's four link columns are gone.** It shipped Product,
  * Company, Resources and Connect — nineteen links, fourteen of them `href="#"`,
@@ -39,10 +39,10 @@ export function Footer(): ReactNode {
                 </span>
                 <div className="mt-6 max-w-5xl text-4xl leading-[0.95] font-medium tracking-tighter sm:text-6xl lg:text-7xl xl:text-8xl">
                     <p className="block">Ring the line.</p>
-                    <p className="block text-foreground/55">Then let&rsquo;s map your journeys.</p>
+                    <p className="block text-foreground/55">Then bring us one protocol.</p>
                 </div>
 
-                {/* Two, in the order somebody actually uses them: hear the thing
+                {/* Two, in the order somebody uses them: hear the thing
                     work, then write to a person about your own clinic. */}
                 <div className="mt-12 flex flex-wrap items-stretch gap-3">
                     <Link href="tel:+918040802529" className="group inline-flex items-stretch gap-1">
@@ -74,8 +74,8 @@ export function Footer(): ReactNode {
                         <span className="text-base font-bold tracking-[0.09em]">SARVATHRA</span>
                     </Link>
                     <p className="mt-4 max-w-sm leading-relaxed text-foreground/55">
-                        Sarvathra turns patient care journeys into AI agents — on voice,
-                        WhatsApp and your front desk, in the patient&rsquo;s own language.
+                        Sarvathra turns a hospital&rsquo;s care pathways into AI agents that
+                        place the call — and hand to a nurse the moment they should.
                     </p>
                 </div>
 

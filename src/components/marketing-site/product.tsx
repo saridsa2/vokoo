@@ -34,7 +34,7 @@ const TILES: Tile[] = [
     index: "01.",
     title: "You draw it",
 
-    body: "The journey is a canvas, not a configuration screen. Every step — ask, check, book, remind, escalate, write back — is a node you place, and the drawing is what runs.",
+    body: "One pathway per speciality, because oncology and transplant do not ask a patient the same questions. Change a step and the next call takes it — no ticket, no release.",
     icon: Workflow,
     tone: "bg-accent text-accent-foreground",
 
@@ -45,7 +45,7 @@ const TILES: Tile[] = [
     index: "02.",
     title: "It runs",
 
-    body: "On voice and WhatsApp, inbound and outbound, in Hindi or English. It finds the doctor and the day, confirms the time before booking, and hands to your desk the moment a patient asks for a person.",
+    body: "Outbound at the scale a protocol demands and inbound when the patient rings back, on voice or WhatsApp, in the language they answer in.",
     icon: Cube,
 
     tone: "bg-foreground/[0.08] text-foreground",
@@ -56,7 +56,7 @@ const TILES: Tile[] = [
     index: "03.",
     title: "It writes back",
 
-    body: "Every call is read into the fields you defined and delivered to your CRM or HIS. Nothing is left as a recording for somebody to listen to later.",
+    body: "Into the fields you defined, against the patient record in your HIS. Nothing is left as a recording for a coordinator to play back later.",
     icon: Sparkles,
 
     tone: "bg-foreground/[0.04] text-foreground",
@@ -98,7 +98,7 @@ export function Product(): ReactNode {
               mutedFrom={9}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-The journey your clinic already runs, drawn once and executed by agents.
+A pathway is a graph, not a call list.
             </RevealHeadline>
 
             <motion.p
@@ -107,12 +107,12 @@ The journey your clinic already runs, drawn once and executed by agents.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
             >
-              Most of what a clinic loses is not a lost patient — it is a
-              patient nobody got back to. Sarvathra takes the journey you
-              already run informally and makes it something that executes:
-              on the first ring at two in the morning, in the language the
-              patient chose, ending in your records rather than in a voicemail
-              somebody will listen to on Monday.
+              Who is contacted and when, what is asked, what is checked
+              against the record, what is written back, and the point where a
+              nurse takes over. Every one of those is a node you place. The
+              drawing is not a description of the pathway — it is the thing
+              that runs it, across every patient on it, on the day the
+              protocol says.
             </motion.p>
 
             <motion.div

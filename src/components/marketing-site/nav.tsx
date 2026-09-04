@@ -217,7 +217,7 @@ export function Nav({ delay = 1.4 }: NavProps): ReactNode {
                 className="mt-6"
               >
                 {/* The same destination as the desktop CTA. On a phone this
-                    one is a tap that actually dials, which is the best version
+                    one is a tap that dials, which is the best version
                     of this button anywhere on the site. */}
                 <a
                   href="tel:+918040802529"

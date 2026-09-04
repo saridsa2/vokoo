@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { Assurance } from "@/components/marketing-site/assurance";
 import { Faq } from "@/components/marketing-site/faq";
 import { FinalCta } from "@/components/marketing-site/final-cta";
 import { Footer } from "@/components/marketing-site/footer";
@@ -15,9 +16,9 @@ export const metadata: Metadata = createMetadata({
     // Said explicitly rather than left to the fallback: this is the one page
     // whose title is a search result, and "Sarvathra" alone tells somebody
     // scanning a page of results nothing about what it is.
-    title: "Sarvathra — Patient journeys, turned into AI agents",
+    title: "Sarvathra — Care pathways that make the call",
     description:
-        "Sarvathra turns patient care journeys into AI agents. Draw the journey once — enquiry, booking, reminder, follow-up — and it runs across voice, WhatsApp and your front desk, in Hindi or English, writing every outcome back to your systems.",
+        "Sarvathra turns a hospital's care pathways into AI agents that place the call — pre-cycle labs, cycle reminders, symptom checks, follow-ups — across every patient on the protocol, escalating to a nurse rather than advising, and writing every outcome back to your HIS.",
     path: "/",
 });
 
@@ -57,6 +58,7 @@ export default function HomePage(): ReactNode {
                 <ValueProp />
                 <Product />
                 <Pillars />
+                <Assurance />
                 <Faq />
                 <FinalCta />
             </main>

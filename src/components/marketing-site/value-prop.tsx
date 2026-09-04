@@ -15,15 +15,15 @@ interface Step {
 const STEPS: Step[] = [
   {
     eyebrow: "The problem",
-    body: "Revenue does not leak in one place. An enquiry rings out at seven in the evening, a follow-up falls due and nobody calls, a referral is never chased. Each is a consultation your clinic had already earned.",
+    body: "A cycle slips because nobody chased the labs. A transplant patient misses a level. Your coordinators were on the phone all day.",
   },
   {
     eyebrow: "The approach",
-    body: "You draw the journey — who is contacted, when, what is asked, what happens with the answer. Sarvathra runs it as agents on voice, WhatsApp and your front desk, in the patient's own language.",
+    body: "You draw the pathway once, per speciality. Every contact in it becomes an agent that places the call.",
   },
   {
     eyebrow: "The outcome",
-    body: "Every opportunity becomes an action. The call is answered or placed, the slot is taken, and what the patient wanted is written into your systems before anybody opens a screen.",
+    body: "The patient is reached on schedule, the answer is in the record, and the coordinator sees only the ones who need a person.",
   },
 ];
 
@@ -221,11 +221,12 @@ export function ValueProp(): ReactNode {
 
         <div className="absolute inset-x-0 top-0 z-10 px-10 max-[850px]:px-6 pt-28 max-[850px]:pt-24 max-w-[1680px] mx-auto flex items-end justify-between gap-8">
           <h2 className="max-w-[22ch] text-[clamp(1.5rem,2.4vw,2.25rem)] font-medium leading-[1.15] tracking-tight text-foreground/80">
-            Revenue efficiency across every stage of the patient journey.
+            A protocol is a list of contacts. Most of them do not need a
+            person.
           </h2>
           {/* Was `href="#"`. A link that goes nowhere is the tell of a
               template, and this one sits at eye level. It points at the
-              section that actually answers it. */}
+              section that answers it. */}
           <a
             href="#product"
             className="group hidden max-[850px]:hidden min-[851px]:inline-flex items-center gap-2 rounded-md border border-foreground/[0.08] px-4 py-2.5 text-sm font-medium text-foreground/80 hover:text-foreground hover:border-foreground/[0.16] transition-colors whitespace-nowrap shrink-0"

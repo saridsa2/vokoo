@@ -69,8 +69,8 @@ export function FinalCta(): ReactNode {
                 transition={{ duration: 0.8, ease: easeOutExpo, delay: 0.6 }}
               >
                 The number below is a live Sarvathra agent, not a recording.
-                Ring it, book something, ask it for a person — then write to us
-                and we will map your journeys against it.
+                Ring it, ask it for a person, try to make it say something it
+                should not. Then bring us one department&rsquo;s protocol.
               </motion.p>
 
               <motion.a

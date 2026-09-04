@@ -104,7 +104,7 @@ export function Hero(): ReactNode {
               }}
               transition={{ staggerChildren: 0.12 }}
             >
-              {["Patient journeys,", "turned into AI agents."].map((line) => (
+              {["Care pathways", "that make the call."].map((line) => (
                 <span
                   key={line}
                   className="block overflow-hidden pb-[0.05em]"
@@ -132,10 +132,10 @@ export function Hero(): ReactNode {
                 }}
                 transition={{ duration: 0.8, ease: easeOutExpo }}
               >
-                Draw the journey once — the enquiry, the booking, the
-                reminder, the follow-up. Sarvathra runs it as agents across
-                voice, WhatsApp and your front desk, and recovers the
-                consultations that quietly fall through.
+                One chemotherapy cycle is a dozen contacts before it happens.
+                Sarvathra runs them as agents — the pre-cycle labs, the
+                reminder, the symptom check after — so your coordinators spend
+                the day on the patients who need a person.
               </motion.p>
 
               {/* **The demo is the product.** There is no signup to send

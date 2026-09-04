@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 
 export const siteConfig = {
   name: "Sarvathra",
-  shortDescription: "Patient journeys, turned into AI agents.",
+  shortDescription: "Care pathways that make the call.",
   description:
-    "Sarvathra turns patient care journeys into AI agents. Draw the journey once — enquiry, booking, reminder, follow-up — and it runs across voice, WhatsApp and your front desk, in Hindi or English, writing every outcome back to your CRM or HIS.",
+    "Sarvathra turns a hospital's care pathways into AI agents that place the call. Draw the pathway once per speciality — pre-cycle labs, cycle reminders, symptom checks, follow-ups — and it runs across every patient on it, escalating to a nurse rather than advising, and writing every outcome back to your HIS.",
   url: "https://sarvathra.ai",
   ogImage: "/sarvathra-mark@2x.png",
   // No social account is claimed here. The template pointed `creator` at an
@@ -21,11 +21,12 @@ export const siteConfig = {
   email: "hello@sarvathra.ai",
   keywords: [
     "Sarvathra",
-    "patient journey automation",
+    "care pathway automation",
     "AI agents for hospitals",
-    "revenue recovery healthcare",
-    "patient engagement India",
-    "clinic appointment booking",
+    "oncology patient follow-up",
+    "transplant coordination",
+    "care coordinator workload",
+    "patient adherence calls",
     "Hindi voice AI",
     "WhatsApp Business calling",
     "follow-up automation",
