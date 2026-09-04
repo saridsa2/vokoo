@@ -5,11 +5,10 @@ import { Assurance } from "@/components/marketing-site/assurance";
 import { Faq } from "@/components/marketing-site/faq";
 import { FinalCta } from "@/components/marketing-site/final-cta";
 import { Footer } from "@/components/marketing-site/footer";
+import { Fortnight } from "@/components/marketing-site/fortnight";
 import { Hero } from "@/components/marketing-site/hero";
-import { Pillars } from "@/components/marketing-site/pillars";
 import { Product } from "@/components/marketing-site/product";
 import { StructuredData } from "@/components/marketing-site/structured-data";
-import { ValueProp } from "@/components/marketing-site/value-prop";
 import { createMetadata } from "@/lib/marketing/metadata";
 
 export const metadata: Metadata = createMetadata({
@@ -54,10 +53,26 @@ export default function HomePage(): ReactNode {
         <>
             <StructuredData />
             <main id="main-content" className="relative z-10 flex-1 bg-background">
+                {/* **Problem before solution.** `Product` heads "The problem
+                    it solves" and the section above it poses the problem, and
+                    they rendered the other way round — the answer arriving
+                    before the question. That came from mapping a document's
+                    section list onto components without reading the result
+                    back.
+
+                    `ValueProp` is gone rather than reordered. It said the same
+                    three things as `Product` in a different box, and three
+                    consecutive card grids is what makes this page feel like a
+                    deck.
+
+                    `Pillars` is gone for the same reason and one more: it
+                    described three problems in three paragraphs, which is the
+                    least persuasive way to show a gap between what a protocol
+                    asks for and what a ward can do. `Fortnight` is that gap as
+                    one object the reader drags. */}
                 <Hero />
-                <ValueProp />
+                <Fortnight />
                 <Product />
-                <Pillars />
                 <Assurance />
                 <Faq />
                 <FinalCta />

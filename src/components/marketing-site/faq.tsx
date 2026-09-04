@@ -124,14 +124,6 @@ export function Faq(): ReactNode {
             >
 What a hospital asks before it lets us call.
             </RevealHeadline>
-            <motion.p
-              initial={{ opacity: 0, y: 8 }}
-              animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y: 8 }}
-              transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
-              className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
-            >
-              The safety ones first, because they are asked first.
-            </motion.p>
           </div>
         </div>
 
