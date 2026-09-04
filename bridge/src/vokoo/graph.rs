@@ -515,7 +515,22 @@ pub async fn engine_by_id(base: &str, key: &str, engine_id: &str) -> Option<(Eng
     .ok()?;
 
     let row = rows.first()?;
-    let org = row.get("org_id")?.as_str()?.to_owned();
+    // **Empty, not absent, when the engine is the platform's.**
+    //
+    // This was `row.get("org_id")?.as_str()?`, which is `None` on a null — so
+    // the moment engines became platform-owned (0091) every pre-flight would
+    // have returned "no such engine" for an engine that exists and works. The
+    // caller then reports a broken engine with no reason a log can explain,
+    // which is the shape of failure this project keeps writing down.
+    //
+    // An empty org is meaningful rather than missing: `resolve_vendor_secret`
+    // takes null and goes straight to the platform's key, which is what a
+    // platform engine should run on.
+    let org = row
+        .get("org_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     Some((
         Engine {
             id: row.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
@@ -831,7 +846,14 @@ pub async fn vendor_secret(base: &str, key: &str, org_id: &str, vendor: &str) ->
         .post(format!("{base}/rest/v1/rpc/resolve_vendor_secret"))
         .header("apikey", key)
         .header("Authorization", format!("Bearer {key}"))
-        .json(&serde_json::json!({ "p_org_id": org_id, "p_vendor": vendor }))
+        // Null rather than `""` for a platform engine: `p_org_id` is a uuid,
+        // and an empty string fails the cast rather than resolving to the
+        // platform's key. PostgREST would answer 400 and this would look like
+        // a missing credential.
+        .json(&serde_json::json!({
+            "p_org_id": if org_id.is_empty() { Value::Null } else { Value::String(org_id.to_owned()) },
+            "p_vendor": vendor,
+        }))
         .send()
         .await
         .ok()?;

@@ -123,6 +123,20 @@ pub async fn listening(engine: &Engine, ctx: &StageContext<'_>) -> Result<FrameP
             // clinic's doctors, treatments and its own name are known in
             // advance even though a caller's name is not.
             prompt: field(stage, "prompt").map(str::to_owned),
+            // **2500ms, not the 1200 default.**
+            //
+            // The gate holds `VADUserStoppedSpeaking` until the transcript
+            // arrives or this expires. On a real call Sarvam returned
+            // 'Book for Saturday' at +1521ms — past the ceiling — so the stop
+            // was released without it, the transcript arrived orphaned, and
+            // the caller got nineteen seconds of silence and hung up.
+            //
+            // Raising it is close to free: the gate releases the moment a
+            // transcript arrives, so this only ever delays the case where
+            // nothing was said — and an empty turn triggers nothing anyway.
+            stop_release_timeout_ms: number(stage, "stop_release_timeout_ms")
+                .map(|v| v as u64)
+                .unwrap_or(2_500),
             ..SarvamSttConfig::default()
         })
         .with_billing(ctx.billing.clone())
@@ -172,6 +186,12 @@ pub async fn thinking(
         // The registry goes in at construction: the handler exposes no way to
         // replace it afterwards, and a handler built without one is a model
         // that is told about tools it can never actually run.
+        // `.with_billing` is what was missing. Listening and speaking both had
+        // it; thinking did not, so `llm_input_tokens` and `llm_output_tokens`
+        // were zero across every relay call this platform has ever taken — 25
+        // sessions of a working engine recording nothing. The handler carries a
+        // billing guard that even survives a barge-in; it was simply never
+        // given a collector to report to.
         "openai" => ThinkingStage::OpenAI(Box::new(OpenAILLMHandler::with_registry(
             OpenAILLMConfig {
                 api_key: ctx.key_for("openai").await?,
@@ -186,7 +206,7 @@ pub async fn thinking(
                 ..OpenAILLMConfig::default()
             },
             registry,
-        ))),
+        ).with_billing(ctx.billing.clone()))),
 
         // Withdrawn from the catalogue in migration 0045: `SarvamLLMHandler`
         // carries no `FunctionRegistry`, so every tool the agent's skills grant

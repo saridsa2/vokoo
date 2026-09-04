@@ -123,6 +123,22 @@ audiopus        = { version = "0.2",  optional = true }
 # HTTP client (LLM + STT services)
 reqwest         = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"], optional = true }
 
+# Provider-agnostic LLM client. **Vendored** — see docs/vendor-overrides.md.
+#
+# Used off the call path only: `src/vokoo/intelligence.rs` reads finished calls,
+# and the workspace chat will use its streaming. The engines that answer the
+# phone stay on their own handlers — realtime is bidirectional audio over a
+# WebSocket, which this does not do, and the relay LLM step streams into a live
+# pipeline where the carrier ends the call if our socket errors.
+#
+# Vendored rather than pinned because two of its choices are wrong for a schema
+# authored at runtime: `strict: true` was hardcoded on OpenAI tools, and the
+# Anthropic response decoder required fields MiniMax does not send. Both are
+# marked `VOKOO OVERRIDE` in the tree.
+aisdk           = { path = "vendor/aisdk", default-features = false, features = ["language-model-request", "anthropic", "openai"] }
+schemars        = "1"
+
+
 # Error types. Not optional: `PipecatError` in src/error/mod.rs derives
 # thiserror::Error and is compiled in every configuration, so gating this behind
 # a feature makes the crate uncompilable without that feature.

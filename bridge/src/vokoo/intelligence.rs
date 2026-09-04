@@ -6,42 +6,82 @@
 //! every node is four places for it to disagree with itself. Changing what
 //! reads your calls is one row, not one board per flow.
 //!
-//! **A one-shot HTTP call, not the pipeline's LLM handler.** `OpenAILLMHandler`
+//! ## Why `aisdk` here and nowhere else
+//!
+//! This file spoke one provider dialect by hand, which is why it supported
+//! exactly two providers. Every AI feature after it — the workspace chat, the
+//! skill suggestions — needs the same thing, and hand-rolling each is the
+//! "second implementation that can disagree with the first" fault this project
+//! keeps recording against itself.
+//!
+//! The crate is **vendored**, with two overrides, because two of its choices
+//! are wrong for a schema authored at runtime. See `docs/vendor-overrides.md`.
+//!
+//! It is used off the call path only. Realtime is bidirectional audio over a
+//! WebSocket, which the crate does not do; the relay's LLM step streams into a
+//! live pipeline where the carrier ends the call if our socket errors. Nobody
+//! is waiting on this file, so a failure here costs a CRM delivery.
+//!
+//! **A one-shot request, not the pipeline's LLM handler.** `OpenAILLMHandler`
 //! is a `FrameProcessor` built to stream into a live conversation with an
 //! aggregator either side of it. This is one request and one object, with
 //! nobody on the line. Reusing the pipeline handler here would drag the whole
 //! frame machinery off the call path to do something a small client does
 //! better.
 
+use std::sync::{Arc, Mutex};
+
+use aisdk::core::tools::ToolExecute;
+use aisdk::core::{DynamicModel, LanguageModelRequest, Tool};
+use aisdk::providers::{Anthropic, OpenAI};
+use schemars::Schema;
 use serde_json::{json, Value};
 
 use super::graph::{vendor_secret, FlowNode};
 
-/// Where a provider's Anthropic-shaped Messages API lives.
+/// Where a provider that speaks the Anthropic Messages API lives.
 ///
-/// One request shape, not three. The first version of this node asked an
-/// OpenAI-compatible endpoint for `json_object` and parsed whatever came
-/// back — and the first real test returned a reasoning model's `<think>`
-/// block. The obvious next move was to strip tags and balance braces, which is
-/// a parser that is wrong in a new way every time a model changes.
+/// MiniMax serves that API's *shape* under its own host, so it is the Anthropic
+/// provider pointed elsewhere rather than a provider of its own.
 ///
-/// The answer is to let the provider enforce the shape. Anthropic's Messages
-/// API takes `output_config.format` with a JSON schema and returns something
-/// that conforms, so this parses once and never repairs. **MiniMax serves the
-/// same API** at `/anthropic`, so both providers are one code path and one
-/// host lookup.
-///
-/// OpenAI is deliberately absent: its `json_schema` mode refuses a schema whose
-/// objects do not declare `additionalProperties: false`, which would mean
-/// translating a shape somebody wrote into a provider's dialect. Worth doing
-/// when somebody wants OpenAI; not worth doing to have a second way to do this.
-fn host(provider: &str) -> Option<&'static str> {
+/// **The version segment belongs to the base URL.** The default is
+/// `https://api.anthropic.com/v1/` and the client appends only the endpoint
+/// name, so a base without `/v1/` produces a 404 that says nothing about which
+/// half was wrong.
+fn anthropic_base(provider: &str) -> Option<&'static str> {
     match provider {
-        "anthropic" => Some("https://api.anthropic.com/v1"),
-        // The SDK base ends at `/anthropic` and the SDK appends `/v1/messages`.
-        "minimax" => Some("https://api.minimax.io/anthropic/v1"),
+        "anthropic" => Some("https://api.anthropic.com/v1/"),
+        "minimax" => Some("https://api.minimax.io/anthropic/v1/"),
         _ => None,
     }
+}
+
+/// Make the tool call required rather than offered.
+///
+/// The crate sends no `tool_choice` of its own, so this goes through the
+/// request's `body`, which providers merge into the outgoing JSON.
+///
+/// It carries the guarantee this whole file rests on: the arguments come back
+/// as an object *by construction*, so there is no prose to parse and nothing to
+/// repair. Offered rather than required, MiniMax answers in prose about one run
+/// in seven.
+///
+/// **The two dialects disagree, and OpenAI disagrees with itself.** Anthropic
+/// names the tool directly. OpenAI's Responses API takes `{type, name}` flat,
+/// while chat completions takes it nested under `function` — same vendor, two
+/// APIs, each refusing the other's shape with a 400. `CLAUDE.md` records that
+/// trap for OpenAI Realtime's declarations already; this is the second door.
+fn force_tool(provider: &str) -> Value {
+    if anthropic_base(provider).is_some() {
+        json!({ "tool_choice": { "type": "tool", "name": RECORD_TOOL } })
+    } else {
+        json!({ "tool_choice": { "type": "function", "name": RECORD_TOOL } })
+    }
+}
+
+/// Whether this provider can be a reader at all.
+pub fn is_reader(provider: &str) -> bool {
+    anthropic_base(provider).is_some() || provider == "openai"
 }
 
 /// The one tool the model is given, and required to call. Its arguments are the
@@ -102,12 +142,10 @@ pub async fn run(
         }
     };
     let (provider, model) = (provider.as_str(), model.as_str());
-    let Some(host) = host(provider) else {
-        log::warn!(
-            "[intelligence] {provider} does not serve the Messages API — use anthropic or minimax"
-        );
+    if !is_reader(provider) {
+        log::warn!("[intelligence] {provider} cannot read a call — use anthropic, minimax or openai");
         return ("failed".to_string(), None);
-    };
+    }
 
     let secret = match vendor_secret(base, key, org_id, provider).await {
         Some(secret) => secret,
@@ -117,7 +155,7 @@ pub async fn run(
         }
     };
 
-    let extracted = match ask(host, &secret, model, &shape, context, node.config_str("instruction")).await {
+    let extracted = match ask(provider, &secret, model, &shape, context, node.config_str("instruction")).await {
         Ok(value) => value,
         Err(problem) => {
             log::warn!("[intelligence] {provider}/{model}: {problem}");
@@ -132,6 +170,19 @@ pub async fn run(
     if !dry {
         if let Err(problem) = store(base, key, call_id, &extracted).await {
             log::warn!("[intelligence] could not write the reading to the call: {problem}");
+        }
+        // **The reading is a billable service, and nothing recorded it before
+        // this.** Every post-call flow ran a model on the workspace's behalf
+        // and left no trace a bill could be built from — the same gap realtime
+        // still has.
+        //
+        // After `store`, and never fatal. A reading that was taken and not
+        // billed is a loss; a reading lost because the meter was unreachable
+        // is a customer's data gone for an accounting reason.
+        //
+        // Not written on a dry run: a test that bills is not a test.
+        if let Err(problem) = meter(base, key, org_id, call_id, provider, model).await {
+            log::warn!("[intelligence] the reading was not metered: {problem}");
         }
     }
 
@@ -197,7 +248,7 @@ async fn load_shape(base: &str, key: &str, shape_id: &str) -> Result<Value, Stri
 /// construction — there is no text to parse, and therefore nothing to strip,
 /// balance or repair. It also works unchanged against Anthropic proper.
 async fn ask(
-    host: &str,
+    provider: &str,
     secret: &str,
     model: &str,
     shape: &Value,
@@ -236,79 +287,164 @@ async fn ask(
     // A caller says "day after tomorrow" and a model with no clock fills in a
     // year from its training: a real reading of a call taken on 1 September
     // 2026 produced `2024-09-03T16:00:00`. It is the same fault the `today`
-    // tool exists to fix on the live call, arriving again one layer along —
-    // and a date nobody notices is worse in a CRM than in a conversation,
-    // because nobody hears it read back.
+    // tool exists to fix on the live call, arriving one layer along — and a
+    // date nobody notices is worse in a CRM than in a conversation, because
+    // nobody hears it read back.
     let when = context
         .get("started_at")
         .and_then(Value::as_str)
         .map(|at| format!("This call took place on {at}. Any date the caller gives is relative to that.\n\n"))
         .unwrap_or_default();
 
+    let prompt = format!("{when}Call transcript:\n\n{transcript}");
+
+    // The customer's shape, as the tool's input schema.
+    //
+    // A runtime value, not the crate's `schema::<T>()`, which derives one from
+    // a Rust type at compile time. Ours is authored in the console and loaded
+    // from `structured_outputs`, so there is no type to derive from —
+    // `Tool.input_schema` takes a `schemars::Schema` value, which a JSON Schema
+    // converts into directly.
+    let raw = shape
+        .get("schema")
+        .cloned()
+        .unwrap_or_else(|| json!({ "type": "object" }));
+    let input_schema = Schema::try_from(raw)
+        .map_err(|e| format!("the shape is not a usable JSON Schema: {e}"))?;
+
+    // Where the arguments land. The tool's body is the only place they exist:
+    // the crate hands them to `execute` and keeps no copy to read afterwards.
+    let captured: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+
+    let tool = Tool::builder()
+        .name(RECORD_TOOL)
+        .description(
+            shape
+                .get("description")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or("Record what the call says."),
+        )
+        .input_schema(input_schema)
+        .execute(ToolExecute::from_sync(move |_ctx, params: Value| {
+            if let Ok(mut slot) = sink.lock() {
+                *slot = Some(params);
+            }
+            // The model is told the reading is filed. Handing the arguments
+            // back would invite a second, differing attempt.
+            Ok("recorded".to_string())
+        }))
+        .build()
+        .map_err(|e| format!("could not build the recording tool: {e}"))?;
+
+    let forced = force_tool(provider);
+
+    let answered = if let Some(base) = anthropic_base(provider) {
+        let chosen = Anthropic::<DynamicModel>::builder()
+            .model_name(model)
+            .api_key(secret)
+            .base_url(base)
+            .build()
+            .map_err(|e| format!("could not build the {provider} client: {e}"))?;
+
+        LanguageModelRequest::builder()
+            .model(chosen)
+            .system(system)
+            .prompt(prompt)
+            .with_tool(tool)
+            .body(forced)
+            // One round trip. Without this the crate feeds the tool result back
+            // and asks again, paying for a second request to be told something
+            // we already hold.
+            .stop_when(|_| true)
+            .build()
+            .generate_text()
+            .await
+    } else {
+        let chosen = OpenAI::<DynamicModel>::builder()
+            .model_name(model)
+            .api_key(secret)
+            .build()
+            .map_err(|e| format!("could not build the openai client: {e}"))?;
+
+        LanguageModelRequest::builder()
+            .model(chosen)
+            .system(system)
+            .prompt(prompt)
+            .with_tool(tool)
+            .body(forced)
+            .stop_when(|_| true)
+            .build()
+            .generate_text()
+            .await
+    }
+    .map_err(|e| format!("could not reach the model: {e}"))?;
+
+    let taken = captured
+        .lock()
+        .map_err(|_| "the recording tool panicked".to_string())?
+        .take();
+
+    taken.filter(Value::is_object).ok_or_else(|| {
+        // Said in terms of what the provider did, because the fix is a
+        // different provider or model rather than anything on this side.
+        format!(
+            "the model answered without calling the tool it was required to call. It said: {}",
+            // `text()` is an Option: a reply that was only a tool call carries
+            // no prose at all, which is the successful case rather than a fault.
+            answered.text().unwrap_or_default().chars().take(200).collect::<String>()
+        )
+    })
+}
+
+/// Record that a reading happened, so it can be billed.
+///
+/// Its own ledger rather than `billing_sessions`: that pipeline is keyed on a
+/// live session and this runs after the call has ended and been checkpointed,
+/// so it would mean reopening a closed row for something that is not part of
+/// the audio path at all.
+///
+/// One row per reading, quantity 1. The provider and model are recorded and
+/// **not** used for pricing — the price is the platform's and does not move
+/// when we change model — but without them there is no way to work out the
+/// margin later.
+async fn meter(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    call_id: &str,
+    provider: &str,
+    model: &str,
+) -> Result<(), String> {
     let response = http()?
-        .post(format!("{host}/messages"))
-        // Both spellings. Anthropic documents `x-api-key`; MiniMax's
-        // Anthropic-compatible endpoint is documented with both it and a bearer
-        // token, and sending both costs nothing.
-        .header("x-api-key", secret)
-        .header("Authorization", format!("Bearer {secret}"))
-        .header("anthropic-version", "2023-06-01")
+        .post(format!("{base}/rest/v1/platform_service_usage"))
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
+        // Nothing is read back, and asking for it would be a second thing that
+        // can fail after the row is already written.
+        .header("Prefer", "return=minimal")
         .json(&json!({
+            "org_id": org_id,
+            "service_id": "intelligence.read",
+            "call_id": call_id,
+            "quantity": 1,
+            "provider": provider,
             "model": model,
-            "max_tokens": 2048,
-            "system": system,
-            "messages": [{ "role": "user", "content": format!("{when}Call transcript:\n\n{transcript}") }],
-            "tools": [{
-                "name": RECORD_TOOL,
-                "description": shape
-                    .get("description")
-                    .and_then(Value::as_str)
-                    .filter(|text| !text.trim().is_empty())
-                    .unwrap_or("Record what the call says."),
-                "input_schema": shape.get("schema").cloned().unwrap_or(json!({ "type": "object" })),
-            }],
-            // Required, not offered. Without this the model may answer in prose
-            // and the guarantee is gone.
-            "tool_choice": { "type": "tool", "name": RECORD_TOOL },
         }))
         .send()
         .await
-        .map_err(|e| format!("could not reach the model: {e}"))?;
+        .map_err(|e| format!("could not reach the ledger: {e}"))?;
 
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(format!("answered {status}: {}", body.chars().take(400).collect::<String>()));
+    if response.status().is_success() {
+        return Ok(());
     }
-
-    let parsed: Value =
-        serde_json::from_str(&body).map_err(|e| format!("reply was not JSON: {e}"))?;
-
-    // The arguments of the tool call, which are an object already. Nothing here
-    // parses text, which is the point of asking this way.
-    parsed["content"]
-        .as_array()
-        .and_then(|blocks| {
-            blocks
-                .iter()
-                .find(|block| block["type"] == "tool_use" && block["name"] == RECORD_TOOL)
-        })
-        .map(|block| block["input"].clone())
-        .filter(|input| input.is_object())
-        .ok_or_else(|| {
-            // Said in terms of what the provider did, because the fix is a
-            // different provider or model rather than anything on this side.
-            let said = parsed["content"]
-                .as_array()
-                .and_then(|blocks| blocks.first())
-                .and_then(|block| block["text"].as_str())
-                .unwrap_or("");
-            format!(
-                "the model answered without calling the tool it was required to call. It said: {}",
-                said.chars().take(200).collect::<String>()
-            )
-        })
+    Err(format!(
+        "the ledger answered {}: {}",
+        response.status(),
+        response.text().await.unwrap_or_default().chars().take(200).collect::<String>()
+    ))
 }
 
 /// Put the reading on the call, where a reader can see what was sent.
