@@ -310,6 +310,33 @@ const RESOURCES: &[Resource] = &[
         order_by: "created_at",
         select: "id,org_id,user_id,membership_id,extension,endpoint,display_name,status,created_at,updated_at",
     },
+    // The patient model. See migration 0110.
+    //
+    // A patient is a person, not an enrolment: somebody on a GLP-1 path can
+    // also be postpartum, so identity is its own table and `cohort_patients`
+    // is the join that carries the date.
+    Resource { route: "patients", table: "patients", order_by: "updated_at", select: "*" },
+    // A cohort is defined by exactly one care path, so the list carries the
+    // flow's name rather than its id. Reading a screen full of UUIDs to find
+    // out which path a cohort runs is the same fault the phone-number list had
+    // when it said "Unassigned" for a number that was answering calls.
+    // `packs` names its display column `label`, not `name` — assuming otherwise
+    // failed the whole list with 42703 and returned nothing, which reads on
+    // screen as "no cohorts yet".
+    Resource {
+        route: "cohorts",
+        table: "cohorts",
+        order_by: "updated_at",
+        select: "*,flows(id,name),packs(id,slug,label)",
+    },
+    // The enrolment, read from the patient's side or the cohort's. Both ends
+    // are embedded because a row on its own is two UUIDs and a date.
+    Resource {
+        route: "enrolments",
+        table: "cohort_patients",
+        order_by: "created_at",
+        select: "*,patients(id,full_name,phone,language,mrn),cohorts(id,name,org_id,flow_id)",
+    },
 ];
 
 fn resource_for(route: &str) -> Result<Resource, ApiError> {
@@ -468,6 +495,25 @@ fn denied_or_upstream<E: std::fmt::Display>(error: E) -> ApiError {
     ApiError::upstream(text)
 }
 
+/// Translate any write failure into the right status.
+///
+/// `publish_error` below parses the PostgREST body; this reaches the same codes
+/// when the body arrives wrapped, which is how the generic resource routes see
+/// it. supabase-lib-rs stringifies the failure as `Database error: {json}`, so
+/// there is no top-level `code` to read and the JSON has to be found inside the
+/// sentence.
+///
+/// Without this, posting a cohort with no `flow_id` came back as **502** — a
+/// bad gateway, which tells a client the server is broken and to retry, when the
+/// same request will fail forever. The caller left out a required field.
+fn write_error(message: String) -> ApiError {
+    let body = match (message.find('{'), message.rfind('}')) {
+        (Some(start), Some(end)) if end > start => message[start..=end].to_string(),
+        _ => return ApiError::upstream(message),
+    };
+    publish_error(body)
+}
+
 /// Translate a failure from `publish_agent` into the right status.
 ///
 /// A publish that is refused because the configuration is invalid, or because
@@ -511,6 +557,23 @@ fn publish_error(body: String) -> ApiError {
         // security rather than by our checks. It means the same thing to the
         // caller even though it did not come from the same place.
         "42501" => ApiError::Forbidden(message),
+        // The caller sent something the schema refuses, which is a bad request
+        // and not a bad gateway.
+        //
+        // These fell through to `Upstream` and came back as **502**, which tells
+        // a client the server is broken and to retry — when in fact the same
+        // request will fail forever. Posting a cohort with no `flow_id` returned
+        // a bad gateway rather than "you left out the care path".
+        //
+        //   23502 not-null violation      — a required column was omitted
+        //   23503 foreign key violation   — it names a row that does not exist
+        //   23505 unique violation        — that row is already there
+        //   23514 check violation         — the value is outside what is allowed
+        //   22P02 invalid text            — a malformed uuid, date or enum
+        //   PGRST204                      — a column PostgREST has never heard of
+        "23502" | "23503" | "23505" | "23514" | "22P02" | "PGRST204" => {
+            ApiError::BadRequest(message)
+        }
         _ => ApiError::Upstream(message),
     }
 }
@@ -3768,7 +3831,7 @@ async fn create_resource(
         .returning(resource.select)
         .execute::<Value>()
         .await
-        .map_err(|error| ApiError::upstream(error.to_string()))?;
+        .map_err(|error| write_error(error.to_string()))?;
     let row = rows.pop().ok_or_else(|| ApiError::upstream("Supabase returned no inserted row"))?;
     Ok((StatusCode::CREATED, Json(ApiResponse { data: row, meta: json!({ "resource": route }) })))
 }
@@ -3793,7 +3856,7 @@ async fn update_resource(
         .returning(resource.select)
         .execute::<Value>()
         .await
-        .map_err(|error| ApiError::upstream(error.to_string()))?;
+        .map_err(|error| write_error(error.to_string()))?;
     let row = rows.pop().ok_or_else(|| ApiError::NotFound(format!("{} '{}' was not found", route, id)))?;
     Ok(Json(ApiResponse { data: row, meta: json!({ "resource": route }) }))
 }
@@ -3814,7 +3877,7 @@ async fn delete_resource(
         .returning("id")
         .execute::<Value>()
         .await
-        .map_err(|error| ApiError::upstream(error.to_string()))?;
+        .map_err(|error| write_error(error.to_string()))?;
     if rows.is_empty() {
         return Err(ApiError::NotFound(format!(
             "{} '{}' was not found",
