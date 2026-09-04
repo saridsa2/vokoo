@@ -32,9 +32,9 @@ interface Tile {
 const TILES: Tile[] = [
   {
     index: "01.",
-    title: "You draw it",
+    title: "Transplant",
 
-    body: "One pathway per speciality, because oncology and transplant do not ask a patient the same questions. Change a step and the next call takes it — no ticket, no release.",
+    body: "Stay close to a patient between visits — the level that is due, the dose that was missed, the question nobody was there to answer.",
     icon: Workflow,
     tone: "bg-accent text-accent-foreground",
 
@@ -43,9 +43,9 @@ const TILES: Tile[] = [
   },
   {
     index: "02.",
-    title: "It runs",
+    title: "Oncology",
 
-    body: "Outbound at the scale a protocol demands and inbound when the patient rings back, on voice or WhatsApp, in the language they answer in.",
+    body: "Check how somebody is doing through a course of treatment, in the weeks at home where nobody is watching and everything is decided.",
     icon: Cube,
 
     tone: "bg-foreground/[0.08] text-foreground",
@@ -54,9 +54,9 @@ const TILES: Tile[] = [
   },
   {
     index: "03.",
-    title: "It writes back",
+    title: "Surgery",
 
-    body: "Into the fields you defined, against the patient record in your HIS. Nothing is left as a recording for a coordinator to play back later.",
+    body: "Prepare a patient before admission and follow them after discharge, without a coordinator working through a list by hand.",
     icon: Sparkles,
 
     tone: "bg-foreground/[0.04] text-foreground",
@@ -87,7 +87,7 @@ export function Product(): ReactNode {
               transition={{ duration: 0.6, ease: easeOutExpo }}
               className="inline-flex items-center rounded-md border border-foreground/[0.08] px-3.5 py-1.5 font-mono text-xs uppercase tracking-widest text-foreground/70"
             >
-              What it does
+              Built around your standard of care
             </motion.span>
           </div>
 
@@ -98,7 +98,7 @@ export function Product(): ReactNode {
               mutedFrom={9}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-A pathway is a graph, not a call list.
+Care does not end when the patient leaves.
             </RevealHeadline>
 
             <motion.p
@@ -107,12 +107,14 @@ A pathway is a graph, not a call list.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-8 max-w-[60ch] text-balance text-base max-[850px]:text-sm leading-relaxed text-foreground/65"
             >
-              Who is contacted and when, what is asked, what is checked
-              against the record, what is written back, and the point where a
-              nurse takes over. Every one of those is a node you place. The
-              drawing is not a description of the pathway — it is the thing
-              that runs it, across every patient on it, on the day the
-              protocol says.
+              Your hospital already knows what good care asks for. A call
+              after discharge. A check that the medicine was started.
+              Preparation before a procedure. A regular question about
+              symptoms. Sarvathra holds each of those as a real conversation,
+              with every patient, at the right point in their care — and when
+              a patient reports something clinical, a nurse joins the live
+              call. It does not advise. It does not triage. It does not
+              reassure.
             </motion.p>
 
             <motion.div

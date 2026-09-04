@@ -12,18 +12,28 @@ interface Step {
   body: string;
 }
 
+// **Not three claims — one call, in the order it happened.**
+//
+// Every version of this section before it argued: a problem, an approach, an
+// outcome. Three assertions a reader either believes or does not. This is a
+// minute of a real call instead, and it makes the case without making a claim:
+// the question is routine, the answer is the thing no message could have
+// collected, and a nurse is on the line sixty seconds later.
+//
+// It also draws the safety boundary by showing it. Sarvathra asks and connects;
+// it never tells Mrs Rao what her fever means.
 const STEPS: Step[] = [
   {
-    eyebrow: "The problem",
-    body: "A cycle slips because nobody chased the labs. A transplant patient misses a level. Your coordinators were on the phone all day.",
+    eyebrow: "Sarvathra asks",
+    body: "Since you went home, have you had any fever or chills?",
   },
   {
-    eyebrow: "The approach",
-    body: "You draw the pathway once, per speciality. Every contact in it becomes an agent that places the call.",
+    eyebrow: "Mrs Rao answers, in Hindi",
+    body: "Yes. It started last night.",
   },
   {
-    eyebrow: "The outcome",
-    body: "The patient is reached on schedule, the answer is in the record, and the coordinator sees only the ones who need a person.",
+    eyebrow: "9.43 — a nurse joins the call",
+    body: "She is still on the line. What she said is already in her record.",
   },
 ];
 
@@ -221,8 +231,7 @@ export function ValueProp(): ReactNode {
 
         <div className="absolute inset-x-0 top-0 z-10 px-10 max-[850px]:px-6 pt-28 max-[850px]:pt-24 max-w-[1680px] mx-auto flex items-end justify-between gap-8">
           <h2 className="max-w-[22ch] text-[clamp(1.5rem,2.4vw,2.25rem)] font-medium leading-[1.15] tracking-tight text-foreground/80">
-            A protocol is a list of contacts. Most of them do not need a
-            person.
+            One call, at 9.42 in the morning.
           </h2>
           {/* Was `href="#"`. A link that goes nowhere is the tell of a
               template, and this one sits at eye level. It points at the

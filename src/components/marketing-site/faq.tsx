@@ -122,7 +122,7 @@ export function Faq(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-The questions that decide a procurement.
+What a hospital asks before it lets us call.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -130,8 +130,7 @@ The questions that decide a procurement.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
             >
-              Answered here rather than in a call, including the ones about
-              where patient data goes.
+              The safety ones first, because they are asked first.
             </motion.p>
           </div>
         </div>

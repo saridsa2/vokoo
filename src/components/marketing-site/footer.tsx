@@ -74,8 +74,9 @@ export function Footer(): ReactNode {
                         <span className="text-base font-bold tracking-[0.09em]">SARVATHRA</span>
                     </Link>
                     <p className="mt-4 max-w-sm leading-relaxed text-foreground/55">
-                        Sarvathra turns a hospital&rsquo;s care pathways into AI agents that
-                        place the call — and hand to a nurse the moment they should.
+                        सर्वत्र — everywhere. Sarvathra speaks with your patients wherever
+                        they are, listens to what they say, and brings a nurse in when it
+                        matters.
                     </p>
                 </div>
 

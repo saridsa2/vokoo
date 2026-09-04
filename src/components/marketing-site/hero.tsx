@@ -104,7 +104,7 @@ export function Hero(): ReactNode {
               }}
               transition={{ staggerChildren: 0.12 }}
             >
-              {["Care pathways", "that make the call."].map((line) => (
+              {["Your care, wherever", "your patient is."].map((line) => (
                 <span
                   key={line}
                   className="block overflow-hidden pb-[0.05em]"
@@ -132,10 +132,10 @@ export function Hero(): ReactNode {
                 }}
                 transition={{ duration: 0.8, ease: easeOutExpo }}
               >
-                One chemotherapy cycle is a dozen contacts before it happens.
-                Sarvathra runs them as agents — the pre-cycle labs, the
-                reminder, the symptom check after — so your coordinators spend
-                the day on the patients who need a person.
+                Sarvathra stays present after discharge, before a procedure,
+                and through a long course of treatment. It speaks with every
+                patient on the protocol, in their own language. It listens, and
+                what they say decides what happens next.
               </motion.p>
 
               {/* **The demo is the product.** There is no signup to send

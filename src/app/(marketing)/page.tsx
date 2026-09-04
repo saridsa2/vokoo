@@ -16,7 +16,7 @@ export const metadata: Metadata = createMetadata({
     // Said explicitly rather than left to the fallback: this is the one page
     // whose title is a search result, and "Sarvathra" alone tells somebody
     // scanning a page of results nothing about what it is.
-    title: "Sarvathra — Care pathways that make the call",
+    title: "Sarvathra — Your care, wherever your patient is",
     description:
         "Sarvathra turns a hospital's care pathways into AI agents that place the call — pre-cycle labs, cycle reminders, symptom checks, follow-ups — across every patient on the protocol, escalating to a nurse rather than advising, and writing every outcome back to your HIS.",
     path: "/",

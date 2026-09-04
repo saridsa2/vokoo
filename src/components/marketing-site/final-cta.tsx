@@ -8,7 +8,7 @@ import { ShaderCanvas } from "@/components/marketing-site/shader-canvas";
 const easeOutExpo = [0.33, 1, 0.68, 1] as const;
 
 // Short lines: the heading is `max-w-[16ch]` and clamps up to 5.5rem.
-const HEADLINE_LINES = ["Don't take", "our word for it."] as const;
+const HEADLINE_LINES = ["Ring it", "and find out."] as const;
 
 export function FinalCta(): ReactNode {
   const sectionRef = useRef<HTMLElement>(null);
@@ -68,9 +68,9 @@ export function FinalCta(): ReactNode {
                 animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y: 16 }}
                 transition={{ duration: 0.8, ease: easeOutExpo, delay: 0.6 }}
               >
-                The number below is a live Sarvathra agent, not a recording.
-                Ring it, ask it for a person, try to make it say something it
-                should not. Then bring us one department&rsquo;s protocol.
+                That number is a live Sarvathra call, not a recording. Ask it
+                for a person. Tell it something it ought to escalate. Then
+                bring us one protocol from one department.
               </motion.p>
 
               <motion.a

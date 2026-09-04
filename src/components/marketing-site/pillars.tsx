@@ -23,21 +23,21 @@ interface Pillar {
 
 const PILLARS: Pillar[] = [
   {
-    tag: "01 — the voice",
-    title: "It sounds like a person",
-    body: "Sub-quarter-second to first word, so there is no pause where a patient wonders whether anybody is there. Trained on Indian speech, so it gets the name right the first time.",
+    tag: "01 — the question",
+    title: "Asked, not sent",
+    body: "An opened link only proves somebody opened it. A form collects what the form knew to ask. A question asked out loud gets an answer neither of them can reach.",
     icon: Compass,
   },
   {
-    tag: "02 — escalation",
-    title: "It knows what it must not handle",
-    body: "A symptom is not a question an agent answers. It is carried to a nurse, with what the patient said, in the same call. Ask for a person and you get one.",
+    tag: "02 — the answer",
+    title: "Heard, not counted",
+    body: "What the patient says decides where the conversation goes next — and reaches a nurse, in the same call, when it should reach one.",
     icon: LayerGroup,
   },
   {
-    tag: "03 — at scale",
-    title: "One pathway, every patient on it",
-    body: "Drawn once and run across a whole cohort — the cycle reminder, the pre-op instruction, the adherence check — without a coordinator dialling any of them.",
+    tag: "03 — the record",
+    title: "Written down, not replayed",
+    body: "What was said goes into your records while it is still useful. The next person caring for her does not start with nothing.",
     icon: Bolt,
   },
 ];
@@ -63,7 +63,7 @@ export function Pillars(): ReactNode {
 
               className="inline-flex items-center rounded-md border border-foreground/[0.08] px-3.5 py-1.5 font-mono text-xs uppercase tracking-widest text-foreground/70"
             >
-              Why it works
+              The difference
             </motion.span>
           </div>
 
@@ -73,7 +73,7 @@ export function Pillars(): ReactNode {
               delay={0.05}
               className="text-balance text-[clamp(2rem,4.2vw,4rem)] font-medium leading-[0.85] tracking-tight"
             >
-Built for a call a patient on treatment will answer.
+A dashboard can tell you a message was opened.
             </RevealHeadline>
             <motion.p
               initial={{ opacity: 0, y: 8 }}
@@ -81,8 +81,7 @@ Built for a call a patient on treatment will answer.
               transition={{ duration: 0.7, ease: easeOutExpo, delay: 0.18 }}
               className="mt-6 max-w-[60ch] text-balance text-xl max-[850px]:text-lg font-light leading-snug text-foreground/60"
             >
-              No scrollback, no spinner, and no second chance at a sentence
-              somebody three days past a cycle did not catch.
+              Sarvathra can tell your team what the patient said.
             </motion.p>
           </div>
         </div>
