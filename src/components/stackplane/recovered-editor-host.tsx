@@ -1782,10 +1782,10 @@ function BoardNode({
               ? `${outcome.label} outcome, connected`
               : shapeIsFixed
                 ? `${outcome.label}, handed to the caller`
-                : `${outcome.label} outcome, nothing connected — the ${family === "post_call" ? "flow" : "call"} ends here`}
+                : `${outcome.label} outcome, nothing connected — the ${family === "integration" ? "flow" : "call"} ends here`}
             title={wired || shapeIsFixed
               ? undefined
-              : `Nothing is wired to “${outcome.label}”, so the ${family === "post_call" ? "flow" : "call"} ends here.`}
+              : `Nothing is wired to “${outcome.label}”, so the ${family === "integration" ? "flow" : "call"} ends here.`}
             onClick={(event) => {
               event.stopPropagation()
               // Finishing an edge accepts the whole row: the target is the node,
@@ -1818,7 +1818,7 @@ function BoardNode({
                 post-call flow the call is already over — saying "ends the
                 call" there describes something that happened before this node
                 ran. */}
-            <small>{wired ? outcome.id : shapeIsFixed ? "to the caller" : family === "post_call" ? "ends the flow" : "ends the call"}</small>
+            <small>{wired ? outcome.id : shapeIsFixed ? "to the caller" : family === "integration" ? "ends the flow" : "ends the call"}</small>
           </button>
           )
         })}

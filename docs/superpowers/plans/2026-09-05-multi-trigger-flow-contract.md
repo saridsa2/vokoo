@@ -188,26 +188,26 @@ git commit -m "feat: validate multi-trigger flow versions"
 - Consumes: `Flow.family` and `normalizeFlowGraph`.
 - Produces: diagram context `{ family, variables, version: 3, legacyStart? }`.
 
-- [ ] **Step 1: Write failing round-trip test**
+- [x] **Step 1: Write failing round-trip test**
 
 Assert `flow -> diagram -> graph` preserves both trigger node IDs,
 implementations, keys, and transitions and returns version 3. Move any
 alias-dependent pure seam into `flow-graph.ts` if Node cannot resolve `@/`.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
 Expected: current first-trigger/start behavior fails the assertion.
 
-- [ ] **Step 3: Implement conversion and family plumbing**
+- [x] **Step 3: Implement conversion and family plumbing**
 
 Replace singleton-trigger materialization with `normalizeFlowGraph`. Carry family
 in typed diagram context. Expand `NodeFamily` to the stored families and keep
 `engine` as an editor-only context. The composer must retain the loaded family
 and save graph v3 without changing node IDs or transitions.
 
-- [ ] **Step 4: Run tests and typecheck**
+- [x] **Step 4: Run tests and typecheck**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
@@ -215,7 +215,7 @@ Run: `npx tsc --noEmit`
 
 Expected: both exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/flow-diagram.ts src/lib/architecture-model.ts src/components/application/screens/flow-composer-screen.tsx src/utils/flow-graph.test.ts
