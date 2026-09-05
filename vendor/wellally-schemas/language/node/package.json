@@ -1,0 +1,37 @@
+{
+  "name": "@wellally/health-models",
+  "version": "0.1.0",
+  "description": "Health data models for WellAlly platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "health",
+    "healthcare",
+    "fhir",
+    "hl7",
+    "medical",
+    "ehr",
+    "typescript"
+  ],
+  "author": "Satya Suman Saridae",
+  "license": "MIT",
+  "homepage": "https://www.wellally.tech/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saridsa2/vokoo/tree/main/vendor/wellally-schemas"
+  },
+  "bugs": {
+    "url": "https://github.com/saridsa2/vokoo/issues"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}

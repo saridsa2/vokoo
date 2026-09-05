@@ -1,0 +1,52 @@
+{
+  "id": "lab-2024-005",
+  "patientId": "person-001",
+  "issuedAt": "2024-12-07T10:00:00Z",
+  "facility": { "id": "lab-02", "name": "WellAll Endocrine Lab" },
+  "specimen": {
+    "type": { "system": "http://terminology.hl7.org/CodeSystem/v2-0487", "code": "SER", "display": "Serum" },
+    "collectedAt": "2024-12-07T09:30:00Z"
+  },
+  "results": [
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "20448-7", "display": "Insulin [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 12, "unit": "uIU/mL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "2143-6", "display": "Cortisol [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 14, "unit": "ug/dL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "2842-3", "display": "Prolactin [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 8.5, "unit": "ng/mL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "2986-8", "display": "Testosterone [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 520, "unit": "ng/dL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "2243-4", "display": "Estradiol (E2) [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 45, "unit": "pg/mL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "10501-5", "display": "Luteinizing hormone (LH) [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 4.2, "unit": "mIU/mL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "15067-2", "display": "Follicle stimulating hormone (FSH) [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 6.8, "unit": "mIU/mL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "62292-8", "display": "25-Hydroxyvitamin D3 [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 32, "unit": "ng/mL" },
+      "interpretation": "N"
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "med-2024-003",
+  "patientId": "person-001",
+  "medication": { "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "314076", "display": "lisinopril 10 MG Oral Tablet" },
+  "form": { "system": "http://snomed.info/sct", "code": "385055001", "display": "Tablet" },
+  "route": { "system": "http://snomed.info/sct", "code": "26643006", "display": "Oral route" },
+  "dosage": { "value": 10, "unit": "mg" },
+  "frequency": "QD",
+  "durationDays": 90,
+  "startDate": "2024-10-01",
+  "endDate": "2024-12-30",
+  "indication": {
+    "coding": [ { "system": "http://snomed.info/sct", "code": "38341003", "display": "Hypertensive disorder" } ],
+    "text": "高血压"
+  },
+  "instructions": "早晨饭后口服"
+}

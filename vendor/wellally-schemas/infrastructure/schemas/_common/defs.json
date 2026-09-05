@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellall.health/schemas/common/v0.1.0",
+  "title": "WellAll Common Definitions",
+  "description": "共享定义与枚举：编码体系、量值、单位、常用影像/检验/给药枚举。",
+  "$defs": {
+    "UCUMUnitStrict": {
+      "type": "string",
+      "enum": [
+        "mg",
+        "g",
+        "g/L",
+        "g/dL",
+        "mg/dL",
+        "mg/L",
+        "mmol/L",
+        "nmol/L",
+        "umol/L",
+        "pmol/L",
+        "ng/mL",
+        "ng/dL",
+        "ng/L",
+        "ug/dL",
+        "pg/mL",
+        "%",
+        "U/L",
+        "U/mL",
+        "IU/L",
+        "IU/mL",
+        "kU/L",
+        "k[IU]/L",
+        "mU/L",
+        "mIU/L",
+        "m[IU]/L",
+        "mIU/mL",
+        "m[IU]/mL",
+        "uIU/mL",
+        "10*3/uL",
+        "10*6/uL",
+        "10*9/L",
+        "10*12/L",
+        "cells/uL",
+        "mEq/L",
+        "mmHg",
+        "mm/h",
+        "mL",
+        "uL",
+        "L",
+        "kat/L",
+        "mmol/mol",
+        "{titer}"
+      ],
+      "description": "常用 UCUM 单位子集（严格模式），覆盖血常规/生化/免疫/肿瘤标志物等场景。"
+    },
+    "UCUMUnitPattern": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9%\\[\\]{}().*/^+-]+$",
+      "description": "UCUM 样式校验（允许常见 UCUM 字符集，避免空格）。"
+    },
+    "UCUMUnit": {
+      "anyOf": [
+        { "$ref": "#/$defs/UCUMUnitStrict" },
+        { "$ref": "#/$defs/UCUMUnitPattern" }
+      ],
+      "description": "UCUM 单位（默认宽松模式）。如需严格控制，使用 UCUMUnitStrict。"
+    },
+    "Coding": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri" },
+        "code": { "type": "string" },
+        "display": { "type": "string" }
+      }
+    },
+    "CodeableConcept": {
+      "type": "object",
+      "required": ["coding"],
+      "properties": {
+        "coding": { "type": "array", "items": { "$ref": "#/$defs/Coding" }, "minItems": 1 },
+        "text": { "type": "string" }
+      }
+    },
+    "Quantity": {
+      "type": "object",
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "$ref": "#/$defs/UCUMUnit" }
+      }
+    },
+    "ReferenceRange": {
+      "type": "object",
+      "properties": {
+        "low": { "$ref": "#/$defs/Quantity" },
+        "high": { "$ref": "#/$defs/Quantity" },
+        "text": { "type": "string" }
+      }
+    },
+    "Identifier": {
+      "type": "object",
+      "required": ["system", "value"],
+      "properties": {
+        "system": { "type": "string", "format": "uri" },
+        "value": { "type": "string" },
+        "type": { "$ref": "#/$defs/CodeableConcept" },
+        "period": { "$ref": "#/$defs/Period" }
+      }
+    },
+    "HumanName": {
+      "type": "object",
+      "required": ["family", "given"],
+      "properties": {
+        "use": { "type": "string", "enum": ["official", "usual", "nickname", "anonymous", "old", "maiden"] },
+        "family": { "type": "string" },
+        "given": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "prefix": { "type": "array", "items": { "type": "string" } },
+        "suffix": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ContactPoint": {
+      "type": "object",
+      "required": ["system", "value"],
+      "properties": {
+        "system": { "type": "string", "enum": ["phone", "email"] },
+        "value": { "type": "string" },
+        "use": { "type": "string", "enum": ["home", "work", "mobile"] }
+      }
+    },
+    "Address": {
+      "type": "object",
+      "properties": {
+        "line": { "type": "array", "items": { "type": "string" } },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "postalCode": { "type": "string" },
+        "country": { "type": "string" }
+      }
+    },
+    "Period": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "string", "format": "date" },
+        "end": { "type": "string", "format": "date" }
+      }
+    },
+    "Modality": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri" },
+        "code": {
+          "type": "string",
+          "enum": ["CT", "MR", "US", "XR", "PT"],
+          "description": "常用影像模式：CT/MR/US/XR/PET。"
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "Route": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri" },
+        "code": {
+          "anyOf": [
+            { "type": "string", "enum": ["PO", "IV", "IM", "SC", "INH", "SL", "PR"], "description": "常用缩写。" },
+            { "type": "string", "enum": ["26643006", "47625008", "78421000", "34206005", "447694001", "37839007", "37161004"], "description": "SNOMED CT 给药途径代码：口服/静脉/肌注/皮下/吸入/舌下/直肠。" },
+            { "type": "string", "pattern": "^[0-9]{3,18}$" }
+          ]
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "CommonLabTest": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri", "const": "http://loinc.org" },
+        "code": {
+          "type": "string",
+          "enum": [
+            "718-7",
+            "4548-4",
+            "2339-0",
+            "2345-7",
+            "2093-3",
+            "2085-9",
+            "13457-7",
+            "18262-6",
+            "2571-8",
+            "6690-2",
+            "777-3",
+            "2160-0",
+            "2823-3",
+            "2951-2",
+            "15074-8",
+            "3094-0",
+            "1742-6",
+            "1920-8",
+            "1751-7",
+            "6768-6",
+            "1975-2",
+            "3016-3",
+            "3024-7",
+            "3051-0",
+            "8099-4",
+            "8098-6",
+            "1988-5",
+            "30522-7",
+            "4537-7",
+            "19113-0",
+            "20448-7",
+            "2143-6",
+            "2842-3",
+            "2986-8",
+            "2243-4",
+            "10501-5",
+            "15067-2",
+            "62292-8",
+            "2857-1",
+            "2039-6",
+            "1834-1",
+            "10334-1",
+            "24108-3",
+            "6875-9",
+            "40655-3",
+            "4485-9",
+            "4498-2",
+            "11013-0",
+            "14611-8",
+            "49311-4",
+            "53984-1",
+            "53983-3",
+            "4532-8",
+            "21198-7",
+            "48138-2",
+            "25390-6",
+            "1952-1",
+            "83078-6",
+            "32677-7",
+            "6457-6",
+            "81716-3",
+            "74520-8",
+            "74521-6",
+            "74522-4",
+            "20401-6",
+            "53991-6",
+            "53002-2",
+            "29966-9"
+          ],
+          "description": "常用 LOINC 子集：CBC(血红蛋白/WBC/血小板)、葡萄糖(质量/摩尔)、血脂(总/HDL/LDL/甘油三酯)、肝功能(ALT/AST/总胆红素/白蛋白/ALP)、肾功能(BUN/肌酐)、电解质(钠/钾)、甲状腺(TSH/FT4/FT3/TPOAb/TgAb)、炎症免疫(CRP/hsCRP/ESR/IgE/ANA(滴度/阳性阴性/模式描述)/补体C3C4、抗 dsDNA、CH50)、内分泌(胰岛素/皮质醇/催乳素/睾酮/雌二醇/LH/FSH/维生素D)、肿瘤标志物(PSA/CEA/AFP/CA125/CA19-9/CA15-3/β-hCG/NSE/CYFRA21-1/β2-微球蛋白)。"
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "CommonBodySite": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri", "const": "http://snomed.info/sct" },
+        "code": {
+          "type": "string",
+          "enum": ["51185008", "113257007", "10200004", "64033007", "12738006"],
+          "description": "常见部位：胸部(胸廓/Thorax)、心血管系统、肝脏、肾脏、大脑。"
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "CommonMedication": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri", "const": "http://www.nlm.nih.gov/research/umls/rxnorm" },
+        "code": {
+          "type": "string",
+          "enum": ["617310", "860975", "314076", "308191"],
+          "description": "常用 RxNorm：atorvastatin 20mg(617310)、metformin 500mg 缓释(860975)、lisinopril 10mg(314076)、amoxicillin 500mg 胶囊(308191)。"
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "AnaPatternSnomed": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri", "const": "http://snomed.info/sct" },
+        "code": {
+          "type": "string",
+          "enum": ["444138006", "443526003"],
+          "description": "SNOMED CT ANA pattern：speckled (444138006)、homogeneous (443526003)。其他模式可用 ICAP/LOINC 结果编码表示。"
+        },
+        "display": { "type": "string" }
+      }
+    },
+    "SpecimenType": {
+      "type": "object",
+      "required": ["system", "code"],
+      "properties": {
+        "system": { "type": "string", "format": "uri" },
+        "code": {
+          "type": "string",
+          "enum": ["BLD", "SER", "PLAS", "UR"],
+          "description": "常见标本：全血、血清、血浆、尿液。"
+        },
+        "display": { "type": "string" }
+      }
+    }
+  }
+}

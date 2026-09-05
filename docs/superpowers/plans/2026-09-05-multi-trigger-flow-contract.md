@@ -276,9 +276,10 @@ git commit -m "feat: edit multiple flow triggers"
 ### Task 5: Rust entry-point selection
 
 **Files:**
-- Modify: `bridge/Cargo.toml`
 - Modify: `bridge/src/vokoo/graph.rs`
 - Modify: `bridge/src/vokoo/runner.rs`
+- Modify: `bridge/src/vokoo/mod.rs`
+- Modify: `bridge/src/vokoo/postcall.rs`
 - Modify: `bridge/src/bin/flow_check.rs`
 - Modify: `bridge/src/bin/vokoo_bridge.rs`
 - Modify: `bridge/src/vokoo/escalate.rs`
@@ -287,28 +288,33 @@ git commit -m "feat: edit multiple flow triggers"
 - Produces: `EntryPoint::new(event)`, `Flow::entry_node`, and `FlowRunner::for_entry`.
 - Consumes: `trigger.<event>` plus default-key semantics.
 
-- [ ] **Step 1: Write failing Rust tests**
+- [x] **Step 1: Write failing Rust tests**
 
 Deserialize one graph with answered and ended triggers and assert exact
 selection, duplicate rejection, and missing-entry rejection. Assert the runner's
 first step is the selected trigger rather than legacy `start`.
 
-- [ ] **Step 2: Enable tests and confirm RED**
+- [x] **Step 2: Enable tests and confirm RED**
 
-Remove only the stale `llm_only_test` bin declaration whose source is absent.
+The repository declares binaries and library modules omitted by its RustVani
+import commit. Preserve `Cargo.toml`; restore the matching upstream sources and
+placeholder missing binary paths only inside the isolated verification worktree.
 
 Run: `cargo test --manifest-path bridge/Cargo.toml --lib vokoo::graph`
 
 Expected: new API tests fail.
 
-- [ ] **Step 3: Implement Rust selection**
+Observed: compilation reached the expected missing `EntryPoint`/`EntryError`
+APIs. No Cargo target declaration was removed from the product branch.
+
+- [x] **Step 3: Implement Rust selection**
 
 Build `HashMap<(String, String), String>` from trigger nodes while loading. Return
 typed duplicate and missing errors. Add `FlowRunner::for_entry`; retain
 `FlowRunner::new` temporarily as a call-answered wrapper. Update all known call
 sites to pass `call.answered`, `call.ended`, or `call.failed` explicitly.
 
-- [ ] **Step 4: Run Rust verification**
+- [x] **Step 4: Run Rust verification**
 
 Run: `cargo test --manifest-path bridge/Cargo.toml --lib`
 
@@ -316,12 +322,17 @@ Run: `cargo check --manifest-path bridge/Cargo.toml --bin vokoo_bridge --bin flo
 
 Expected: both exit 0.
 
-- [ ] **Step 5: Commit**
+Observed in the isolated matching-source worktree: 400 library tests passed and
+both binaries compiled. Existing warnings remain.
+
+- [x] **Step 5: Commit**
 
 ```bash
-git add bridge/Cargo.toml bridge/src/vokoo/graph.rs bridge/src/vokoo/runner.rs bridge/src/bin/flow_check.rs bridge/src/bin/vokoo_bridge.rs bridge/src/vokoo/escalate.rs
+git add bridge/src/vokoo/graph.rs bridge/src/vokoo/runner.rs bridge/src/vokoo/mod.rs bridge/src/vokoo/postcall.rs bridge/src/bin/flow_check.rs bridge/src/bin/vokoo_bridge.rs bridge/src/vokoo/escalate.rs
 git commit -m "feat: select flow runtime entry points"
 ```
+
+Committed as `5017487`.
 
 ### Task 6: Phase-one verification checkpoint
 
@@ -332,7 +343,7 @@ git commit -m "feat: select flow runtime entry points"
 - Consumes: all phase-one deliverables.
 - Produces: a tested checkpoint before call-version pinning.
 
-- [ ] **Step 1: Run all gates**
+- [x] **Step 1: Run all gates**
 
 ```bash
 npm test
@@ -345,7 +356,12 @@ cargo check --manifest-path bridge/Cargo.toml --bin vokoo_bridge --bin flow_chec
 
 Expected: every command exits 0; unchanged Next.js warnings may remain.
 
-- [ ] **Step 2: Inspect scope**
+Observed: 71 Node tests, TypeScript, Next production build, 3 control-plane
+tests, 400 bridge library tests, and both bridge binary checks passed. The
+bridge gates used a temporary overlay from its declared same-version upstream
+because the repository import omits required files; no overlay file was staged.
+
+- [x] **Step 2: Inspect scope**
 
 Run: `git diff console-and-canvas...HEAD --stat`
 
@@ -353,7 +369,11 @@ Run: `git status --short`
 
 Expected: only planned files; clean status or clearly unrelated unstaged user files.
 
-- [ ] **Step 3: Commit verification fixes if necessary**
+Observed: Phase 1 changes are confined to the planned contract, database,
+editor, runtime, test, and documentation files. The separately authored auth
+work is isolated in commit `9871f89`.
+
+- [x] **Step 3: Commit verification fixes if necessary**
 
 Stage only exact files fixed and commit:
 
@@ -363,10 +383,13 @@ git commit -m "fix: complete multi-trigger compatibility checks"
 
 Do not deploy. Report exact gates and anything environment-blocked.
 
+No verification fix commit was required.
+
 ## Follow-on plans
 
 After this independently testable checkpoint:
 
 1. pin call flow/version and replace event-specific number bindings;
-2. add typed `integration.invoke` and durable `integration_runs` execution;
+2. consume the owned source in `vendor/wellally-schemas`, then add typed
+   `integration.invoke` and durable `integration_runs` execution;
 3. add assisted CRM migration/activity UI and retire legacy post-call resolution.

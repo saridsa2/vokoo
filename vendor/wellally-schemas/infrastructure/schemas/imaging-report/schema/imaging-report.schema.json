@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellall.health/schemas/imaging-report/v0.1.0",
+  "title": "WellAll Imaging Report",
+  "description": "影像报告结构化 Schema，参考 DICOM 影像模式代码和 SNOMED CT 部位编码。",
+  "type": "object",
+  "required": ["id", "patientId", "modality", "bodySite", "reportedAt"],
+  "properties": {
+    "id": { "type": "string" },
+    "patientId": { "type": "string" },
+    "studyInstanceUid": { "type": "string", "description": "DICOM Study Instance UID。" },
+    "modality": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/Modality" },
+    "bodySite": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/Coding", "description": "检查部位，建议 SNOMED CT 解剖部位代码。" },
+    "reportedAt": { "type": "string", "format": "date-time" },
+    "performer": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "影像所见。"
+    },
+    "impression": { "type": "string", "description": "诊断结论/印象。" },
+    "radiationDose": {
+      "type": "object",
+      "properties": {
+        "ctdiVol_mGy": { "type": "number", "description": "CT 剂量体积指数。" },
+        "dlp_mGy_cm": { "type": "number", "description": "剂量长度乘积。" }
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "type": { "type": "string", "description": "缩略图、报告 PDF 等" }
+        }
+      }
+    }
+  }
+}

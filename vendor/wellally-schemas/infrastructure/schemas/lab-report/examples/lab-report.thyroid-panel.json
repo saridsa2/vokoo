@@ -1,0 +1,42 @@
+{
+  "id": "lab-2024-003",
+  "patientId": "person-001",
+  "issuedAt": "2024-12-05T07:50:00Z",
+  "facility": { "id": "lab-02", "name": "WellAll Endocrine Lab" },
+  "specimen": {
+    "type": { "system": "http://terminology.hl7.org/CodeSystem/v2-0487", "code": "SER", "display": "Serum" },
+    "collectedAt": "2024-12-05T07:20:00Z"
+  },
+  "results": [
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "3016-3", "display": "Thyrotropin [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 2.4, "unit": "uIU/mL" },
+      "referenceRange": { "low": { "value": 0.35, "unit": "uIU/mL" }, "high": { "value": 4.94, "unit": "uIU/mL" } },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "3024-7", "display": "Thyroxine (T4) free [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 1.2, "unit": "ng/dL" },
+      "referenceRange": { "low": { "value": 0.8, "unit": "ng/dL" }, "high": { "value": 1.8, "unit": "ng/dL" } },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "3051-0", "display": "Triiodothyronine (T3) free [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 3.4, "unit": "pg/mL" },
+      "referenceRange": { "low": { "value": 2.3, "unit": "pg/mL" }, "high": { "value": 4.2, "unit": "pg/mL" } },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "8099-4", "display": "Thyroperoxidase Ab [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 8, "unit": "IU/mL" },
+      "referenceRange": { "high": { "value": 34, "unit": "IU/mL" } },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "8098-6", "display": "Thyroglobulin Ab [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 15, "unit": "IU/mL" },
+      "referenceRange": { "high": { "value": 40, "unit": "IU/mL" } },
+      "interpretation": "N"
+    }
+  ]
+}

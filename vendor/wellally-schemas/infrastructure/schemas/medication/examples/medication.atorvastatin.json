@@ -1,0 +1,17 @@
+{
+  "id": "med-2024-001",
+  "patientId": "person-001",
+  "medication": { "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "617310", "display": "atorvastatin 20 MG Oral Tablet" },
+  "form": { "system": "http://snomed.info/sct", "code": "385055001", "display": "Tablet" },
+  "route": { "system": "http://snomed.info/sct", "code": "26643006", "display": "Oral route" },
+  "dosage": { "value": 20, "unit": "mg" },
+  "frequency": "QD",
+  "durationDays": 90,
+  "startDate": "2024-08-01",
+  "endDate": "2024-10-30",
+  "indication": {
+    "coding": [ { "system": "http://snomed.info/sct", "code": "55822004", "display": "Hyperlipidemia" } ],
+    "text": "高脂血症"
+  },
+  "instructions": "晚餐后口服"
+}

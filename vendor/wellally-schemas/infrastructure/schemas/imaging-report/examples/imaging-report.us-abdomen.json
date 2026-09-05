@@ -1,0 +1,17 @@
+{
+  "id": "img-2024-us-01",
+  "patientId": "person-001",
+  "studyInstanceUid": "1.2.840.113619.2.55.3.604688435.5678.1700000000.1",
+  "modality": { "system": "http://dicom.nema.org/resources/ontology/DCM", "code": "US", "display": "Ultrasound" },
+  "bodySite": { "system": "http://snomed.info/sct", "code": "10200004", "display": "Liver structure" },
+  "reportedAt": "2024-09-20T11:05:00Z",
+  "performer": { "id": "rad-011", "name": "Dr. Wang", "role": "Radiologist" },
+  "findings": [
+    "肝脏大小形态正常，实质回声均匀。",
+    "胆囊壁不厚，未见结石。"
+  ],
+  "impression": "腹部超声未见明显异常。",
+  "attachments": [
+    { "url": "https://example.org/report/img-2024-us-01.pdf", "type": "application/pdf" }
+  ]
+}

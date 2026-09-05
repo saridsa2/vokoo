@@ -1,0 +1,17 @@
+{
+  "id": "med-2024-002",
+  "patientId": "person-001",
+  "medication": { "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "860975", "display": "metformin 24 HR 500 MG Extended Release Oral Tablet" },
+  "form": { "system": "http://snomed.info/sct", "code": "385055001", "display": "Tablet" },
+  "route": { "system": "http://snomed.info/sct", "code": "26643006", "display": "Oral route" },
+  "dosage": { "value": 500, "unit": "mg" },
+  "frequency": "QD",
+  "durationDays": 180,
+  "startDate": "2024-07-01",
+  "endDate": "2024-12-28",
+  "indication": {
+    "coding": [ { "system": "http://snomed.info/sct", "code": "44054006", "display": "Diabetes mellitus type 2" } ],
+    "text": "2 型糖尿病"
+  },
+  "instructions": "餐后口服"
+}
