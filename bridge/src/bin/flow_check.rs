@@ -1,5 +1,6 @@
 //! Exercises flow resolution and the runner without placing a call.
-use rustvani::vokoo::{CallControl, CallHandle, FlowRunner, NodeAction};
+use rustvani::vokoo::graph::TRIGGER_ANSWERED;
+use rustvani::vokoo::{CallControl, CallHandle, EntryPoint, FlowRunner, NodeAction};
 
 #[tokio::main]
 async fn main() {
@@ -36,7 +37,17 @@ async fn main() {
         rustvani::vokoo::Handovers::new(),
     );
 
-    let mut runner = FlowRunner::new(&flow, &control);
+    let mut runner = match FlowRunner::for_entry(
+        &flow,
+        &control,
+        EntryPoint::new(TRIGGER_ANSWERED),
+    ) {
+        Ok(runner) => runner,
+        Err(error) => {
+            println!("INVALID FLOW: {error}");
+            return;
+        }
+    };
     let action = loop {
         let action = runner.advance().await;
         let NodeAction::CollectDigits { node, prompt, language, keys, timeout_seconds, .. } = &action
@@ -133,7 +144,12 @@ async fn main() {
             }
 
             for outcome in ["done", "wants_human", "out_of_scope", "gone_quiet"] {
-                let mut r = FlowRunner::new(&flow, &control);
+                let mut r = FlowRunner::for_entry(
+                    &flow,
+                    &control,
+                    EntryPoint::new(TRIGGER_ANSWERED),
+                )
+                .expect("resolved answering flow lost its call.answered entry");
                 let _ = r.advance().await;
                 r.agent_finished(&node.id, outcome);
                 // Only report where it would go; do not fire carrier commands.

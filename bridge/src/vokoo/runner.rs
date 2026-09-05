@@ -10,7 +10,7 @@
 //! next; the bridge knows *how* to talk to someone.
 
 use super::control::CallControl;
-use super::graph::{Flow, FlowNode};
+use super::graph::{EntryError, EntryPoint, Flow, FlowNode, TRIGGER_ANSWERED};
 
 /// How a node finished. The name matches an outcome declared by the node's type
 /// in the registry, which is what a transition is keyed on.
@@ -117,17 +117,28 @@ pub struct FlowRunner<'a> {
 }
 
 impl<'a> FlowRunner<'a> {
-    pub fn new(flow: &'a Flow, control: &'a CallControl) -> Self {
-        Self {
+    pub fn for_entry(
+        flow: &'a Flow,
+        control: &'a CallControl,
+        entry: EntryPoint,
+    ) -> Result<Self, EntryError> {
+        let current = flow.entry_node(&entry)?.to_owned();
+        Ok(Self {
             flow,
             control,
-            current: Some(flow.start.clone()),
+            current: Some(current),
             trail: Vec::new(),
             steps: 0,
             started_by: None,
             answered: std::collections::HashMap::new(),
             preview: false,
-        }
+        })
+    }
+
+    #[deprecated(note = "pass an explicit event to FlowRunner::for_entry")]
+    pub fn new(flow: &'a Flow, control: &'a CallControl) -> Self {
+        Self::for_entry(flow, control, EntryPoint::new(TRIGGER_ANSWERED))
+            .expect("answered flow was loaded without a call.answered entry")
     }
 
     /// Walk without touching the carrier.
@@ -500,5 +511,52 @@ fn business_hours(node: &FlowNode) -> Outcome {
         "open".into()
     } else {
         "closed".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vokoo::graph::{EntryPoint, Flow, TRIGGER_ENDED};
+    use crate::vokoo::{CallHandle, Handovers};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn starts_and_records_the_requested_trigger() {
+        let flow = Flow::from_value(
+            json!({
+                "id": "flow-1",
+                "org_id": "org-1",
+                "name": "Reception",
+                "graph": {
+                    "version": 3,
+                    "nodes": [
+                        {"id":"answered","type":"trigger","implementation":"trigger.call_answered","name":"Answered","config":{}},
+                        {"id":"ended","type":"trigger","implementation":"trigger.call_ended","name":"Ended","config":{}}
+                    ],
+                    "transitions": []
+                }
+            }),
+            HashMap::new(),
+            "call.answered",
+        )
+        .unwrap();
+        let control = CallControl::new(
+            CallHandle {
+                ucid: "test-call".into(),
+                did: "1000".into(),
+                caller: "2000".into(),
+                org_id: "org-1".into(),
+            },
+            String::new(),
+            String::new(),
+            Handovers::new(),
+        );
+        let mut runner = FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_ENDED)).unwrap();
+
+        let _ = runner.advance().await;
+
+        assert_eq!(runner.trail.first().map(|step| step.node_id.as_str()), Some("ended"));
     }
 }

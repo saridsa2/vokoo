@@ -23,7 +23,7 @@
 //! without one gets today's behaviour — silence — because inventing a
 //! destination is worse than admitting there isn't one.
 
-use super::graph::{resolve_for_event, TRIGGER_FAILED};
+use super::graph::{resolve_for_event, EntryPoint, TRIGGER_FAILED};
 use super::handover::{Handover, Handovers};
 use super::runner::{FlowRunner, NodeAction};
 use super::control::{CallControl, CallHandle};
@@ -93,7 +93,15 @@ pub async fn escalate(
             handovers.clone(),
         );
 
-        let mut runner = FlowRunner::new(&flow, &control).started_by(cause.as_str());
+        let Ok(mut runner) = FlowRunner::for_entry(
+            &flow,
+            &control,
+            EntryPoint::new(TRIGGER_FAILED),
+        ) else {
+            log::warn!("[escalate] ucid={ucid} '{}' has no call.failed entry", flow.name);
+            return false;
+        };
+        runner = runner.started_by(cause.as_str());
         loop {
             match runner.advance().await {
                 NodeAction::Finished(reason) => {
