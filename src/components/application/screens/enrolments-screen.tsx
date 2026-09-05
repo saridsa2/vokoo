@@ -38,23 +38,40 @@ function todayISO(): string {
 
 export const EnrolmentsScreen = () => {
     const [open, setOpen] = useState(false);
+    /* Bumped when a row is created, so the list re-reads. The dialog and the
+       list hold separate `useResource` instances and neither can patch the
+       other's state. */
+    const [created, setCreated] = useState(0);
 
     return (
         <>
             <ResourceListScreen
                 resourceKey="enrolments"
+                reloadToken={created}
                 createSlot={
                     <Button size="sm" onClick={() => setOpen(true)}>
                         Enrol Patient
                     </Button>
                 }
             />
-            <EnrolDialog isOpen={open} onClose={() => setOpen(false)} />
+            <EnrolDialog
+                isOpen={open}
+                onClose={() => setOpen(false)}
+                onCreated={() => setCreated((n) => n + 1)}
+            />
         </>
     );
 };
 
-const EnrolDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+const EnrolDialog = ({
+    isOpen,
+    onClose,
+    onCreated,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onCreated: () => void;
+}) => {
     const { context } = useSession();
     const notify = useNotify();
     const { records: patients, isLoading: loadingPatients } = useResource<PatientRow>("patients");
@@ -106,6 +123,7 @@ const EnrolDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void
             setCohortId(null);
             setStartedOn(todayISO());
             notify.success("Patient enrolled");
+            onCreated();
         } catch (problem) {
             const message = (problem as Error).message;
             if (/duplicate|unique/i.test(message)) setAlready(true);

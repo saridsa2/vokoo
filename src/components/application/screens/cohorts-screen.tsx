@@ -31,23 +31,40 @@ type FlowRow = { id: string; name?: string; status?: string };
 
 export const CohortsScreen = () => {
     const [open, setOpen] = useState(false);
+    /* Bumped when a row is created, so the list re-reads. The dialog and the
+       list hold separate `useResource` instances and neither can patch the
+       other's state. */
+    const [created, setCreated] = useState(0);
 
     return (
         <>
             <ResourceListScreen
                 resourceKey="cohorts"
+                reloadToken={created}
                 createSlot={
                     <Button size="sm" onClick={() => setOpen(true)}>
                         Create Cohort
                     </Button>
                 }
             />
-            <CreateCohortDialog isOpen={open} onClose={() => setOpen(false)} />
+            <CreateCohortDialog
+                isOpen={open}
+                onClose={() => setOpen(false)}
+                onCreated={() => setCreated((n) => n + 1)}
+            />
         </>
     );
 };
 
-const CreateCohortDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+const CreateCohortDialog = ({
+    isOpen,
+    onClose,
+    onCreated,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onCreated: () => void;
+}) => {
     const { context } = useSession();
     const notify = useNotify();
     const { records: flows, isLoading: loadingFlows } = useResource<FlowRow>("flows");
@@ -82,6 +99,7 @@ const CreateCohortDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () 
             setName("");
             setFlowId(null);
             notify.success("Cohort created");
+            onCreated();
         } catch (problem) {
             notify.failure("Could not create the cohort", problem);
         } finally {

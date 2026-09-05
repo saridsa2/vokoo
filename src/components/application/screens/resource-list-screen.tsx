@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { PaginationPageDefault } from "@/components/application/pagination/pagination";
 
@@ -40,9 +40,24 @@ export function ResourceListScreen({
      * in this console is decorative until the screen behind it supplies this.
      */
     createSlot,
+    /**
+     * Bump this to make the list re-read.
+     *
+     * A screen with a create dialog holds two `useResource` instances — one in
+     * the dialog, one in here — and the hook patches only its own state, so a
+     * row created in the dialog never reached the table. Every screen with a
+     * create action so far navigated to a detail page afterwards, which hid
+     * this: the list was remounted on the way back.
+     *
+     * A number rather than a callback because the parent already re-renders on
+     * its own state, and a `refresh` handed upward would need a ref to survive
+     * that.
+     */
+    reloadToken,
 }: {
     resourceKey: string;
     createSlot?: ReactNode;
+    reloadToken?: number;
 }) {
     // The view is resolved here rather than passed in. `resource-columns` is a
     // client module, so a server component importing RESOURCE_VIEWS receives a
@@ -50,7 +65,14 @@ export function ResourceListScreen({
     // callbacks could not cross the server/client boundary as props anyway.
     const view = RESOURCE_VIEWS[resourceKey];
 
-    const { records, isLoading, error } = useResource<Row>(view?.resource ?? "");
+    const { records, isLoading, error, refresh } = useResource<Row>(view?.resource ?? "");
+
+    useEffect(() => {
+        // Not on the first render: the hook's own effect has already fetched,
+        // and firing again here would double every list load.
+        if (!reloadToken) return;
+        void refresh();
+    }, [reloadToken, refresh]);
     const [query, setQuery] = useState("");
     const [page, setPage] = useState(1);
 

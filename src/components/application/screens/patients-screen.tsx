@@ -48,23 +48,40 @@ const LANGUAGES = [
 
 export const PatientsScreen = () => {
     const [open, setOpen] = useState(false);
+    /* Bumped when a row is created, so the list re-reads. The dialog and the
+       list hold separate `useResource` instances and neither can patch the
+       other's state. */
+    const [created, setCreated] = useState(0);
 
     return (
         <>
             <ResourceListScreen
                 resourceKey="patients"
+                reloadToken={created}
                 createSlot={
                     <Button size="sm" onClick={() => setOpen(true)}>
                         Add Patient
                     </Button>
                 }
             />
-            <AddPatientDialog isOpen={open} onClose={() => setOpen(false)} />
+            <AddPatientDialog
+                isOpen={open}
+                onClose={() => setOpen(false)}
+                onCreated={() => setCreated((n) => n + 1)}
+            />
         </>
     );
 };
 
-const AddPatientDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) => {
+const AddPatientDialog = ({
+    isOpen,
+    onClose,
+    onCreated,
+}: {
+    isOpen: boolean;
+    onClose: () => void;
+    onCreated: () => void;
+}) => {
     const { context } = useSession();
     const notify = useNotify();
 
@@ -109,6 +126,7 @@ const AddPatientDialog = ({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
             onClose();
             reset();
             notify.success("Patient added");
+            onCreated();
         } catch (problem) {
             if (/duplicate|unique/i.test((problem as Error).message)) setDuplicate(true);
             else notify.failure("Could not add the patient", problem);
