@@ -9,6 +9,7 @@ const NODE_VISUALS = {
   // one warning colour on the board, because a reader glancing at a flow list
   // should be able to tell the escalation path from the ordinary one.
   "trigger.call_failed": { color: "#fdf4f0", stroke: "#b5623c", icon: "triggerFailed" },
+  "trigger.integration_invoked": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerEnded" },
   condition: { color: "#f5f3ff", stroke: "#7c6ee6", icon: "condition" },
   loop: { color: "#eef7ff", stroke: "#2376a6", icon: "loop" },
   var: { color: "#effaf6", stroke: "#1d8f68", icon: "variable" },
@@ -29,6 +30,7 @@ const NODE_VISUALS = {
   // runs when nobody is".
   intelligence: { color: "#f2f7ff", stroke: "#2f6fb8", icon: "intelligence" },
   "http.request": { color: "#f2f7ff", stroke: "#2f6fb8", icon: "webhook" },
+  "integration.invoke": { color: "#eef4ff", stroke: "#4f67b0", icon: "webhook" },
   // The one node whose branches the author writes rather than the type
   // declaring them, so it gets a hue of its own rather than joining a family.
   "kookoo.collect_digits": { color: "#fdf2fb", stroke: "#a3468f", icon: "keypad" },

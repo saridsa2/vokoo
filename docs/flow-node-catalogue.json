@@ -1,6 +1,49 @@
 [
   {
     "default_timeout_seconds": null,
+    "description": "Another flow supplied a validated payload to this reusable integration.",
+    "families": [
+      "integration"
+    ],
+    "fields": [
+      {
+        "help": "The payload every caller of this integration must supply.",
+        "key": "input_schema_id",
+        "label": "Input schema",
+        "required": true,
+        "type": "structured_output"
+      },
+      {
+        "key": "clinical_payload_kind",
+        "label": "Clinical payload",
+        "options": [
+          { "id": "person", "label": "Person" },
+          { "id": "lab_report", "label": "Lab report" },
+          { "id": "imaging_report", "label": "Imaging report" },
+          { "id": "medication", "label": "Medication" },
+          { "id": "family_health", "label": "Family health" }
+        ],
+        "required": false,
+        "type": "select"
+      }
+    ],
+    "id": "trigger.integration_invoked",
+    "is_active": true,
+    "is_addable": false,
+    "label": "Integration invoked",
+    "node_type": "trigger",
+    "outcomes": [
+      { "id": "started", "label": "Started" }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": -1,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
     "description": "Someone called this number and the call connected. Everything the caller hears starts here.",
     "families": [
       "call"
@@ -888,9 +931,10 @@
   },
   {
     "default_timeout_seconds": 30,
-    "description": "Turn what was said into a filled-in schema, using a model. The result is written to the call before anything is sent anywhere.",
+    "description": "Turn persisted call or document data into a filled-in schema before invoking an integration.",
     "families": [
-      "integration"
+      "call",
+      "care_path"
     ],
     "fields": [
       {
@@ -911,7 +955,7 @@
     "id": "intelligence",
     "is_active": true,
     "is_addable": true,
-    "label": "Process call",
+    "label": "Extract data",
     "node_type": "custom",
     "outcomes": [
       {
@@ -1011,6 +1055,60 @@
     "output": "opaque",
     "provider_action": "http_request",
     "sort_order": 21,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Validate a mapped payload and enqueue a reusable integration workflow.",
+    "families": [
+      "call",
+      "care_path",
+      "message",
+      "general"
+    ],
+    "fields": [
+      {
+        "key": "target_flow_id",
+        "label": "Integration",
+        "required": true,
+        "type": "integration"
+      },
+      {
+        "help": "JSON or an expression that resolves to the target input.",
+        "key": "input",
+        "label": "Input",
+        "required": true,
+        "type": "template"
+      },
+      {
+        "key": "idempotency_key",
+        "label": "Idempotency key",
+        "required": false,
+        "type": "text"
+      },
+      {
+        "default": 5,
+        "key": "max_attempts",
+        "label": "Maximum attempts",
+        "required": false,
+        "type": "number"
+      }
+    ],
+    "id": "integration.invoke",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Invoke integration",
+    "node_type": "custom",
+    "outcomes": [
+      { "id": "queued", "label": "Queued" },
+      { "id": "invalid_payload", "label": "Invalid payload" },
+      { "id": "failed", "label": "Could not queue" }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 22,
     "suspends": false,
     "valid_triggers": []
   },
