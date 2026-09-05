@@ -16,7 +16,27 @@
 use serde_json::{json, Value};
 
 use super::expression::Scope;
-use super::graph::{resolve_for_event, EntryPoint, Flow, TRIGGER_ENDED};
+use super::graph::{load_flow_version, resolve_for_event, EntryPoint, Flow, TRIGGER_ENDED};
+
+#[derive(Debug, PartialEq, Eq)]
+enum LifecycleSelection {
+    Pinned { flow_id: String, version: i32 },
+    Legacy,
+    Invalid,
+}
+
+fn lifecycle_selection(call: &Value) -> LifecycleSelection {
+    let flow_id = call.get("flow_id").and_then(Value::as_str);
+    let version = call.get("flow_version").and_then(Value::as_i64);
+    match (flow_id, version) {
+        (Some(flow_id), Some(version)) if !flow_id.is_empty() => i32::try_from(version)
+            .ok()
+            .map(|version| LifecycleSelection::Pinned { flow_id: flow_id.to_owned(), version })
+            .unwrap_or(LifecycleSelection::Invalid),
+        (None, None) => LifecycleSelection::Legacy,
+        _ => LifecycleSelection::Invalid,
+    }
+}
 
 /// One node, as it ran.
 ///
@@ -74,9 +94,18 @@ pub fn run_detached(
     did: String,
     ucid: String,
     ended_by: String,
+    disconnect_reason: Option<String>,
     recording_url: Option<String>,
 ) {
     tokio::spawn(async move {
+        super::record::CallRecord::finish_from_carrier(
+            &base,
+            &key,
+            &ucid,
+            disconnect_reason.as_deref(),
+            recording_url.as_deref(),
+        )
+        .await;
         if let Err(problem) = run(&base, &key, &did, &ucid, &ended_by, recording_url.as_deref()).await {
             // Named, not swallowed. A post-call flow failing is invisible by
             // definition — there is no caller to notice — so the log is the
@@ -94,12 +123,39 @@ async fn run(
     ended_by: &str,
     recording_url: Option<&str>,
 ) -> Result<(), String> {
-    let Some(flow) = resolve_for_event(base, key, did, TRIGGER_ENDED).await else {
-        // The ordinary case: most numbers have nothing to do after a call.
-        return Ok(());
+    let call = load_call(base, key, ucid).await?;
+    let flow = match lifecycle_selection(&call) {
+        LifecycleSelection::Pinned { flow_id, version } => load_flow_version(
+            base,
+            key,
+            &flow_id,
+            version,
+            TRIGGER_ENDED,
+        )
+        .await
+        .ok_or_else(|| format!("pinned flow {flow_id} v{version} is not readable"))?,
+        LifecycleSelection::Legacy => {
+            log::warn!(
+                "[post-call] ucid={ucid} has no pinned flow — using the legacy call.ended number binding"
+            );
+            let Some(flow) = resolve_for_event(base, key, did, TRIGGER_ENDED).await else {
+                return Ok(());
+            };
+            flow
+        }
+        LifecycleSelection::Invalid => {
+            return Err("call has an incomplete flow pin; refusing to re-resolve it".into());
+        }
     };
 
-    let call = load_call(base, key, ucid).await?;
+    if flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).is_err() {
+        log::info!(
+            "[post-call] ucid={ucid} pinned flow '{}' has no call.ended entry — nothing to run",
+            flow.name
+        );
+        return Ok(());
+    }
+
     let mut steps = Vec::new();
     walk(base, key, &flow, &call, ucid, ended_by, recording_url, false, &mut steps).await
 }
@@ -297,7 +353,7 @@ async fn load_call(base: &str, key: &str, ucid: &str) -> Result<Value, String> {
             // `to_number` and `recording_url` are here for the dry run, which has
             // no webhook to take them from: a real hangup is handed the DID and
             // the recording by the carrier, and a replay has only the row.
-            ("select", "id,from_number,to_number,started_at,duration_seconds,ended_reason,recording_url,transcript".into()),
+            ("select", "id,flow_id,flow_version,from_number,to_number,started_at,duration_seconds,ended_reason,recording_url,transcript".into()),
             ("limit", "1".into()),
         ])
         .header("apikey", key)
@@ -308,4 +364,29 @@ async fn load_call(base: &str, key: &str, ucid: &str) -> Result<Value, String> {
 
     let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
     rows.into_iter().next().ok_or_else(|| format!("no call row for {ucid}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_complete_pin_selects_the_exact_snapshot() {
+        assert_eq!(
+            lifecycle_selection(&json!({ "flow_id": "flow-1", "flow_version": 4 })),
+            LifecycleSelection::Pinned { flow_id: "flow-1".into(), version: 4 }
+        );
+    }
+
+    #[test]
+    fn only_a_call_with_no_pin_uses_the_legacy_binding() {
+        assert_eq!(
+            lifecycle_selection(&json!({ "flow_id": null, "flow_version": null })),
+            LifecycleSelection::Legacy
+        );
+        assert_eq!(
+            lifecycle_selection(&json!({ "flow_id": "flow-1", "flow_version": null })),
+            LifecycleSelection::Invalid
+        );
+    }
 }

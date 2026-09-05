@@ -1295,7 +1295,8 @@ async fn kookoo_webhook(
                     // The two outcomes `trigger.call_ended` declares. The
                     // carrier says which, and it is the one thing a post-call
                     // flow cannot work out for itself afterwards.
-                    let ended_by = match params.get("disconnect_reason").map(String::as_str) {
+                    let disconnect_reason = params.get("disconnect_reason").cloned();
+                    let ended_by = match disconnect_reason.as_deref() {
                         Some("user_disconnected") => "caller_hung_up",
                         _ => "we_ended",
                     };
@@ -1304,23 +1305,15 @@ async fn kookoo_webhook(
                         .filter(|url| url.starts_with("http"))
                         .cloned();
 
-                    // Stored on the call whether or not a post-call flow exists.
-                    // It expires at the carrier, so the moment it is offered is
-                    // the only moment it can be kept.
-                    if let Some(url) = recording.clone() {
-                        let (base, key, ucid) =
-                            (state.cfg.supabase_url.clone(), state.cfg.service_key.clone(), ucid.clone());
-                        tokio::spawn(async move {
-                            rustvani::vokoo::CallRecord::store_recording(&base, &key, &ucid, &url).await;
-                        });
-                    }
-
+                    // The detached task persists every final carrier fact and
+                    // awaits that write before the ended trigger reads the call.
                     rustvani::vokoo::postcall::run_detached(
                         state.cfg.supabase_url.clone(),
                         state.cfg.service_key.clone(),
                         did,
                         ucid,
                         ended_by.to_string(),
+                        disconnect_reason,
                         recording,
                     );
                 }
@@ -1961,31 +1954,39 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         1,
     );
 
-    // A number points at a flow. Resolved once, here, and not read again: a flow
-    // republished mid-call must not change a call in progress, so the caller
-    // finishes on the graph they started with.
     let did = arrival.did.clone();
     let caller = arrival.caller.clone();
-    let flow =
-        rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, &did).await;
 
-    // Now the call can be shown to somebody: until the flow resolves we do not
-    // know whose call it is, and a call attributed to a guess is one tenant
-    // seeing another's caller id.
-    state.live.attribute(&arrival.id, flow.as_ref().map(|f| f.org_id.clone()), None);
-
-    // The call goes on the books before anything can go wrong with it.
-    // Shared: the listener writes transcript lines from its own task for as
-    // long as the call lasts.
+    // The database resolves the number, chooses the latest published snapshot
+    // and records both ids in one statement. Doing those as bridge requests
+    // would leave a publish race between resolution and persistence.
     let record = Arc::new(rustvani::vokoo::CallRecord::open(
         &cfg.supabase_url,
         &cfg.service_key,
         &arrival.id,
         &did,
         &caller,
-        flow.as_ref().map(|f| f.id.as_str()),
     )
     .await);
+
+    // Load exactly what start_call pinned. If recording failed or the number
+    // has no published snapshot, the existing agent fallback handles the call;
+    // a mutable graph is never substituted for an unpinned call.
+    let flow = match record.pinned_flow() {
+        Some(pin) => rustvani::vokoo::graph::load_flow_version(
+            &cfg.supabase_url,
+            &cfg.service_key,
+            &pin.flow_id,
+            pin.version,
+            rustvani::vokoo::graph::TRIGGER_ANSWERED,
+        )
+        .await,
+        None => None,
+    };
+
+    // Attribute only from the immutable snapshot. A guessed organisation here
+    // would expose one tenant's caller id on another tenant's live dashboard.
+    state.live.attribute(&arrival.id, flow.as_ref().map(|f| f.org_id.clone()), None);
 
     let control = flow.as_ref().map(|f| {
         rustvani::vokoo::CallControl::new(

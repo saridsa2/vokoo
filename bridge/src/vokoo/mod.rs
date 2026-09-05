@@ -51,5 +51,5 @@ pub use graph::{
 };
 pub use handover::{escape, Handover, Handovers};
 pub use keypress::Keypresses;
-pub use record::CallRecord;
+pub use record::{CallRecord, PinnedFlow};
 pub use runner::{FlowRunner, NodeAction, Outcome};
