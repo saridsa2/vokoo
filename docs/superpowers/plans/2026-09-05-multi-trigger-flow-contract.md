@@ -258,7 +258,7 @@ Reject a duplicate event/default-key trigger with a specific toast. Reject edges
 whose target is a trigger. Allow trigger deletion only when another trigger
 remains. Keep engine fixed-shape behavior unchanged.
 
-- [ ] **Step 4: Run GREEN tests and build**
+- [x] **Step 4: Run GREEN tests and build**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
@@ -266,7 +266,7 @@ Run: `npm run build`
 
 Expected: both exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/0112_a_flow_has_many_triggers.sql docs/flow-node-catalogue.json src/components/stackplane/recovered-editor-host.tsx src/utils/flow-graph.ts src/utils/flow-graph.test.ts
