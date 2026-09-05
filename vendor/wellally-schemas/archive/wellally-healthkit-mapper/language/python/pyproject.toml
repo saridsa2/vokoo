@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wellally-healthkit-mapper"
+version = "0.1.0"
+description = "Map Apple HealthKit to WellAlly schemas for consumer data sync"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Satya Suman Saridae"}
+]
+keywords = ["health", "healthcare", "healthkit", "apple", "mapper", "medical"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "wellally>=0.1.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.urls]
+Homepage = "https://www.wellally.tech/"
+Documentation = "https://www.wellally.tech/blog"
+Repository = "https://github.com/saridsa2/vokoo/tree/main/vendor/wellally-schemas"
+"Bug Reports" = "https://github.com/saridsa2/vokoo/issues"
+
+[tool.setuptools]
+packages = ["wellally_healthkit_mapper"]
+
+[tool.setuptools.package-data]
+wellally_healthkit_mapper = ["py.typed"]

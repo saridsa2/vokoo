@@ -1,0 +1,45 @@
+{
+  "id": "lab-2024-013",
+  "patientId": "person-001",
+  "issuedAt": "2024-12-13T08:10:00Z",
+  "facility": { "id": "lab-02", "name": "WellAll Immunology Lab" },
+  "specimen": {
+    "type": { "system": "http://terminology.hl7.org/CodeSystem/v2-0487", "code": "SER", "display": "Serum" },
+    "collectedAt": "2024-12-13T07:35:00Z"
+  },
+  "results": [
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "14611-8", "display": "Nuclear Ab pattern [Interpretation] in Serum" } ] },
+      "value": {
+        "coding": [ { "system": "http://snomed.info/sct", "code": "444138006", "display": "Speckled pattern" } ],
+        "text": "Speckled pattern"
+      },
+      "interpretation": "A"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "53983-3", "display": "Nuclear Ab pattern homogeneous [Titer] in Serum by IF" } ] },
+      "value": { "value": 80, "unit": "{titer}" },
+      "interpretation": "A"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "20401-6", "display": "Nuclear Ab pattern speckled [Titer] in Serum by IF" } ] },
+      "value": { "value": 160, "unit": "{titer}" },
+      "interpretation": "H"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "53991-6", "display": "Nuclear Ab pattern nucleolar [Titer] in Serum by IF" } ] },
+      "value": { "value": 40, "unit": "{titer}" },
+      "interpretation": "A"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "53002-2", "display": "Nuclear Ab pattern fine speckled [Titer] in Serum by IF" } ] },
+      "value": { "value": 80, "unit": "{titer}" },
+      "interpretation": "A"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "29966-9", "display": "Centromere IgG Ab [Titer] in Serum" } ] },
+      "value": { "value": 20, "unit": "{titer}" },
+      "interpretation": "N"
+    }
+  ]
+}

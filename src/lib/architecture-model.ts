@@ -50,8 +50,8 @@ export type NodeOutcome = { id: string; label: string }
 
 export type NodeOutput = "none" | "call" | "schema" | "assignments" | "opaque"
 
-/** What a board is for. Derived from its trigger, never stored on the flow. */
-export type NodeFamily = "call" | "post_call" | "engine"
+/** What a board is allowed to contain. Flow families are stored explicitly. */
+export type NodeFamily = "call" | "integration" | "care_path" | "message" | "general" | "engine"
 
 /**
  * Which canvas a board is, as the screen mounting it knows.
@@ -203,7 +203,9 @@ const catalogueEntries = catalogue.flatMap((entry): NodeTypeMetadata[] => {
     outcomesFrom: (entry as { outcomes_from?: string | null }).outcomes_from ?? null,
     // Absent reads as `call`, which is what every node was before post-call
     // boards existed.
-    families: ((entry as { families?: string[] }).families ?? ["call"]) as NodeFamily[],
+    families: ((entry as { families?: string[] }).families ?? ["call"]).map((family) =>
+      family === "post_call" ? "integration" : family,
+    ) as NodeFamily[],
     fields,
     suspends: entry.suspends,
     default_timeout_seconds: entry.default_timeout_seconds,
@@ -252,14 +254,22 @@ export function addableFor(family: NodeFamily): NodeType[] {
  * when a flow runs, and a second field saying the same thing is a second field
  * that can disagree.
  */
-export function familyOf(diagram: Pick<Diagram, "graph">): NodeFamily {
+export function familyOf(diagram: Pick<Diagram, "graph" | "context">): NodeFamily {
   // Engine boards first, and by their own nodes rather than by a trigger. This
   // read `trigger?.type.startsWith("engine.")`, which could never be true: an
   // engine board has no trigger node at all, so every one of them reported
   // itself as a call board.
   if (diagram.graph.nodes.some((node) => node.type.startsWith("engine."))) return "engine"
+  try {
+    const family = (JSON.parse(diagram.context) as { family?: unknown }).family
+    if (family === "call" || family === "integration" || family === "care_path" || family === "message" || family === "general") {
+      return family
+    }
+  } catch {
+    // Old free-text diagram context falls through to the legacy trigger rule.
+  }
   const trigger = diagram.graph.nodes.find((node) => isTriggerType(node.type))
-  if (trigger?.type === "trigger.call_ended") return "post_call"
+  if (trigger?.type === "trigger.call_ended") return "integration"
   return "call"
 }
 

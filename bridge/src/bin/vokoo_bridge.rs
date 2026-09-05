@@ -1080,7 +1080,12 @@ async fn next_menu_xml(state: &AppState, params: &BTreeMap<String, String>) -> O
         state.handovers.clone(),
     );
 
-    let mut runner = rustvani::vokoo::FlowRunner::new(&flow, &control)
+    let mut runner = rustvani::vokoo::FlowRunner::for_entry(
+        &flow,
+        &control,
+        rustvani::vokoo::EntryPoint::new(rustvani::vokoo::graph::TRIGGER_ANSWERED),
+    )
+        .ok()?
         .preview()
         .already_answered(state.keypresses.all(ucid));
 
@@ -2002,10 +2007,19 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     let mut runner = match (flow.as_ref(), control.as_ref()) {
         (Some(f), Some(c)) => {
             log::info!("[call={call}] flow: {}", f.name);
-            Some(
-                rustvani::vokoo::FlowRunner::new(f, c)
-                    .already_answered(state.keypresses.all(&arrival.id)),
-            )
+            match rustvani::vokoo::FlowRunner::for_entry(
+                f,
+                c,
+                rustvani::vokoo::EntryPoint::new(
+                    rustvani::vokoo::graph::TRIGGER_ANSWERED,
+                ),
+            ) {
+                Ok(runner) => Some(runner.already_answered(state.keypresses.all(&arrival.id))),
+                Err(error) => {
+                    log::warn!("[call={call}] cannot enter '{}': {error}", f.name);
+                    None
+                }
+            }
         }
         _ => None,
     };

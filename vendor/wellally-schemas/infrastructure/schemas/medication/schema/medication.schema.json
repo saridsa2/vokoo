@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellall.health/schemas/medication/v0.1.0",
+  "title": "WellAll Medication Record",
+  "description": "用药记录 Schema，参考 RxNorm 药物编码与常见给药途径。",
+  "type": "object",
+  "required": ["id", "patientId", "medication", "dosage", "route", "startDate"],
+  "properties": {
+    "id": { "type": "string" },
+    "patientId": { "type": "string" },
+    "medication": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/Coding", "description": "药物代码，建议 RxNorm。" },
+    "form": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/Coding", "description": "剂型，如片剂、胶囊。" },
+    "route": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/Route", "description": "给药途径，例如口服(PO)、静脉(IV)。" },
+    "dosage": {
+      "type": "object",
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "type": "number" },
+        "unit": { "type": "string", "description": "UCUM 单位，例如 mg、mL。" }
+      }
+    },
+    "frequency": { "type": "string", "description": "给药频次，如 QD、BID、TID。" },
+    "durationDays": { "type": "integer", "minimum": 1 },
+    "startDate": { "type": "string", "format": "date" },
+    "endDate": { "type": "string", "format": "date" },
+    "indication": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/CodeableConcept", "description": "用药适应症。" },
+    "instructions": { "type": "string" }
+  }
+}

@@ -16,7 +16,7 @@
 use serde_json::{json, Value};
 
 use super::expression::Scope;
-use super::graph::{resolve_for_event, Flow, TRIGGER_ENDED};
+use super::graph::{resolve_for_event, EntryPoint, Flow, TRIGGER_ENDED};
 
 /// One node, as it ran.
 ///
@@ -147,7 +147,11 @@ async fn walk(
 
     log::info!("[post-call] ucid={ucid} {}'{}'", if dry { "dry run of " } else { "running " }, flow.name);
 
-    let mut current = Some(flow.start.clone());
+    let mut current = Some(
+        flow.entry_node(&EntryPoint::new(TRIGGER_ENDED))
+            .map_err(|error| error.to_string())?
+            .to_owned(),
+    );
     let mut count = 0;
     // How many times each loop node has sent the flow round, and when the walk
     // began. A loop is bounded by both: a comparison that never stops holding

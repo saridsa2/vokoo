@@ -1,0 +1,18 @@
+{
+  "id": "img-2024-ct-01",
+  "patientId": "person-001",
+  "studyInstanceUid": "1.2.840.113619.2.55.3.604688435.1234.1700000000.1",
+  "modality": { "system": "http://dicom.nema.org/resources/ontology/DCM", "code": "CT", "display": "Computed Tomography" },
+  "bodySite": { "system": "http://snomed.info/sct", "code": "51185008", "display": "Structure of chest" },
+  "reportedAt": "2024-10-15T14:20:00Z",
+  "performer": { "id": "rad-007", "name": "Dr. Li", "role": "Radiologist" },
+  "findings": [
+    "双肺纹理清晰，未见明显结节。",
+    "纵隔未见肿大淋巴结。"
+  ],
+  "impression": "胸部 CT 未见明显异常。",
+  "radiationDose": { "ctdiVol_mGy": 3.2, "dlp_mGy_cm": 110.5 },
+  "attachments": [
+    { "url": "https://example.org/report/img-2024-ct-01.pdf", "type": "application/pdf" }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "id": "lab-2024-010",
+  "patientId": "person-001",
+  "issuedAt": "2024-12-11T09:10:00Z",
+  "facility": { "id": "lab-02", "name": "WellAll Immunology Lab" },
+  "specimen": {
+    "type": { "system": "http://terminology.hl7.org/CodeSystem/v2-0487", "code": "SER", "display": "Serum" },
+    "collectedAt": "2024-12-11T08:40:00Z"
+  },
+  "results": [
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "4532-8", "display": "Complement total (CH50) [Units/volume] in Serum or Plasma" } ] },
+      "value": { "value": 48, "unit": "U/mL" },
+      "referenceRange": { "low": { "value": 22, "unit": "U/mL" }, "high": { "value": 60, "unit": "U/mL" } },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "4485-9", "display": "Complement C3 [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 118, "unit": "mg/dL" },
+      "interpretation": "N"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "4498-2", "display": "Complement C4 [Mass/volume] in Serum or Plasma" } ] },
+      "value": { "value": 23, "unit": "mg/dL" },
+      "interpretation": "N"
+    }
+  ]
+}

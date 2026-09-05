@@ -80,6 +80,7 @@ import { type AgentMode, type AgentOperation } from "@/lib/agent/tools"
 import { CollabCursors, CollabPresence } from "@/components/stackplane/collab-overlay"
 import { useCollab, type CollabGraph } from "@/components/stackplane/use-collab"
 import { buildDesktopAttachUrl, buildEditorLaunchUrl } from "@/lib/editor-launch-url"
+import { canConnectToNode, canDeleteTrigger } from "@/utils/flow-graph"
 
 const STORAGE_KEY = "stackplane.diagrams.v1"
 const CAMERA_KEY = "stackplane.diagramCamera.v1"
@@ -866,14 +867,10 @@ export function RecoveredEditorHost({
   function deleteSelectedNode() {
     if (shapeIsFixed) return
     const nodeId = inspectorNodeId ?? selectedNodeId
-    if (!nodeId) return
-    // The trigger is how the flow is entered. Deleting it would leave a graph
-    // the runner starts nowhere in, and there is no way to draw a replacement
-    // — the palette does not offer triggers, because a flow gets exactly the
-    // one its event calls for.
-    const target = diagram?.graph.nodes.find((node) => node.id === nodeId)
-    if (target && isTriggerType(target.type)) {
-      setToast("The trigger is where this flow starts, so it stays.")
+    if (!nodeId || !diagram) return
+    const target = diagram.graph.nodes.find((node) => node.id === nodeId)
+    if (target && !canDeleteTrigger(diagram.graph, target.id)) {
+      setToast("A flow needs at least one trigger.")
       return
     }
     updateActive((draft) => {
@@ -892,6 +889,11 @@ export function RecoveredEditorHost({
   function addNode(type: NodeType, atWorld = palette?.world) {
     if (!diagram || diagram.graph.nodes.length >= MAX_DIAGRAM_NODES) {
       setToast("This diagram has too many nodes.")
+      return
+    }
+    if (isTriggerType(type) && diagram.graph.nodes.some((node) => node.type === type)) {
+      setToast(`This flow already has a ${NODE_TYPES[type].label} trigger.`)
+      setPalette(null)
       return
     }
     const size = getNodeSize(type, viewMode)
@@ -1246,6 +1248,12 @@ export function RecoveredEditorHost({
   function finishEdge(targetNodeId: string, targetHandle: HandleSide = "left") {
     if (shapeIsFixed) return
     if (!edgeSource || !diagram) return
+    const target = diagram.graph.nodes.find((node) => node.id === targetNodeId)
+    if (!target || !canConnectToNode(target)) {
+      setToast("A trigger is an entry point, so nothing can connect into it.")
+      clearEdgeMode()
+      return
+    }
     if (edgeSource.nodeId === targetNodeId) {
       setToast("A node cannot connect to itself.")
       clearEdgeMode()
@@ -1464,7 +1472,7 @@ export function RecoveredEditorHost({
   }
 
   const deleteTarget = diagram?.graph.nodes.find((node) => node.id === (inspectorNodeId ?? selectedNodeId))
-  const canDelete = Boolean(deleteTarget && !isTriggerType(deleteTarget.type))
+  const canDelete = Boolean(deleteTarget && canDeleteTrigger(diagram.graph, deleteTarget.id))
 
   // Which outcomes have somewhere to go. An outcome without one is not an
   // unfinished drawing — it is an exit: `runner.rs` logs "nothing wired to
@@ -1543,6 +1551,7 @@ export function RecoveredEditorHost({
                   edgeSource={edgeSource}
                   key={node.id}
                   node={node}
+                  canDelete={canDeleteTrigger(diagram.graph, node.id)}
                   pulseNodeIds={pulseNodeIds}
                   selected={node.id === selectedNodeId || node.id === inspectorNodeId}
                   viewMode={viewMode}
@@ -1679,6 +1688,7 @@ export function RecoveredEditorHost({
 
 function BoardNode({
   node,
+  canDelete,
   selected,
   viewMode,
   edgeSource,
@@ -1692,6 +1702,7 @@ function BoardNode({
   onStartEdge,
 }: {
   node: DiagramNode
+  canDelete: boolean
   selected: boolean
   viewMode: ViewMode
   edgeSource: { nodeId: string; handle: HandleSide; outcome: string } | null
@@ -1715,10 +1726,6 @@ function BoardNode({
   const configSummary = nodeConfigSummary(node, { agent: agents, structured_output: shapes }).slice(0, 3)
   const isBrushSource = edgeSource?.nodeId === node.id
   const isBrushConnected = pulseNodeIds.has(node.id)
-  // A flow is entered at its trigger and run from everything else. That is the
-  // whole difference, and it is why this one node has no delete control.
-  const isTrigger = isTriggerType(node.type)
-
   return (
     <article
       className={`board-node ${selected ? "selected" : ""}`}
@@ -1782,10 +1789,10 @@ function BoardNode({
               ? `${outcome.label} outcome, connected`
               : shapeIsFixed
                 ? `${outcome.label}, handed to the caller`
-                : `${outcome.label} outcome, nothing connected — the ${family === "post_call" ? "flow" : "call"} ends here`}
+                : `${outcome.label} outcome, nothing connected — the ${family === "integration" ? "flow" : "call"} ends here`}
             title={wired || shapeIsFixed
               ? undefined
-              : `Nothing is wired to “${outcome.label}”, so the ${family === "post_call" ? "flow" : "call"} ends here.`}
+              : `Nothing is wired to “${outcome.label}”, so the ${family === "integration" ? "flow" : "call"} ends here.`}
             onClick={(event) => {
               event.stopPropagation()
               // Finishing an edge accepts the whole row: the target is the node,
@@ -1818,7 +1825,7 @@ function BoardNode({
                 post-call flow the call is already over — saying "ends the
                 call" there describes something that happened before this node
                 ran. */}
-            <small>{wired ? outcome.id : shapeIsFixed ? "to the caller" : family === "post_call" ? "ends the flow" : "ends the call"}</small>
+            <small>{wired ? outcome.id : shapeIsFixed ? "to the caller" : family === "integration" ? "ends the flow" : "ends the call"}</small>
           </button>
           )
         })}
@@ -1827,9 +1834,9 @@ function BoardNode({
         <>
           {node.description ? <div className="node-tooltip">{node.description}</div> : null}
           <div className="selection-ring" />
-          {isTrigger ? null : (
+          {canDelete ? (
             <button className="node-action node-action-delete" data-board-nodrag="true" aria-label="Delete node" onClick={(event) => { event.stopPropagation(); onDelete() }}><Icon name="trash" /></button>
-          )}
+          ) : null}
         </>
       ) : null}
     </article>

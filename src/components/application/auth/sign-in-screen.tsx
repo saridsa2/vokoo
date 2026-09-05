@@ -1,14 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Button } from "@/components/base/buttons/button";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Input } from "@/components/base/input/input";
-import { VokooLogo } from "@/components/foundations/logo/vokoo-logo";
+import { Auth2 } from "@/components/blocks/auth-2";
 import { useSession } from "@/hooks/use-session";
-import { api, ApiError } from "@/utils/api-client";
+import { ApiError, api } from "@/utils/api-client";
 
 /**
  * Sign-in.
@@ -26,79 +25,22 @@ import { api, ApiError } from "@/utils/api-client";
  * console renews the session silently, so it survives a browser restart.
  */
 
-/**
- * The left half: the mark, at the size a mark deserves.
- *
- * It was a violet-and-ember gradient sphere, built from a spec that reserved
- * those two colours for "product artwork". That spec belongs to a different
- * brand — Sarvathra's mark is the teal-to-blue fingerprint, and the sphere was
- * standing in for it while the real thing sat 25 pixels tall in the opposite
- * corner. The largest element on the page belonged to no brand at all.
- *
- * Underneath it, one line. What was here before was a positioning statement, a
- * paragraph of it, and a specification table — telephony, inference, latency.
- * All three are for somebody deciding whether to buy. Everybody who reaches
- * this page has already decided; they are trying to get to work.
- */
-function ProductPanel() {
-    return (
-        <div className="relative hidden flex-col items-center justify-center gap-10 bg-secondary p-16 lg:flex">
-            <div className="flex flex-col items-center gap-5">
-                <Image
-                    src="/sarvathra-mark@2x.png"
-                    alt=""
-                    aria-hidden="true"
-                    width={192}
-                    height={247}
-                    priority
-                    // Height-driven, as the logo component is: the mark is
-                    // taller than it is wide, so constraining the height is
-                    // what keeps it from being cropped by its own bounding box.
-                    //
-                    // **96px, not 192, and that is an asset limit rather than a
-                    // design choice.** `sarvathra-mark@2x.png` is 149x192 — cut
-                    // as the 2x of a 96px logo, not for a hero. Drawn at 192 it
-                    // is upscaled twice over on a Retina screen and visibly
-                    // soft.
-                    //
-                    // The logo component's own note says the source is
-                    // 1824x2350, but that file is in neither the repo nor the
-                    // server. Drop a 384px-tall export at
-                    // `public/sarvathra-hero.png` and this goes back to `h-48`.
-                    className="h-24 w-auto"
-                />
-                {/* The wordmark belongs with the mark. It repeats the one in
-                    the form column on purpose — that one is what a phone sees,
-                    since this pane is hidden below `lg`, and the two never
-                    appear together on a screen small enough for it to read as
-                    duplication. */}
-                <span className="text-display-sm font-bold tracking-[0.16em] text-primary">
-                    SARVATHRA
-                </span>
-            </div>
-            {/* **Written for two buyers at once, which is the whole trick.**
-                A hospital administrator reads "falls through" as revenue — the
-                slot that went empty, the refill that went elsewhere. A doctor
-                reads it as continuity of care — the follow-up that never
-                happened. "Revenue recovery" only speaks to the first, and to
-                the second it reads as crass.
+/* The left half is now the Auth 2 block's panel — see
+   `@/components/blocks/auth-2`. The hand-rolled one that used to live here is
+   gone rather than kept beside it: two split layouts on one screen is one of
+   them silently going stale.
 
-                It also covers both directions without naming either: the call
-                nobody answered and the follow-up nobody made are the same
-                failure to the patient.
+   What survived the move is the decision this comment recorded. The panel had
+   been a violet-and-ember gradient sphere from a spec belonging to a different
+   brand, while the real mark sat 25 pixels tall in the opposite corner; the
+   mark is the artwork now, at the size a mark deserves. And the line beneath it
+   is still absent, for the reason the block repeats: the last one written for
+   this panel was invented and then handed back to its owner as his own words.
 
-                The line beneath says what it means and puts the journey in it,
-                which is the frame this market is sold on. */}
-            <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-                <p className="text-display-xs font-light text-primary">Sarvathra</p>
-                <p className="text-md text-tertiary">
-                    
-                </p>
-            </div>
-        </div>
-    );
-}
-
+   The asset note is worth carrying: `sarvathra-mark@2x.png` is 149x192, cut as
+   the 2x of a 96px logo rather than for a hero, so it goes soft above about
+   that height on a Retina screen. Drop a 384px-tall export at
+   `public/sarvathra-hero.png` and the block's panel can grow. */
 
 /**
  * What actually went wrong, said in the reader's terms.
@@ -218,138 +160,114 @@ export function SignInScreen() {
     }
 
     return (
-        <section className="grid min-h-dvh grid-cols-1 bg-primary lg:grid-cols-2">
-            {/* Brand left, form right. The panel is hidden below `lg`, so on a
-                phone the form is what renders first. */}
-            <ProductPanel />
+        // The block owns the page and the dialog; everything inside is this
+        // screen's, because the block's own form was a demo that logged to the
+        // console.
+        //
+        // `VokooLogo` used to open this column and is gone: the block now draws
+        // the mark itself, animated, directly above — printing it twice in one
+        // card is the same duplication the node view had when it named its type
+        // four times.
+        <Auth2>
+            <h1 className="text-display-xs font-light text-primary">{step === "identify" ? "Sign in" : linkSent ? "Check your email" : "Sign in"}</h1>
 
-            <div className="flex flex-col">
-                <div className="flex flex-1 items-center justify-center px-6 py-16">
-                    <div className="w-full max-w-sm">
-                        <VokooLogo />
+            {step !== "identify" && (
+                // The address is settled, so it becomes context
+                // rather than a field — and stays changeable,
+                // because a typo is the likeliest reason to be
+                // looking at the wrong step.
+                <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-sm text-tertiary">
+                    <span className="text-secondary">{email.trim()}</span>
+                    <Button size="sm" color="link-color" onClick={changeEmail}>
+                        Change
+                    </Button>
+                </p>
+            )}
 
-                        <h1 className="mt-10 text-display-xs font-light text-primary">
-                            {step === "identify" ? "Sign in" : linkSent ? "Check your email" : "Sign in"}
-                        </h1>
+            {step === "identify" && (
+                <form onSubmit={identify} className="mt-8 flex flex-col gap-5">
+                    <Input
+                        isRequired
+                        hideRequiredIndicator
+                        label="Email"
+                        type="email"
+                        name="email"
+                        size="md"
+                        placeholder="you@example.com"
+                        autoComplete="email"
+                        autoFocus
+                        value={email}
+                        onChange={setEmail}
+                    />
+                    {error && <FormError>{error}</FormError>}
+                    <Button type="submit" size="lg" isLoading={isBusy} showTextWhileLoading>
+                        Continue
+                    </Button>
+                </form>
+            )}
 
-                        {step !== "identify" && (
-                            // The address is settled, so it becomes context
-                            // rather than a field — and stays changeable,
-                            // because a typo is the likeliest reason to be
-                            // looking at the wrong step.
-                            <p className="mt-2 flex flex-wrap items-baseline gap-x-2 text-sm text-tertiary">
-                                <span className="text-secondary">{email.trim()}</span>
-                                <Button size="sm" color="link-color" onClick={changeEmail}>
-                                    Change
-                                </Button>
+            {step === "password" && (
+                <form onSubmit={submitPassword} className="mt-8 flex flex-col gap-5">
+                    <Input
+                        isRequired
+                        hideRequiredIndicator
+                        label="Password"
+                        type="password"
+                        name="password"
+                        size="md"
+                        placeholder="••••••••••••"
+                        autoComplete="current-password"
+                        autoFocus
+                        value={password}
+                        onChange={setPassword}
+                    />
+                    <Checkbox label="Remember me" isSelected={remember} onChange={setRemember} />
+                    {error && <FormError>{error}</FormError>}
+                    <Button type="submit" size="lg" isLoading={isBusy} showTextWhileLoading>
+                        Sign in
+                    </Button>
+
+                    <div className="border-t border-secondary pt-5">
+                        <Button size="sm" color="link-color" isDisabled={isBusy} onClick={mailLink}>
+                            Email me a link instead
+                        </Button>
+                        {linkSent && (
+                            <p role="status" className="mt-2 text-sm text-secondary">
+                                Sent. It works once and expires in an hour.
                             </p>
                         )}
+                    </div>
+                </form>
+            )}
 
-                        {step === "identify" && (
-                            <form onSubmit={identify} className="mt-8 flex flex-col gap-5">
-                                <Input
-                                    isRequired
-                                    hideRequiredIndicator
-                                    label="Email"
-                                    type="email"
-                                    name="email"
-                                    size="md"
-                                    placeholder="you@example.com"
-                                    autoComplete="email"
-                                    autoFocus
-                                    value={email}
-                                    onChange={setEmail}
-                                />
-                                {error && <FormError>{error}</FormError>}
-                                <Button type="submit" size="lg" isLoading={isBusy} showTextWhileLoading>
-                                    Continue
-                                </Button>
-                            </form>
-                        )}
-
-                        {step === "password" && (
-                            <form onSubmit={submitPassword} className="mt-8 flex flex-col gap-5">
-                                <Input
-                                    isRequired
-                                    hideRequiredIndicator
-                                    label="Password"
-                                    type="password"
-                                    name="password"
-                                    size="md"
-                                    placeholder="••••••••••••"
-                                    autoComplete="current-password"
-                                    autoFocus
-                                    value={password}
-                                    onChange={setPassword}
-                                />
-                                <Checkbox label="Remember me" isSelected={remember} onChange={setRemember} />
-                                {error && <FormError>{error}</FormError>}
-                                <Button type="submit" size="lg" isLoading={isBusy} showTextWhileLoading>
-                                    Sign in
-                                </Button>
-
-                                <div className="border-t border-secondary pt-5">
-                                    <Button
-                                        size="sm"
-                                        color="link-color"
-                                        isDisabled={isBusy}
-                                        onClick={mailLink}
-                                    >
-                                        Email me a link instead
-                                    </Button>
-                                    {linkSent && (
-                                        <p role="status" className="mt-2 text-sm text-secondary">
-                                            Sent. It works once and expires in an hour.
-                                        </p>
-                                    )}
-                                </div>
-                            </form>
-                        )}
-
-                        {step === "link" && (
-                            <div className="mt-8 flex flex-col gap-5">
-                                {linkSent ? (
-                                    <p role="status" className="text-md text-secondary">
-                                        If that address has an account here, a link is on its way. It
-                                        signs you in without a password, works once, and expires in
-                                        an hour.
-                                    </p>
-                                ) : (
-                                    <>
-                                        {/* No password field here, because there
+            {step === "link" && (
+                <div className="mt-8 flex flex-col gap-5">
+                    {linkSent ? (
+                        <p role="status" className="text-md text-secondary">
+                            If that address has an account here, a link is on its way. It signs you in without a password, works once, and expires in an hour.
+                        </p>
+                    ) : (
+                        <>
+                            {/* No password field here, because there
                                             is no password — every account made
                                             by invitation is reachable only by
                                             link until somebody sets one. */}
-                                        <p className="text-md text-tertiary">
-                                            We will email you a link that signs you in. No password
-                                            needed.
-                                        </p>
-                                        {error && <FormError>{error}</FormError>}
-                                        <Button
-                                            size="lg"
-                                            isLoading={isBusy}
-                                            showTextWhileLoading
-                                            onClick={mailLink}
-                                        >
-                                            Email me a sign-in link
-                                        </Button>
-                                    </>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                            <p className="text-md text-tertiary">We will email you a link that signs you in. No password needed.</p>
+                            {error && <FormError>{error}</FormError>}
+                            <Button size="lg" isLoading={isBusy} showTextWhileLoading onClick={mailLink}>
+                                Email me a sign-in link
+                            </Button>
+                        </>
+                    )}
                 </div>
-            </div>
-        </section>
+            )}
+        </Auth2>
     );
 }
 
 /** The one place a sign-in failure is rendered, so all three steps match. */
 const FormError = ({ children }: { children: React.ReactNode }) => (
-    <p
-        role="alert"
-        className="rounded-md bg-error-primary px-3 py-2 text-sm text-error-primary ring-1 ring-error_subtle"
-    >
+    <p role="alert" className="rounded-md bg-error-primary px-3 py-2 text-sm text-error-primary ring-1 ring-error_subtle">
         {children}
     </p>
 );

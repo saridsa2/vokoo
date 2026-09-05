@@ -45,7 +45,10 @@ pub use billing::PostgrestBillingStorage;
 pub use control::{CallControl, CallHandle};
 pub use engine::{build_realtime, build_relay, Relay, RealtimeRequest, StageContext, ThinkingStage};
 pub use escalate::{escalate, Cause};
-pub use graph::{agent_greeting, agent_prompt, agent_tools, engine_for_agent, Engine, Flow, FlowNode, NodeType};
+pub use graph::{
+    agent_greeting, agent_prompt, agent_tools, engine_for_agent, Engine, EntryError, EntryPoint, Flow,
+    FlowNode, NodeType,
+};
 pub use handover::{escape, Handover, Handovers};
 pub use keypress::Keypresses;
 pub use record::CallRecord;

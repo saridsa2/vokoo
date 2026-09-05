@@ -1,0 +1,17 @@
+{
+  "id": "med-2024-004",
+  "patientId": "person-001",
+  "medication": { "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "308191", "display": "amoxicillin 500 MG Oral Capsule" },
+  "form": { "system": "http://snomed.info/sct", "code": "421026006", "display": "Capsule" },
+  "route": { "system": "http://snomed.info/sct", "code": "26643006", "display": "Oral route" },
+  "dosage": { "value": 500, "unit": "mg" },
+  "frequency": "TID",
+  "durationDays": 7,
+  "startDate": "2024-09-10",
+  "endDate": "2024-09-17",
+  "indication": {
+    "coding": [ { "system": "http://snomed.info/sct", "code": "444814009", "display": "Acute sinusitis" } ],
+    "text": "急性鼻窦炎"
+  },
+  "instructions": "饭后口服，间隔 8 小时"
+}

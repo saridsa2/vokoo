@@ -6,9 +6,10 @@
         "dev": "next dev --turbopack",
         "build": "next build",
         "start": "next start",
+        "test:flows": "node --import tsx --test src/utils/flow-graph.test.ts src/lib/flow-diagram.test.ts",
         "test:sdk": "node --test packages/sdk/src/*.test.ts",
         "test:cli": "node --test packages/cli/src/*.test.ts",
-        "test": "npm run test:sdk && npm run test:cli",
+        "test": "npm run test:flows && npm run test:sdk && npm run test:cli",
         "catalogue:sync": "node scripts/sync-node-catalogue.mjs",
         "catalogue:check": "node scripts/sync-node-catalogue.mjs --check",
         "build:deploy": "env $(grep -v '^#' .env.production | grep -v '^$' | xargs) next build"
@@ -61,6 +62,7 @@
         "postcss-loader": "^8.2.1",
         "prettier": "^3.8.1",
         "prettier-plugin-tailwindcss": "^0.7.2",
+        "tsx": "^4.23.13",
         "typescript": "^5.9.3"
     }
 }

@@ -93,8 +93,10 @@ struct Transition {
 
 #[derive(Debug, Deserialize)]
 struct Graph {
+    #[serde(default = "legacy_graph_version")]
+    version: u64,
     #[serde(default)]
-    start: String,
+    start: Option<String>,
     #[serde(default)]
     nodes: Vec<FlowNode>,
     #[serde(default)]
@@ -106,7 +108,43 @@ struct FlowRow {
     id: String,
     org_id: String,
     name: String,
+    #[serde(default)]
+    trigger_event: Option<String>,
     graph: Graph,
+}
+
+fn legacy_graph_version() -> u64 {
+    2
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntryPoint {
+    pub event: String,
+    pub key: String,
+}
+
+impl EntryPoint {
+    pub fn new(event: impl Into<String>) -> Self {
+        Self { event: event.into(), key: "default".into() }
+    }
+
+    pub fn with_key(event: impl Into<String>, key: impl Into<String>) -> Self {
+        let key = key.into();
+        Self {
+            event: event.into(),
+            key: if key.trim().is_empty() { "default".into() } else { key.trim().to_owned() },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EntryError {
+    #[error("duplicate entry {event}/{key}")]
+    Duplicate { event: String, key: String },
+    #[error("flow has no entry for {event}/{key}")]
+    Missing { event: String, key: String },
+    #[error("{0}")]
+    InvalidGraph(String),
 }
 
 pub struct Flow {
@@ -114,6 +152,7 @@ pub struct Flow {
     pub org_id: String,
     pub name: String,
     pub start: String,
+    entries: HashMap<(String, String), String>,
     nodes: HashMap<String, FlowNode>,
     /// (from, outcome) -> to. Keyed on the outcome, because that is the whole
     /// design: two lines leave one node for different reasons.
@@ -122,6 +161,85 @@ pub struct Flow {
 }
 
 impl Flow {
+    #[cfg(test)]
+    pub(crate) fn from_value(
+        value: Value,
+        registry: HashMap<String, NodeType>,
+        legacy_event: &str,
+    ) -> Result<Self, EntryError> {
+        let row = serde_json::from_value(value)
+            .map_err(|error| EntryError::InvalidGraph(error.to_string()))?;
+        Self::from_row(row, registry, legacy_event)
+    }
+
+    fn from_row(
+        row: FlowRow,
+        registry: HashMap<String, NodeType>,
+        legacy_event: &str,
+    ) -> Result<Self, EntryError> {
+        let Graph { version, start, nodes, transitions } = row.graph;
+        let nodes: HashMap<String, FlowNode> =
+            nodes.into_iter().map(|node| (node.id.clone(), node)).collect();
+        let mut entries = HashMap::new();
+
+        for node in nodes.values().filter(|node| node.implementation.starts_with("trigger.")) {
+            let event = event_for_trigger_implementation(&node.implementation);
+            let key = node
+                .config_str("key")
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .unwrap_or("default")
+                .to_owned();
+            if entries.insert((event.clone(), key.clone()), node.id.clone()).is_some() {
+                return Err(EntryError::Duplicate { event, key });
+            }
+        }
+
+        if entries.is_empty() {
+            if version >= 3 {
+                return Err(EntryError::Missing {
+                    event: legacy_event.to_owned(),
+                    key: "default".into(),
+                });
+            }
+            let start = start
+                .as_deref()
+                .filter(|node_id| !node_id.is_empty() && nodes.contains_key(*node_id))
+                .ok_or_else(|| EntryError::InvalidGraph("legacy flow has no valid start node".into()))?;
+            entries.insert((legacy_event.to_owned(), "default".into()), start.to_owned());
+        }
+
+        let requested = (legacy_event.to_owned(), "default".into());
+        let compatibility_start = start
+            .filter(|node_id| nodes.contains_key(node_id))
+            .or_else(|| entries.get(&requested).cloned())
+            .unwrap_or_default();
+
+        Ok(Self {
+            id: row.id,
+            org_id: row.org_id,
+            name: row.name,
+            start: compatibility_start,
+            entries,
+            nodes,
+            transitions: transitions
+                .into_iter()
+                .map(|transition| ((transition.from, transition.outcome), transition.to))
+                .collect(),
+            registry,
+        })
+    }
+
+    pub fn entry_node(&self, entry: &EntryPoint) -> Result<&str, EntryError> {
+        self.entries
+            .get(&(entry.event.clone(), entry.key.clone()))
+            .map(String::as_str)
+            .ok_or_else(|| EntryError::Missing {
+                event: entry.event.clone(),
+                key: entry.key.clone(),
+            })
+    }
+
     pub fn node(&self, id: &str) -> Option<&FlowNode> {
         self.nodes.get(id)
     }
@@ -134,6 +252,14 @@ impl Flow {
         self.transitions
             .get(&(from.to_string(), outcome.to_string()))
             .map(String::as_str)
+    }
+}
+
+fn event_for_trigger_implementation(implementation: &str) -> String {
+    let encoded = implementation.strip_prefix("trigger.").unwrap_or(implementation);
+    match encoded.split_once('_') {
+        Some((family, event)) => format!("{family}.{event}"),
+        None => encoded.to_owned(),
     }
 }
 
@@ -320,11 +446,6 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
     };
     let row: FlowRow = serde_json::from_value(row).map_err(|e| e.to_string())?;
 
-    if row.graph.start.is_empty() || !row.graph.nodes.iter().any(|n| n.id == row.graph.start) {
-        log::warn!("[flow] {} has no node to answer with — using the agent", row.name);
-        return Ok(None);
-    }
-
     let registry_rows = get(
         &client,
         base,
@@ -343,20 +464,12 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
         .map(|t| (t.id.clone(), t))
         .collect();
 
-    Ok(Some(Flow {
-        id: row.id,
-        org_id: row.org_id,
-        name: row.name,
-        start: row.graph.start,
-        nodes: row.graph.nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
-        transitions: row
-            .graph
-            .transitions
-            .into_iter()
-            .map(|t| ((t.from, t.outcome), t.to))
-            .collect(),
-        registry,
-    }))
+    let flow = Flow::from_row(row, registry, trigger).map_err(|error| error.to_string())?;
+    if let Err(error) = flow.entry_node(&EntryPoint::new(trigger)) {
+        log::warn!("[flow] {} — using the agent", error);
+        return Ok(None);
+    }
+    Ok(Some(flow))
 }
 
 /// One flow by id, published or not.
@@ -378,13 +491,14 @@ pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
         "flows",
         &[
             ("id", format!("eq.{flow_id}")),
-            ("select", "id,org_id,name,graph".into()),
+            ("select", "id,org_id,name,trigger_event,graph".into()),
             ("limit", "1".into()),
         ],
     )
     .await
     .ok()?;
     let row: FlowRow = serde_json::from_value(rows.into_iter().next()?).ok()?;
+    let legacy_event = row.trigger_event.clone().unwrap_or_else(|| TRIGGER_ANSWERED.into());
 
     let registry_rows = get(
         &client,
@@ -399,24 +513,12 @@ pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
     .await
     .ok()?;
 
-    Some(Flow {
-        id: row.id,
-        org_id: row.org_id,
-        name: row.name,
-        start: row.graph.start,
-        nodes: row.graph.nodes.into_iter().map(|n| (n.id.clone(), n)).collect(),
-        transitions: row
-            .graph
-            .transitions
-            .into_iter()
-            .map(|t| ((t.from, t.outcome), t.to))
-            .collect(),
-        registry: registry_rows
-            .into_iter()
-            .filter_map(|r| serde_json::from_value::<NodeType>(r).ok())
-            .map(|t| (t.id.clone(), t))
-            .collect(),
-    })
+    let registry = registry_rows
+        .into_iter()
+        .filter_map(|r| serde_json::from_value::<NodeType>(r).ok())
+        .map(|t| (t.id.clone(), t))
+        .collect();
+    Flow::from_row(row, registry, &legacy_event).ok()
 }
 
 /// An organisation's key for a vendor, from the vault.
@@ -859,4 +961,144 @@ pub async fn vendor_secret(base: &str, key: &str, org_id: &str, vendor: &str) ->
         .ok()?;
 
     response.json::<Option<String>>().await.ok().flatten().filter(|s| !s.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn row(nodes: Value, start: Option<&str>, version: u64) -> Value {
+        json!({
+            "id": "flow-1",
+            "org_id": "org-1",
+            "name": "Reception",
+            "graph": {
+                "version": version,
+                "start": start,
+                "nodes": nodes,
+                "transitions": []
+            }
+        })
+    }
+
+    fn trigger(id: &str, implementation: &str, key: Option<&str>) -> Value {
+        json!({
+            "id": id,
+            "type": "trigger",
+            "implementation": implementation,
+            "name": id,
+            "config": key.map(|value| json!({ "key": value })).unwrap_or_else(|| json!({}))
+        })
+    }
+
+    #[test]
+    fn selects_each_trigger_by_event_and_default_key() {
+        let flow = Flow::from_value(
+            row(
+                json!([
+                    trigger("answered", "trigger.call_answered", None),
+                    trigger("ended", "trigger.call_ended", Some("default"))
+                ]),
+                None,
+                3,
+            ),
+            HashMap::new(),
+            TRIGGER_ANSWERED,
+        )
+        .unwrap();
+
+        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "answered");
+        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+    }
+
+    #[test]
+    fn selects_the_requested_key_without_falling_back_to_default() {
+        let flow = Flow::from_value(
+            row(
+                json!([
+                    trigger("default", "trigger.integration_invoked", None),
+                    trigger("hubspot", "trigger.integration_invoked", Some("hubspot"))
+                ]),
+                None,
+                3,
+            ),
+            HashMap::new(),
+            "integration.invoked",
+        )
+        .unwrap();
+
+        assert_eq!(
+            flow.entry_node(&EntryPoint::with_key("integration.invoked", "hubspot"))
+                .unwrap(),
+            "hubspot"
+        );
+        assert!(matches!(
+            flow.entry_node(&EntryPoint::with_key("integration.invoked", "salesforce")),
+            Err(EntryError::Missing { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_event_and_key() {
+        let error = Flow::from_value(
+            row(
+                json!([
+                    trigger("first", "trigger.call_answered", None),
+                    trigger("second", "trigger.call_answered", Some("default"))
+                ]),
+                None,
+                3,
+            ),
+            HashMap::new(),
+            TRIGGER_ANSWERED,
+        )
+        .err()
+        .expect("duplicate entries must fail compilation");
+
+        assert_eq!(
+            error,
+            EntryError::Duplicate {
+                event: "call.answered".into(),
+                key: "default".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn missing_entry_does_not_fall_through_to_node_order() {
+        let flow = Flow::from_value(
+            row(json!([trigger("answered", "trigger.call_answered", None)]), None, 3),
+            HashMap::new(),
+            TRIGGER_ANSWERED,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)),
+            Err(EntryError::Missing { .. })
+        ));
+    }
+
+    #[test]
+    fn legacy_graph_uses_its_historical_start_for_the_resolved_event() {
+        let flow = Flow::from_value(
+            row(
+                json!([{
+                    "id": "agent",
+                    "type": "custom",
+                    "implementation": "agent",
+                    "name": "Receptionist",
+                    "config": {}
+                }]),
+                Some("agent"),
+                2,
+            ),
+            HashMap::new(),
+            TRIGGER_ANSWERED,
+        )
+        .unwrap();
+
+        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "agent");
+    }
 }

@@ -1,10 +1,26 @@
 @theme {
   /* Colors */
-  --color-eggshell: #fdfcfc;
-  --color-warm-taupe: #f5f3f1;
-  --color-stone: #ebe8e4;
-  --color-ink: #000000;
-  --color-graphite: #44403b;
+  /* Sarvam's `tatva` palette, converted from HSL. Their system never touches
+   * either extreme: the ground is a warm bone rather than near-white, and the
+   * ink is #333 rather than black.
+   *
+   *   was       tatva                    now
+   *   #fdfcfc   --card       39 58% 95%  #faf5eb
+   *   #f5f3f1   --background 42 17% 96%  #f7f6f3
+   *   #ebe8e4   --accent     42 18% 89%  #e8e5de
+   *   #000000   --primary    0 0% 20%    #333333
+   *   #44403b   button grad -> 10%       #1a1a1a
+   *
+   * These five names carry the whole console — every surface, hover and filled
+   * action resolves through them — so this is the only place the change is
+   * made. Restore the five values in the table's left column to revert. */
+  --color-eggshell: #faf5eb;
+  --color-warm-taupe: #f7f6f3;
+  --color-stone: #e8e5de;
+  --color-ink: #333333;
+  /* Darker than ink, not lighter: it is ink's hover, and their button gradient
+   * runs 20% -> 10%. At the old #44403b it would now lighten on hover. */
+  --color-graphite: #1a1a1a;
   --color-smoke: #777169;
   --color-ash: #a59f97;
   --color-violet-spark: #0447ff;

@@ -21,78 +21,20 @@
 //     a time. Flattening the wrong level silently produces a node the bridge
 //     reads as unconfigured.
 //
-//  3. A flow has a `start`. On the canvas that is the trigger node — the one
-//     node the flow is entered at rather than run. A flow drawn before triggers
-//     existed has none, so one is materialised from the row's `trigger_event`
-//     and wired to whatever `start` used to name. That is a real node from that
-//     point on, not a decoration: it is saved back into the graph, the bridge's
-//     registry knows it from `catalogue_node_types`, and `runner.rs` walks
-//     through it.
+//  3. Graph v3 has explicit trigger nodes rather than one `start`. A legacy
+//     graph is normalized before drawing, so the canvas always sees the same
+//     multi-entry shape that the new runtime sees.
 
 import type { Diagram, DiagramEdge, DiagramNode, NodeType } from "@/lib/architecture-model";
-import { NODE_TYPES, TRIGGER_NODE_FOR_EVENT, isTriggerType, outcomeForNode } from "@/lib/architecture-model";
-import type { Flow, FlowGraph, FlowNode, FlowTransition } from "@/utils/flow-graph";
-import { EMPTY_GRAPH } from "@/utils/flow-graph";
-
-/** The trigger a flow handling this event opens with. */
-function triggerTypeFor(flow: Flow): NodeType {
-    return TRIGGER_NODE_FOR_EVENT[flow.trigger_event ?? "call.answered"] ?? "trigger.call_answered";
-}
-
-/**
- * The trigger node a flow opens with, added if the stored graph predates them.
- *
- * The materialised node is wired to whatever `start` used to name, so the graph
- * still runs the same nodes in the same order — the trigger is prepended, never
- * substituted. Nothing is materialised for a graph that already has one, which
- * is what makes this safe to run on every load.
- */
-function withTrigger(graph: FlowGraph, flow: Flow): FlowGraph {
-    if (graph.nodes.some((node) => isTriggerType(node.implementation as NodeType))) return graph;
-
-    const type = triggerTypeFor(flow);
-    const meta = NODE_TYPES[type];
-    // A graph with no nodes gets its trigger and nothing to point at. That is
-    // the correct empty flow: an entry point with an unwired outcome.
-    const head = graph.nodes.find((node) => node.id === graph.start) ?? graph.nodes[0];
-
-    // Deterministic, so reopening the same flow twice does not produce two ids
-    // for the same node and make an edit look like a rewrite. Suffixed only if
-    // somebody's hand-written graph already took the name.
-    let id = "trigger";
-    while (graph.nodes.some((node) => node.id === id)) id = `${id}_1`;
-
-    const node: FlowNode = {
-        id,
-        type: "trigger",
-        implementation: type,
-        name: meta.label,
-        // Left of the node it leads to, at the same height, so the board reads
-        // in the direction the edges already flow.
-        position: head ? { x: head.position.x - 380, y: head.position.y } : { x: 0, y: 0 },
-        config: {},
-    };
-
-    const transitions = head
-        ? [{ id: `${id}-start`, from: id, outcome: meta.outcomes[0].id, to: head.id }, ...graph.transitions]
-        : graph.transitions;
-
-    return { ...graph, start: id, nodes: [node, ...graph.nodes], transitions };
-}
-
-/** The node a flow begins at, when the stored graph does not say. */
-function inferStart(nodes: FlowNode[], transitions: FlowTransition[]): string {
-    const entered = new Set(transitions.map((t) => t.to));
-    // A node nothing points at is where the call arrives. More than one means
-    // the graph has several ways in, which the runner cannot express; the first
-    // is taken and the flow's own `start` should be trusted over this.
-    return nodes.find((n) => !entered.has(n.id))?.id ?? nodes[0]?.id ?? "";
-}
+import { NODE_TYPES, outcomeForNode } from "@/lib/architecture-model";
+import type { Flow, FlowFamily, FlowGraph, FlowNode, FlowTransition } from "@/utils/flow-graph";
+import { normalizeFlowGraph } from "@/utils/flow-graph";
 
 /** A stored flow, as the canvas draws it. */
 export function flowToDiagram(flow: Flow): Diagram {
-    const graph = withTrigger(flow.graph ?? EMPTY_GRAPH, flow);
+    const graph = normalizeFlowGraph(flow);
     const now = new Date().toISOString();
+    const family = flow.family ?? legacyFamily(flow.trigger_event);
 
     const nodes: DiagramNode[] = graph.nodes.map((node) => ({
         id: node.id,
@@ -128,9 +70,9 @@ export function flowToDiagram(flow: Flow): Diagram {
         ownerUserId: "",
         name: flow.name,
         description: flow.description ?? "",
-        // Carries what the canvas cannot express, so a round trip does not
-        // discard it: the start node, the declared variables, the version.
-        context: JSON.stringify({ start: graph.start, variables: graph.variables, version: graph.version }),
+        // Family is an authored capability boundary. `legacyStart` is carried
+        // only so a v2 snapshot can still be inspected during the rollout.
+        context: JSON.stringify({ family, legacyStart: graph.start, variables: graph.variables, version: 3 }),
         graph: { nodes, edges },
         isPublic: false,
         commentsEnabled: false,
@@ -190,26 +132,26 @@ export function diagramToFlowGraph(diagram: Diagram, previous?: FlowGraph | null
             to: edge.targetNodeId,
         }));
 
-    // The trigger is where the flow is entered, so it is `start` — the board
-    // says so directly rather than the answer being carried alongside it. The
-    // older reasoning stays underneath for a graph still without one.
-    const trigger = nodes.find((node) => isTriggerType(node.implementation as NodeType));
-    const start =
-        trigger?.id ||
-        (carried.start && nodes.some((n) => n.id === carried.start) ? carried.start : "") ||
-        previous?.start ||
-        inferStart(nodes, transitions);
-
     return {
-        version: carried.version ?? previous?.version ?? EMPTY_GRAPH.version,
-        start,
+        version: 3,
         nodes,
         transitions,
         variables: carried.variables ?? previous?.variables ?? [],
     };
 }
 
-type Carried = { start?: string; variables?: FlowGraph["variables"]; version?: number };
+type Carried = {
+    family?: FlowFamily;
+    legacyStart?: string;
+    variables?: FlowGraph["variables"];
+    version?: number;
+};
+
+function legacyFamily(triggerEvent: string | undefined): FlowFamily {
+    if (triggerEvent === "call.ended") return "integration";
+    if (triggerEvent === "message.received") return "message";
+    return "call";
+}
 
 function readCarried(context: string | undefined): Carried {
     if (!context) return {};

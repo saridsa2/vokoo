@@ -1,0 +1,25 @@
+{
+  "id": "lab-2024-009",
+  "patientId": "person-001",
+  "issuedAt": "2024-12-11T08:00:00Z",
+  "facility": { "id": "lab-02", "name": "WellAll Immunology Lab" },
+  "specimen": {
+    "type": { "system": "http://terminology.hl7.org/CodeSystem/v2-0487", "code": "SER", "display": "Serum" },
+    "collectedAt": "2024-12-11T07:30:00Z"
+  },
+  "results": [
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "53984-1", "display": "Nuclear Ab [Presence] in Serum" } ] },
+      "value": {
+        "coding": [ { "system": "http://snomed.info/sct", "code": "10828004", "display": "Positive" } ],
+        "text": "ANA positive"
+      },
+      "interpretation": "A"
+    },
+    {
+      "code": { "coding": [ { "system": "http://loinc.org", "code": "14611-8", "display": "Nuclear Ab pattern [Interpretation] in Serum" } ] },
+      "value": "fine speckled pattern",
+      "interpretation": "A"
+    }
+  ]
+}

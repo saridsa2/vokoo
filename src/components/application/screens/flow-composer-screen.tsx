@@ -198,7 +198,7 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
             // Calls and Integrations share this screen and differ in what a
             // field may hold: only the post-call runner carries a scope, so
             // only Integrations may author an expression.
-            board={diagram && familyOf(diagram) === "post_call" ? "integration" : "call"}
+            board={diagram && familyOf(diagram) === "integration" ? "integration" : "call"}
             sampleCall={sampleCall}
             onDryRun={
                 sampleCall?.ucid && context
@@ -216,7 +216,7 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
             shapes={shapes}
             // Back to the board this flow belongs to. Sending an integration
             // to the calls list would look like it had been filtered out.
-            backHref={familyOf(diagram) === "post_call" ? "/integrations" : "/composer"}
+            backHref={familyOf(diagram) === "integration" ? "/integrations" : "/composer"}
         />
     );
 }

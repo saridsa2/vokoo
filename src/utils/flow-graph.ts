@@ -38,12 +38,35 @@ export type FlowTransition = {
 
 export type FlowGraph = {
     version: number;
-    /** The node that answers the call. */
-    start: string;
+    /** Legacy v2 entry point. Graph v3 selects an explicit trigger instead. */
+    start?: string;
     nodes: FlowNode[];
     transitions: FlowTransition[];
     /** Values carried for the length of one call. */
     variables: { name: string; type: string }[];
+};
+
+export type FlowFamily = "call" | "integration" | "care_path" | "message" | "general";
+
+export type FlowEntryPoint = {
+    event: string;
+    key?: string;
+};
+
+export type TriggerEntry = {
+    event: string;
+    key: string;
+    nodeId: string;
+};
+
+type EntryCapableNode = {
+    id: string;
+    type: string;
+    implementation?: string;
+};
+
+type EntryCapableGraph = {
+    nodes: EntryCapableNode[];
 };
 
 export type Flow = {
@@ -52,6 +75,8 @@ export type Flow = {
     description: string | null;
     status: string;
     graph: FlowGraph | null;
+    /** What capabilities and triggers this flow is allowed to contain. */
+    family?: FlowFamily;
     /**
      * The event this flow handles. It stays on the row rather than living only
      * in the graph because `number_flows` and the bridge's `resolve_for_event`
@@ -63,13 +88,108 @@ export type Flow = {
 
 export const EMPTY_GRAPH: FlowGraph = { version: 2, start: "", nodes: [], transitions: [], variables: [] };
 
+const DEFAULT_TRIGGER_OUTCOME: Record<string, string> = {
+    "call.answered": "started",
+    "call.ended": "caller_hung_up",
+    "call.failed": "engine_failed",
+};
+
+function eventForTriggerImplementation(implementation: string): string {
+    const encoded = implementation.slice("trigger.".length);
+    const separator = encoded.indexOf("_");
+    return separator < 0 ? encoded : `${encoded.slice(0, separator)}.${encoded.slice(separator + 1)}`;
+}
+
+function triggerImplementationForEvent(event: string): string {
+    return `trigger.${event.replace(".", "_")}`;
+}
+
+/** Every explicit graph entry, in storage order. Selection never depends on that order. */
+export function triggerEntries(graph: FlowGraph): TriggerEntry[] {
+    return graph.nodes.flatMap((node) => {
+        if (!node.implementation.startsWith("trigger.")) return [];
+        return [
+            {
+                event: eventForTriggerImplementation(node.implementation),
+                key: typeof node.config.key === "string" && node.config.key.trim() ? node.config.key.trim() : "default",
+                nodeId: node.id,
+            },
+        ];
+    });
+}
+
+/** The exact trigger node for an incoming event, or null when this flow does not handle it. */
+export function entryNodeId(graph: FlowGraph, entry: FlowEntryPoint): string | null {
+    const key = entry.key?.trim() || "default";
+    return triggerEntries(graph).find((candidate) => candidate.event === entry.event && candidate.key === key)?.nodeId ?? null;
+}
+
+function isTriggerNode(node: EntryCapableNode): boolean {
+    return (node.implementation ?? node.type).startsWith("trigger.");
+}
+
+/** Trigger nodes are graph roots and can never be the target of an edge. */
+export function canConnectToNode(node: EntryCapableNode): boolean {
+    return !isTriggerNode(node);
+}
+
+/** Ordinary nodes are removable; a trigger is removable while another entry remains. */
+export function canDeleteTrigger(graph: EntryCapableGraph, nodeId: string): boolean {
+    const node = graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return false;
+    if (!isTriggerNode(node)) return true;
+    return graph.nodes.filter(isTriggerNode).length > 1;
+}
+
+/**
+ * Upgrade the legacy singleton entry point in memory without changing its work.
+ * Saving the returned graph is the compatibility-first v2 -> v3 migration.
+ */
+export function normalizeFlowGraph(flow: Flow): FlowGraph {
+    const source = readGraph(flow);
+    if (triggerEntries(source).length > 0) {
+        return source.version === 3 ? source : { ...source, version: 3 };
+    }
+
+    const event = flow.trigger_event ?? "call.answered";
+    const implementation = triggerImplementationForEvent(event);
+    const head = source.nodes.find((node) => node.id === source.start) ?? source.nodes[0];
+    let id = "trigger";
+    while (source.nodes.some((node) => node.id === id)) id = `${id}_1`;
+
+    const trigger: FlowNode = {
+        id,
+        type: "trigger",
+        implementation,
+        name: event
+            .split(".")
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+            .join(" "),
+        position: head ? { x: head.position.x - 380, y: head.position.y } : { x: 0, y: 0 },
+        config: {},
+    };
+    const transitions = head
+        ? [
+              {
+                  id: `${id}-start`,
+                  from: id,
+                  outcome: DEFAULT_TRIGGER_OUTCOME[event] ?? "started",
+                  to: head.id,
+              },
+              ...source.transitions,
+          ]
+        : source.transitions;
+
+    return { ...source, version: 3, start: id, nodes: [trigger, ...source.nodes], transitions };
+}
+
 /** A stored graph, defaulted. A flow created through the generic route has none. */
 export function readGraph(flow: Flow | null | undefined): FlowGraph {
     const graph = flow?.graph;
     if (!graph || !Array.isArray(graph.nodes)) return EMPTY_GRAPH;
     return {
         version: graph.version ?? 2,
-        start: graph.start ?? "",
+        ...(typeof graph.start === "string" ? { start: graph.start } : {}),
         nodes: graph.nodes,
         transitions: Array.isArray(graph.transitions) ? graph.transitions : [],
         variables: Array.isArray(graph.variables) ? graph.variables : [],
@@ -88,11 +208,26 @@ export type FlowProblem = { nodeId?: string; message: string };
 export function checkGraph(graph: FlowGraph, knownTypes: Set<string>): FlowProblem[] {
     const problems: FlowProblem[] = [];
     const ids = new Set(graph.nodes.map((node) => node.id));
+    const entries = triggerEntries(graph);
 
     if (!graph.nodes.length) return [{ message: "This flow has no nodes yet." }];
 
-    if (!graph.start || !ids.has(graph.start)) {
+    if (entries.length === 0 && graph.version >= 3) {
+        problems.push({ message: "This flow has no trigger." });
+    } else if (entries.length === 0 && (!graph.start || !ids.has(graph.start))) {
         problems.push({ message: "No node is marked as the one that answers the call." });
+    }
+
+    const seenEntries = new Set<string>();
+    for (const entry of entries) {
+        const identity = `${entry.event}\u0000${entry.key}`;
+        if (seenEntries.has(identity)) {
+            problems.push({
+                nodeId: entry.nodeId,
+                message: `This flow already has a trigger for ${entry.event} (${entry.key}).`,
+            });
+        }
+        seenEntries.add(identity);
     }
 
     for (const node of graph.nodes) {
@@ -109,7 +244,7 @@ export function checkGraph(graph: FlowGraph, knownTypes: Set<string>): FlowProbl
 
     // A node nothing leads to never runs. Worth saying while it can still be
     // connected, rather than after a caller has fallen down the gap.
-    const reached = new Set<string>([graph.start]);
+    const reached = new Set<string>(entries.length > 0 ? entries.map((entry) => entry.nodeId) : graph.start ? [graph.start] : []);
     let grew = true;
     while (grew) {
         grew = false;

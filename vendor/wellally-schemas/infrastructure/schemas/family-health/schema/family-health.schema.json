@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wellall.health/schemas/family-health/v0.1.0",
+  "title": "WellAll Family Health Tree",
+  "description": "家庭健康树 Schema，记录家庭成员关系与遗传相关疾病。",
+  "type": "object",
+  "required": ["probandId", "members"],
+  "properties": {
+    "probandId": { "type": "string", "description": "家系中被调查/就诊的核心个体 ID。" },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/FamilyMember" }
+    }
+  },
+  "$defs": {
+    "FamilyMember": {
+      "type": "object",
+      "required": ["id", "relationToProband"],
+      "properties": {
+        "id": { "type": "string" },
+        "relationToProband": {
+          "type": "string",
+          "enum": ["self", "mother", "father", "sibling", "child", "grandparent", "grandchild", "aunt", "uncle", "cousin", "other"],
+          "description": "与 proband 的关系。可映射 HL7 v3 RoleCode。"
+        },
+        "sex": { "type": "string", "enum": ["male", "female", "other", "unknown"] },
+        "birthYear": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+        "deceased": { "type": "boolean" },
+        "conditions": {
+          "type": "array",
+          "items": { "$ref": "https://wellall.health/schemas/common/v0.1.0#/$defs/CodeableConcept" },
+          "description": "主要遗传/慢性疾病，建议使用 SNOMED CT 或 ICD-10。"
+        }
+      }
+    }
+  }
+}
