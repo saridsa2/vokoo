@@ -1,0 +1,17 @@
+[package]
+name = "vokoo-clinical-schemas"
+version = "0.0.1"
+edition = "2021"
+authors = ["Satya Suman Saridae"]
+description = "Health data models for VoKoo platform"
+homepage = "https://github.com/saridsa2/vokoo"
+repository = "https://github.com/saridsa2/vokoo/tree/main/vendor/vokoo-clinical-schemas"
+license = "MIT"
+keywords = ["health", "healthcare", "fhir", "hl7", "medical"]
+categories = ["api-bindings", "data-structures"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+serde_with = "3.16.1"

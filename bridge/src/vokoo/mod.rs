@@ -19,6 +19,7 @@ pub mod ari;
 pub mod asterisk;
 pub mod billing;
 pub mod compare;
+pub mod clinical;
 pub mod control;
 pub mod discovery;
 pub mod engine;

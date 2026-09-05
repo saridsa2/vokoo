@@ -6,7 +6,7 @@
 
 **Architecture:** Source flows materialize and validate a target payload, then enqueue an immutable target flow/version in PostgreSQL. A background bridge worker claims leased runs, enters `integration.invoked`, executes integration-safe nodes, and records outcomes. The console configures typed invocations, shows run activity, and previews legacy CRM graph migration before applying it.
 
-**Tech Stack:** PostgreSQL/Supabase, Rust/Tokio/Reqwest, vendored WellAlly Rust and JSON schemas, Next.js/TypeScript, Axum.
+**Tech Stack:** PostgreSQL/Supabase, Rust/Tokio/Reqwest, vendored VoKoo Rust and JSON schemas, Next.js/TypeScript, Axum.
 
 ## Constraints
 
@@ -34,10 +34,10 @@ Write rollback-only tests, then add `integration_runs`, `integration_run_events`
 
 - Modify: `bridge/Cargo.toml`
 - Create: `bridge/src/vokoo/clinical.rs`
-- Create: `src/lib/wellally-schemas.ts`
+- Create: `src/lib/vokoo-schemas.ts`
 - Modify: `src/components/stackplane/recovered-editor-host.tsx`
 
-Add failing Rust tests that accepted examples deserialize through the vendored WellAlly crate and invalid payloads fail. Add a thin payload-kind validator over the vendored types. Import the same owned JSON schemas in TypeScript to provide built-in typed input choices and field metadata without copying definitions.
+Add failing Rust tests that accepted examples deserialize through the vendored VoKoo crate and invalid payloads fail. Add a thin payload-kind validator over the vendored types. Import the same owned JSON schemas in TypeScript to provide built-in typed input choices and field metadata without copying definitions.
 
 ### Task 3: Enqueue from `integration.invoke`
 
@@ -47,7 +47,7 @@ Add failing Rust tests that accepted examples deserialize through the vendored W
 - Modify: `bridge/src/vokoo/mod.rs`
 - Modify: `bridge/src/vokoo/postcall.rs`
 
-Test payload materialization, invalid-payload behavior, and idempotency expression resolution. Implement the node in the source call-ended walker: resolve mapping against scope, validate the target trigger schema/WellAlly kind, call `enqueue_integration_run`, and return `queued`, `invalid_payload`, or `failed`. Do not execute the target inline.
+Test payload materialization, invalid-payload behavior, and idempotency expression resolution. Implement the node in the source call-ended walker: resolve mapping against scope, validate the target trigger schema/VoKoo kind, call `enqueue_integration_run`, and return `queued`, `invalid_payload`, or `failed`. Do not execute the target inline.
 
 ### Task 4: Lease worker and integration runner
 

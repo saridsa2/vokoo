@@ -390,6 +390,6 @@ No verification fix commit was required.
 After this independently testable checkpoint:
 
 1. pin call flow/version and replace event-specific number bindings;
-2. consume the owned source in `vendor/wellally-schemas`, then add typed
+2. consume the owned source in `vendor/vokoo-clinical-schemas`, then add typed
    `integration.invoke` and durable `integration_runs` execution;
 3. add assisted CRM migration/activity UI and retire legacy post-call resolution.
