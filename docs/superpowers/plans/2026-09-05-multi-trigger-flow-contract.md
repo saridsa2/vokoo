@@ -21,6 +21,7 @@
 ## File map
 
 - `supabase/migrations/0112_a_flow_has_many_triggers.sql`: additive family column, backfill, and graph-v3 publish validation.
+- `supabase/migrations/0113_flow_triggers_are_addable.sql`: replaces the legacy catalogue family and exposes call triggers in the call palette.
 - `supabase/tests/0112_a_flow_has_many_triggers.sql`: transaction-wrapped migration contract test, safe to run against the VPS demo database.
 - `src/utils/flow-graph.ts`: graph versions, families, legacy normalization, trigger enumeration, selection, and validation.
 - `src/utils/flow-graph.test.ts`: pure TypeScript contract tests.
@@ -225,7 +226,8 @@ git commit -m "feat: preserve multiple flow entries in editor"
 ### Task 4: Multiple-trigger editor behavior
 
 **Files:**
-- Modify: `supabase/migrations/0112_a_flow_has_many_triggers.sql`
+- Create: `supabase/migrations/0113_flow_triggers_are_addable.sql`
+- Create: `supabase/tests/0113_flow_triggers_are_addable.sql`
 - Modify: `docs/flow-node-catalogue.json`
 - Modify: `src/components/stackplane/recovered-editor-host.tsx`
 - Extend: `src/utils/flow-graph.ts`
@@ -235,7 +237,7 @@ git commit -m "feat: preserve multiple flow entries in editor"
 - Produces: `canConnectToNode` and `canDeleteTrigger` pure rules.
 - Consumes: explicit family and trigger uniqueness.
 
-- [ ] **Step 1: Write failing rule tests**
+- [x] **Step 1: Write failing rule tests**
 
 ```ts
 assert.equal(canConnectToNode(graph().nodes[0]), false);
@@ -243,13 +245,13 @@ assert.equal(canDeleteTrigger(graph(), "answer"), true);
 assert.equal(canDeleteTrigger({ ...graph(), nodes: [graph().nodes[0]] }, "answer"), false);
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
 Expected: missing-rule exports.
 
-- [ ] **Step 3: Implement editor rules**
+- [x] **Step 3: Implement editor rules**
 
 Make call triggers addable only on call boards through catalogue `families`.
 Reject a duplicate event/default-key trigger with a specific toast. Reject edges

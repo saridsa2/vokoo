@@ -59,6 +59,16 @@ export type TriggerEntry = {
     nodeId: string;
 };
 
+type EntryCapableNode = {
+    id: string;
+    type: string;
+    implementation?: string;
+};
+
+type EntryCapableGraph = {
+    nodes: EntryCapableNode[];
+};
+
 export type Flow = {
     id: string;
     name: string;
@@ -112,6 +122,23 @@ export function triggerEntries(graph: FlowGraph): TriggerEntry[] {
 export function entryNodeId(graph: FlowGraph, entry: FlowEntryPoint): string | null {
     const key = entry.key?.trim() || "default";
     return triggerEntries(graph).find((candidate) => candidate.event === entry.event && candidate.key === key)?.nodeId ?? null;
+}
+
+function isTriggerNode(node: EntryCapableNode): boolean {
+    return (node.implementation ?? node.type).startsWith("trigger.");
+}
+
+/** Trigger nodes are graph roots and can never be the target of an edge. */
+export function canConnectToNode(node: EntryCapableNode): boolean {
+    return !isTriggerNode(node);
+}
+
+/** Ordinary nodes are removable; a trigger is removable while another entry remains. */
+export function canDeleteTrigger(graph: EntryCapableGraph, nodeId: string): boolean {
+    const node = graph.nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) return false;
+    if (!isTriggerNode(node)) return true;
+    return graph.nodes.filter(isTriggerNode).length > 1;
 }
 
 /**

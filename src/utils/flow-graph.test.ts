@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+    canConnectToNode,
+    canDeleteTrigger,
     checkGraph,
     entryNodeId,
     normalizeFlowGraph,
@@ -154,4 +156,29 @@ test("leaves a graph that already has explicit triggers structurally unchanged",
     };
 
     assert.deepEqual(normalizeFlowGraph(flow), graph);
+});
+
+test("does not allow an edge to enter a trigger", () => {
+    const graph = multiTriggerGraph();
+
+    assert.equal(canConnectToNode(graph.nodes[0]), false);
+    assert.equal(canConnectToNode(graph.nodes[2]), true);
+});
+
+test("allows deleting a trigger only while another entry remains", () => {
+    const graph = multiTriggerGraph();
+    assert.equal(canDeleteTrigger(graph, "answer"), true);
+
+    const singleEntry: FlowGraph = {
+        ...graph,
+        nodes: graph.nodes.filter((node) => node.id !== "ended"),
+        transitions: graph.transitions.filter((transition) => transition.from !== "ended"),
+    };
+    assert.equal(canDeleteTrigger(singleEntry, "answer"), false);
+});
+
+test("keeps ordinary nodes deletable regardless of trigger count", () => {
+    const graph = multiTriggerGraph();
+
+    assert.equal(canDeleteTrigger(graph, "during"), true);
 });

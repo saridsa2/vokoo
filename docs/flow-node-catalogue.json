@@ -8,7 +8,7 @@
     "fields": [],
     "id": "trigger.call_answered",
     "is_active": true,
-    "is_addable": false,
+    "is_addable": true,
     "label": "Call answered",
     "node_type": "trigger",
     "outcomes": [
@@ -30,12 +30,12 @@
     "default_timeout_seconds": null,
     "description": "The call is over. Nobody is listening — this is where the work that happens after a call goes.",
     "families": [
-      "post_call"
+      "call"
     ],
     "fields": [],
     "id": "trigger.call_ended",
     "is_active": true,
-    "is_addable": false,
+    "is_addable": true,
     "label": "Call ended",
     "node_type": "trigger",
     "outcomes": [
@@ -66,7 +66,7 @@
     "fields": [],
     "id": "trigger.call_failed",
     "is_active": true,
-    "is_addable": false,
+    "is_addable": true,
     "label": "Call failed",
     "node_type": "trigger",
     "outcomes": [
@@ -99,7 +99,7 @@
     "description": "Take one path or the other, by comparing two values.",
     "families": [
       "call",
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
@@ -210,7 +210,7 @@
     "description": "Send the flow round again while a comparison holds. Bounded, always.",
     "families": [
       "call",
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
@@ -323,7 +323,7 @@
     "description": "Build a set of named values from earlier steps. What this node holds is what the next one receives.",
     "families": [
       "call",
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
@@ -361,7 +361,7 @@
     "default_timeout_seconds": null,
     "description": "Run a snippet and use what it returns. Integrations only — nobody is waiting.",
     "families": [
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
@@ -890,7 +890,7 @@
     "default_timeout_seconds": 30,
     "description": "Turn what was said into a filled-in schema, using a model. The result is written to the call before anything is sent anywhere.",
     "families": [
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
@@ -938,7 +938,7 @@
     "default_timeout_seconds": 20,
     "description": "POST the filled-in schema to another system.",
     "families": [
-      "post_call"
+      "integration"
     ],
     "fields": [
       {
