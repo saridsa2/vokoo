@@ -47,7 +47,7 @@
 - Produces: `FlowFamily`, `FlowEntryPoint`, `TriggerEntry`, `triggerEntries`, `entryNodeId`, and `normalizeFlowGraph`.
 - Consumes: existing `Flow`, `FlowGraph`, `FlowNode`, and `checkGraph`.
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 Use this two-entry fixture and test answered selection, ended selection, missing
 selection, duplicate rejection, reachability from both entries, and v2
@@ -74,13 +74,13 @@ assert.equal(entryNodeId(graph(), { event: "call.ended" }), "ended");
 assert.equal(entryNodeId(graph(), { event: "message.received" }), null);
 ```
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
 Expected: missing-export/type failures.
 
-- [ ] **Step 3: Implement graph types and helpers**
+- [x] **Step 3: Implement graph types and helpers**
 
 ```ts
 export type FlowFamily = "call" | "integration" | "care_path" | "message" | "general";
@@ -101,7 +101,7 @@ deterministic trigger for a v2 graph with none, wiring it to the historical
 start. `checkGraph` must require a trigger, reject duplicate event/key pairs,
 and seed reachability from all trigger IDs.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 Run: `node --test src/utils/flow-graph.test.ts`
 
@@ -111,7 +111,7 @@ Run: `npm test`
 
 Expected: graph, SDK, and CLI tests pass after adding `test:flows`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json src/utils/flow-graph.ts src/utils/flow-graph.test.ts
