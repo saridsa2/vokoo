@@ -243,7 +243,7 @@
      * next surface step and reads as genuinely selected. */
     --color-bg-active: var(--color-stone);
 
-        /* Filled actions are ink. */
+    /* Filled actions are ink. */
     --color-bg-brand-solid: var(--color-ink);
     --color-bg-brand-solid_hover: var(--color-graphite);
     --color-bg-brand-primary: var(--color-warm-taupe);
@@ -265,7 +265,7 @@
     --color-fg-brand-primary: var(--color-ink);
     --color-fg-brand-secondary: var(--color-graphite);
 
-        /* Hairlines, used in preference to shadows for separation. */
+    /* Hairlines, used in preference to shadows for separation. */
     --color-border-primary: var(--color-stone);
     --color-border-secondary: var(--color-stone);
     --color-border-tertiary: var(--color-warm-taupe);
@@ -388,4 +388,53 @@
     [role="menu"] {
         border-radius: var(--radius-2xl);
     }
+}
+
+/* ---------------------------------------------------------------------------
+ * Sarvam's palette, tried.
+ *
+ * Read out of `indus.sarvam.ai/`, their `tatva` tokens, converted from HSL.
+ * The point of it is that **their system never touches either extreme**: the
+ * ground is a warm bone rather than white, and the ink is #333 rather than
+ * black. Ours went #FFFFFF to #000000, which is the highest-contrast pair
+ * available and the one nobody chose.
+ *
+ *   tatva                       ours before        here
+ *   --background 42 17% 96%     #FFFFFF page       #F7F6F3
+ *   --card       39 58% 95%     #FFFFFF surface    #FAF5EB
+ *   --foreground 0 0% 20%       #1A1816 text       #333333
+ *   --primary    0 0% 20%       #000000 button     #333333
+ *   button gradient 20% -> 10%  —                  #333333 -> #1A1A1A
+ *
+ * This is a whole-console change by design: it is tokens, so every card, table,
+ * button and panel follows at once. Delete this block to go back — nothing
+ * below is referenced by name anywhere else.
+ *
+ * **It has to be `@theme`, not `:root`.** Tailwind v4 builds its utilities from
+ * `@theme`; the same custom properties written in a plain `:root` block after
+ * it change nothing you can see, which is exactly what happened on the first
+ * try. Every other override in this file is already in `@theme` for the same
+ * reason.
+ * ------------------------------------------------------------------------ */
+@theme {
+    /* Buttons and every brand-coloured control. Their primary is #333 and their
+     * button gradient runs 20% -> 10%, so the hover steps darken rather than
+     * lighten — the ramp keeps its direction. */
+    --color-brand-600: #333333;
+    --color-brand-700: #262626;
+    --color-brand-800: #1a1a1a;
+    --color-brand-900: #141414;
+    --color-brand-950: #0d0d0d;
+
+    /* Ink. `--color-text-primary` resolves to neutral-900, so this is the one
+     * value that takes every heading and body line off black. */
+    --color-neutral-900: #333333;
+    --color-neutral-950: #1a1a1a;
+
+    /* No ground here. Setting `--color-bg-primary` in this block does nothing:
+     * the `:root:not(.dark-mode)` block above already points it at
+     * `--color-eggshell`, and that wins. The ground lives in
+     * `vokoo-tokens.css`, where those five named colours are defined, and it is
+     * changed there. Written down because I set it here first and reported a
+     * palette change that was invisible. */
 }

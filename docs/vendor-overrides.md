@@ -270,3 +270,49 @@ is small. Offering it costs nothing and would shrink this entry to one item.
 It is off the call path deliberately: realtime is bidirectional audio over a
 WebSocket, which this crate does not do, and the relay's LLM step streams into
 a live pipeline where the carrier ends the call if our socket errors.
+
+---
+
+## `src/components/react-bits/particle-image.tsx` — React Bits Pro
+
+Installed with `npx shadcn@latest add @reactbits-starter/particle-image-tw`.
+**Components are on the `starter` registry with a `-tw` suffix; only blocks are
+on `pro`** — the `pro` path 404s for a component name, which is worth knowing
+before the next install.
+
+Two edits, both marked `VOKOO OVERRIDE`, both inside GLSL template literals.
+
+### 1. `cn` → `cx` (one import)
+
+React Bits ships `cn`; this project's class utility is `cx`, which is `twMerge`
+directly. Aliased on import rather than renamed at every call site, so a
+re-install is a one-line fix again.
+
+### 2. The shader discards the source's alpha (two places)
+
+As shipped, `POINT_VERT` takes `texture(uImage, …).rgb` for the particle tint
+and `IMAGE_FRAG` writes `vec4(texture(uImage, uv).rgb, uOpacity)` for the image
+drawn behind. Both throw away `.a`, so **every transparent pixel is tinted black
+and drawn at full opacity**: point a logo with a transparent ground at this and
+you get an opaque black square with a hard edge.
+
+Both now multiply the alpha through — `vAlpha = fade * uOpacity * src.a` and
+`fragColor = vec4(src.rgb, src.a * uOpacity)`.
+
+Without it, the only way to use a logo is to flatten it onto the background
+first, which was tried and is the wrong answer: the derived asset then has to
+match the surface behind it exactly, and it stopped matching the moment the
+palette changed.
+
+### How to tell whether it is still applied
+
+```bash
+grep -c "VOKOO OVERRIDE" src/components/react-bits/particle-image.tsx   # expect 3
+```
+
+Visually: the sign-in mark on its own, with no black square behind it.
+
+**A trap when editing it:** the shaders are JavaScript template literals, so a
+backtick in a GLSL comment closes the string and the file stops compiling in a
+way whose error points at the wrong line. The comments there deliberately use no
+backticks.
