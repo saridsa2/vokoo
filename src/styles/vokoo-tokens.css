@@ -1,26 +1,22 @@
 @theme {
   /* Colors */
-  /* Sarvam's `tatva` palette, converted from HSL. Their system never touches
-   * either extreme: the ground is a warm bone rather than near-white, and the
-   * ink is #333 rather than black.
+  /* Sarvam's `tatva` palette was tried here and reverted.
    *
-   *   was       tatva                    now
-   *   #fdfcfc   --card       39 58% 95%  #faf5eb
-   *   #f5f3f1   --background 42 17% 96%  #f7f6f3
-   *   #ebe8e4   --accent     42 18% 89%  #e8e5de
-   *   #000000   --primary    0 0% 20%    #333333
-   *   #44403b   button grad -> 10%       #1a1a1a
+   * Their values are a warm bone ground (#faf5eb card, #f7f6f3 page) with #333
+   * ink instead of black. Read straight off their tokens, so the numbers were
+   * right — and it still looked wrong on screen.
    *
-   * These five names carry the whole console — every surface, hover and filled
-   * action resolves through them — so this is the only place the change is
-   * made. Restore the five values in the table's left column to revert. */
-  --color-eggshell: #faf5eb;
-  --color-warm-taupe: #f7f6f3;
-  --color-stone: #e8e5de;
-  --color-ink: #333333;
-  /* Darker than ink, not lighter: it is ink's hover, and their button gradient
-   * runs 20% -> 10%. At the old #44403b it would now lighten on hover. */
-  --color-graphite: #1a1a1a;
+   * **A palette is not a design language.** Their cream sits with Matter and
+   * Season Mix, 8px radii and their own density; ours is a square-cornered
+   * console with different type. Lifting the colours out of that system and
+   * dropping them into this one keeps none of what makes it work. If the warm
+   * direction is wanted, it is a typography and geometry decision as much as a
+   * colour one, not five hex values. */
+  --color-eggshell: #fdfcfc;
+  --color-warm-taupe: #f5f3f1;
+  --color-stone: #ebe8e4;
+  --color-ink: #000000;
+  --color-graphite: #44403b;
   --color-smoke: #777169;
   --color-ash: #a59f97;
   --color-violet-spark: #0447ff;
