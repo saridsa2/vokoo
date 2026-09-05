@@ -27,6 +27,7 @@ pub mod escalate;
 pub mod expression;
 pub mod graph;
 pub mod intelligence;
+pub mod integration;
 pub mod handover;
 pub mod keypress;
 pub mod live;

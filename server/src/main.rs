@@ -300,6 +300,18 @@ const RESOURCES: &[Resource] = &[
     Resource { route: "vendor-rates", table: "catalogue_vendor_rates", order_by: "updated_at", select: "*" },
     Resource { route: "chat-logs", table: "chats", order_by: "updated_at", select: "*" },
     Resource { route: "structured-outputs", table: "structured_outputs", order_by: "updated_at", select: "*" },
+    Resource {
+        route: "integration-runs",
+        table: "integration_runs",
+        order_by: "created_at",
+        select: "id,org_id,source_flow_id,source_flow_version,source_execution_id,source_node_id,target_flow_id,target_flow_version,status,attempt_count,max_attempts,available_at,last_error,started_at,finished_at,created_at,updated_at",
+    },
+    Resource {
+        route: "integration-run-events",
+        table: "integration_run_events",
+        order_by: "created_at",
+        select: "*",
+    },
     // Human agents. **The SIP password is not selected.** PJSIP digest auth
     // needs it in plaintext, so it cannot be hashed the way a login password
     // is — which makes it a credential that must never be listed. Somebody's
@@ -866,6 +878,24 @@ async fn metrics(
     Ok(Json(ApiResponse {
         data,
         meta: json!({ "resource": "metrics" }),
+    }))
+}
+
+async fn retry_integration_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    org_id(&headers)?;
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("retry_integration_run", Some(json!({ "p_run_id": id })))
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "integration-runs", "action": "retry" }),
     }))
 }
 
@@ -3988,6 +4018,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/calls/{id}/monitor", post(monitor_call))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
+        .route("/api/v1/integration-runs/{id}/retry", post(retry_integration_run))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
         .route("/api/v1/settings/members", get(list_members).post(add_member))
         .route("/api/v1/{resource}", get(list_resources).post(create_resource))

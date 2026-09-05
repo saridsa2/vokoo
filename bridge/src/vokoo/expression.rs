@@ -86,6 +86,23 @@ impl Scope {
         }
     }
 
+    /// A reusable integration sees its input and execution envelope, not the
+    /// source call data that produced that input.
+    pub fn for_invocation(input: Value, run_id: &str, source_execution_id: &str, attempt: i64) -> Self {
+        let mut vars = Map::new();
+        vars.insert("run_id".into(), Value::String(run_id.to_owned()));
+        vars.insert("execution_id".into(), Value::String(source_execution_id.to_owned()));
+        vars.insert("idempotency_key".into(), Value::String(run_id.to_owned()));
+        vars.insert("attempt".into(), Value::from(attempt));
+        Self {
+            json: input,
+            nodes: Map::new(),
+            call: Value::Null,
+            vars,
+            evaluation: Evaluation::Script,
+        }
+    }
+
     /// Record what a node produced, and make it the new `$json`.
     pub fn record(&mut self, node_name: &str, output: Value) {
         self.nodes.insert(node_name.to_string(), output.clone());
@@ -379,6 +396,14 @@ mod tests {
         assert_eq!(resolve("={{ $call.duration_secs }}", &scope).await, json!(90));
         assert_eq!(resolve("={{ $vars.attempts }}", &scope).await, json!(2));
         assert_eq!(resolve("={{ $('Process call').score }}", &scope).await, json!(8));
+    }
+
+    #[test]
+    fn an_integration_invocation_has_no_call_root() {
+        let scope = Scope::for_invocation(json!({ "lead": "Mira" }), "run-42", "source-42", 2);
+        assert!(scope.call.is_null());
+        assert_eq!(scope.vars.get("run_id"), Some(&Value::String("run-42".into())));
+        assert_eq!(scope.vars.get("attempt"), Some(&json!(2)));
     }
 
     #[tokio::test]

@@ -13,6 +13,8 @@ declare
   v_duplicate jsonb;
   v_claimed   jsonb;
   v_rejected  boolean := false;
+  v_stale     boolean := false;
+  v_renewed   boolean;
 begin
   insert into public.organizations (id, name, slug) values
     (v_org, 'Integration queue test', 'integration-queue-test-0115'),
@@ -38,11 +40,11 @@ begin
     from public.flows f where id = v_target;
 
   v_first := public.enqueue_integration_run(
-    v_org, v_source, 8, 'call:0115', 'invoke-crm', v_target,
+    v_org, v_source, 8, 'call:0115', 'invoke-crm', v_target, 2,
     '{"lead":{"name":"Satya"}}', 'lead-0115', 4
   );
   v_duplicate := public.enqueue_integration_run(
-    v_org, v_source, 8, 'call:0115-retry', 'invoke-crm', v_target,
+    v_org, v_source, 8, 'call:0115-retry', 'invoke-crm', v_target, 2,
     '{"lead":{"name":"Changed"}}', 'lead-0115', 4
   );
 
@@ -54,12 +56,23 @@ begin
 
   begin
     perform public.enqueue_integration_run(
-      v_org, v_source, 8, 'call:0115', 'invoke-other', v_other, '{}', null, 3
+      v_org, v_source, 8, 'call:0115', 'invoke-other', v_other, 1, '{}', null, 3
     );
   exception when sqlstate '42501' then v_rejected := true;
   end;
   if not v_rejected then
     raise exception 'cross-organisation integration target was accepted';
+  end if;
+
+  begin
+    perform public.enqueue_integration_run(
+      v_org, v_source, 8, 'call:0115', 'invoke-missing-version', v_target, 3,
+      '{}', null, 3
+    );
+  exception when sqlstate '42501' then v_stale := true;
+  end;
+  if not v_stale then
+    raise exception 'an unvalidated target version was accepted';
   end if;
 
   v_claimed := public.claim_integration_run('worker-0115', 60);
@@ -69,13 +82,26 @@ begin
     raise exception 'claim did not lease the queued run: %', v_claimed;
   end if;
 
+  update public.integration_runs set locked_at = now() - interval '90 seconds'
+   where id = (v_first->>'id')::uuid;
+  v_renewed := public.renew_integration_run_lease((v_first->>'id')::uuid, 'worker-0115');
+  if not v_renewed or not exists (
+       select 1 from public.integration_runs
+        where id = (v_first->>'id')::uuid and locked_at > now() - interval '5 seconds'
+     ) then
+    raise exception 'the active worker could not renew its lease: renewed %, row %',
+      v_renewed,
+      (select to_jsonb(r) from public.integration_runs r where id = (v_first->>'id')::uuid);
+  end if;
+
   perform public.fail_integration_run((v_first->>'id')::uuid, 'worker-0115', 'temporary outage', true);
   if not exists (
     select 1 from public.integration_runs
      where id = (v_first->>'id')::uuid and status = 'retryable'
        and locked_at is null and available_at > now()
+       and available_at < now() + interval '61 minutes'
   ) then
-    raise exception 'retryable failure was not scheduled and unlocked';
+    raise exception 'retryable failure was not scheduled, bounded, and unlocked';
   end if;
 
   update public.integration_runs set available_at = now() where id = (v_first->>'id')::uuid;

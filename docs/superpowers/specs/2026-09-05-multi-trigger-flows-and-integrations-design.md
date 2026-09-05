@@ -2,7 +2,7 @@
 
 **Issue:** [#6](https://github.com/saridsa2/vokoo/issues/6)
 
-**Status:** Phase 1 implemented and verified; later phases remain proposed
+**Status:** Phases 1-3 implemented and verified locally; Phase 4 remains proposed. No VPS migration or deployment has been performed.
 
 **Rollout:** Compatibility first; no VPS deployment until user testing is complete
 

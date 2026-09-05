@@ -12,6 +12,10 @@ import type { Flow, FlowGraph } from "@/utils/flow-graph";
 import { callFactsFrom } from "@/components/stackplane/recovered-editor-host";
 import type { DryRunStep, Referenceable, SampleCall } from "@/components/stackplane/recovered-editor-host";
 import { useSession } from "@/hooks/use-session";
+import { Button } from "@/components/base/buttons/button";
+import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { useNotify } from "@/components/application/notifications/notification-provider";
+import { previewLegacyIntegrationMigration, type IntegrationMigrationPreview } from "@/lib/integration-migration";
 
 /**
  * The canvas, over a real flow.
@@ -33,10 +37,12 @@ const RecoveredEditorHost = dynamic(
  */
 export function FlowComposerScreen({ flowId }: { flowId: string }) {
     const { context, isReady } = useSession();
+    const notify = useNotify();
     const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
     // Named shapes an intelligence node can fill in. Fetched beside the agents
     // for the same reason: the canvas has no API of its own.
     const [shapes, setShapes] = useState<Referenceable[]>([]);
+    const [integrations, setIntegrations] = useState<Referenceable[]>([]);
     // A finished call, so the expression panel can show real values rather than
     // only field names. Whether the path you picked is the one you meant is a
     // question about a value.
@@ -51,6 +57,11 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
     // The graph as stored, kept so a save preserves what the canvas cannot
     // express — the start node, the declared variables, the version.
     const [stored, setStored] = useState<FlowGraph | null>(null);
+    const [allFlows, setAllFlows] = useState<Flow[]>([]);
+    const [migrationOpen, setMigrationOpen] = useState(false);
+    const [migrationCallId, setMigrationCallId] = useState("");
+    const [migrationPreview, setMigrationPreview] = useState<IntegrationMigrationPreview | null>(null);
+    const [migrationSaving, setMigrationSaving] = useState(false);
 
     useEffect(() => {
         if (!isReady || !context) return;
@@ -63,6 +74,14 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
                 api.list<{ id: string; name: string }>("agents", context)
                     .then((response) => setAgents(response.data ?? []))
                     .catch(() => setAgents([]));
+                api.list<Flow>("flows", context)
+                    .then((response) => {
+                        setAllFlows(response.data ?? []);
+                        setIntegrations((response.data ?? [])
+                            .filter((row) => row.family === "integration" && row.status === "published" && row.id !== flowId)
+                            .map((row) => ({ id: row.id, name: row.name })));
+                    })
+                    .catch(() => { setIntegrations([]); setAllFlows([]); });
                 // The rows already carry their compiled schema — the list
                 // selects `*` — so the property names come at no extra request.
                 api.list<{ id: string; name: string; schema?: { properties?: Record<string, unknown> } }>(
@@ -188,7 +207,34 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
         }
     };
 
+    const legacyIntegration = familyOf(diagram) === "integration"
+        && Boolean(stored?.nodes.some((node) => node.implementation === "trigger.call_ended"))
+        && Boolean(stored?.nodes.some((node) => node.implementation === "intelligence"));
+    const callFlows = allFlows.filter((flow) => flow.family === "call" && flow.graph);
+    const buildMigrationPreview = () => {
+        const call = callFlows.find((candidate) => candidate.id === migrationCallId);
+        if (!stored || !call?.graph) return;
+        try { setMigrationPreview(previewLegacyIntegrationMigration(stored, call.graph, flowId)); }
+        catch (problem) { notify.failure("Could not preview the migration", problem); }
+    };
+    const applyMigration = async () => {
+        if (!context || !migrationPreview || !migrationCallId) return;
+        setMigrationSaving(true);
+        try {
+            await api.update("flows", migrationCallId, { graph: migrationPreview.call }, context);
+            await api.update("flows", flowId, { graph: migrationPreview.integration }, context);
+            setStored(migrationPreview.integration);
+            setDiagram(flowToDiagram({ id: flowId, name: diagram.name, description: diagram.description,
+                status: "draft", family: "integration", graph: migrationPreview.integration }));
+            setMigrationOpen(false);
+            setMigrationPreview(null);
+            notify.success("Migration applied to both drafts. Review and publish each flow when ready.");
+        } catch (problem) { notify.failure("Could not apply the migration", problem); }
+        finally { setMigrationSaving(false); }
+    };
+
     return (
+        <>
         <RecoveredEditorHost
             diagram={diagram}
             onSave={save}
@@ -214,9 +260,34 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
                     : undefined
             }
             shapes={shapes}
+            integrations={integrations}
+            toolbarSlot={legacyIntegration ? <button type="button" onClick={() => setMigrationOpen(true)}>Migrate legacy CRM flow</button> : undefined}
             // Back to the board this flow belongs to. Sending an integration
             // to the calls list would look like it had been filtered out.
             backHref={familyOf(diagram) === "integration" ? "/integrations" : "/composer"}
         />
+        <ModalOverlay isOpen={migrationOpen} onOpenChange={(open) => !open && setMigrationOpen(false)} isDismissable={!migrationSaving}>
+            <Modal className="max-w-2xl"><Dialog><div className="flex flex-col gap-5 rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
+                <div><h2 className="text-lg font-semibold text-primary">Separate call extraction from this integration</h2>
+                    <p className="mt-1 text-sm text-tertiary">Preview both draft changes. Nothing is published automatically.</p></div>
+                <label className="flex flex-col gap-1.5 text-sm font-medium text-secondary">Call flow
+                    <select className="rounded-lg bg-primary px-3 py-2.5 text-primary ring-1 ring-primary" value={migrationCallId}
+                        onChange={(event) => { setMigrationCallId(event.target.value); setMigrationPreview(null); }}>
+                        <option value="">Choose the call flow that should invoke this integration</option>
+                        {callFlows.map((flow) => <option key={flow.id} value={flow.id}>{flow.name}</option>)}
+                    </select>
+                </label>
+                {migrationPreview ? <div className="grid gap-4 rounded-lg bg-secondary p-4 md:grid-cols-2">
+                    <div><p className="text-sm font-semibold text-primary">Integration draft</p><p className="mt-1 text-sm text-tertiary">Remove: {migrationPreview.removedFromIntegration.join(", ")}. Add Integration invoked trigger.</p></div>
+                    <div><p className="text-sm font-semibold text-primary">Call-flow draft</p><p className="mt-1 text-sm text-tertiary">Add: {migrationPreview.addedToCall.join(", ")}.</p></div>
+                </div> : null}
+                <div className="flex justify-end gap-2">
+                    <Button color="secondary" size="sm" onClick={() => setMigrationOpen(false)} isDisabled={migrationSaving}>Cancel</Button>
+                    {!migrationPreview ? <Button size="sm" onClick={buildMigrationPreview} isDisabled={!migrationCallId}>Preview changes</Button>
+                        : <Button size="sm" onClick={applyMigration} isLoading={migrationSaving}>Apply to both drafts</Button>}
+                </div>
+            </div></Dialog></Modal>
+        </ModalOverlay>
+        </>
     );
 }

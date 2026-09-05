@@ -16,6 +16,7 @@ import { useResource } from "@/hooks/use-resource";
 import type { Flow } from "@/utils/flow-graph";
 import { readGraph } from "@/utils/flow-graph";
 import { dateTime } from "@/utils/format";
+import { IntegrationActivity } from "@/components/application/screens/integration-activity";
 
 type PhoneNumber = {
     id: string;
@@ -40,11 +41,11 @@ const FAMILIES = {
     },
     post_call: {
         family: "integration",
-        trigger_event: "call.ended",
-        trigger: "trigger.call_ended",
-        triggerName: "Call ended",
+        trigger_event: "integration.invoked",
+        trigger: "trigger.integration_invoked",
+        triggerName: "Integration invoked",
         noun: "integration",
-        empty: "An integration runs once a call is over: read what was said into a shape, and send it to another system. Nobody is waiting, so it can take its time.",
+        empty: "An integration accepts a typed payload from a call, care path, message, or general flow and delivers it to another system.",
     },
 } as const satisfies Record<Family, unknown>;
 
@@ -118,6 +119,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
             <NewFlowDialog kind={kind} isOpen={creating} onClose={() => setCreating(false)} />
 
             <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                {family === "post_call" ? <div className="mb-6"><IntegrationActivity /></div> : null}
                 {error ? (
                     <div className="rounded-xl bg-error-primary p-6 ring-1 ring-error_subtle">
                         <p className="text-sm font-semibold text-error-primary">Could not load flows</p>
@@ -209,6 +211,9 @@ function NewFlowDialog({
 
     const [name, setName] = useState("");
     const [saving, setSaving] = useState(false);
+    const [schemaId, setSchemaId] = useState("");
+    const { records: schemas } = useResource<{ id: string; name: string }>("structured-outputs");
+    const isIntegration = kind.family === "integration";
 
     const create = async () => {
         if (!context || !name.trim()) return;
@@ -227,8 +232,7 @@ function NewFlowDialog({
                     // they can begin, and the palette is the better teacher now
                     // that it only offers what belongs here.
                     graph: {
-                        version: 2,
-                        start: "trigger",
+                        version: 3,
                         variables: [],
                         nodes: [
                             {
@@ -236,7 +240,7 @@ function NewFlowDialog({
                                 name: kind.triggerName,
                                 type: "trigger",
                                 implementation: kind.trigger,
-                                config: {},
+                                config: isIntegration ? { input_schema_id: schemaId } : {},
                                 position: { x: -420, y: 0 },
                             },
                         ],
@@ -247,6 +251,7 @@ function NewFlowDialog({
             );
             onClose();
             setName("");
+            setSchemaId("");
             router.push(`/flows/${data.id}`);
         } catch (problem) {
             notify.failure(`Could not create the ${kind.noun}`, problem);
@@ -275,11 +280,22 @@ function NewFlowDialog({
                             isRequired
                         />
 
+                        {isIntegration ? (
+                            <label className="flex flex-col gap-1.5 text-sm font-medium text-secondary">
+                                Input schema *
+                                <select className="rounded-lg bg-primary px-3 py-2.5 text-primary ring-1 ring-primary"
+                                    value={schemaId} onChange={(event) => setSchemaId(event.target.value)}>
+                                    <option value="">{schemas.length === 0 ? "No schemas available" : "Choose a schema"}</option>
+                                    {schemas.map((schema) => <option key={schema.id} value={schema.id}>{schema.name}</option>)}
+                                </select>
+                            </label>
+                        ) : null}
+
                         <div className="flex justify-end gap-2">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>
                                 Cancel
                             </Button>
-                            <Button size="sm" onClick={create} isDisabled={!name.trim()} isLoading={saving}>
+                            <Button size="sm" onClick={create} isDisabled={!name.trim() || (isIntegration && !schemaId)} isLoading={saving}>
                                 Create
                             </Button>
                         </div>

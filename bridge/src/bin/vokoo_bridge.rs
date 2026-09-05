@@ -3275,6 +3275,12 @@ async fn main() {
         log::info!("[discovery] refreshing the catalogue every {refresh_hours}h");
     }
 
+    // External integration delivery is a leased worker, never carrier work.
+    rustvani::vokoo::integration::schedule_worker(
+        cfg.supabase_url.clone(),
+        cfg.service_key.clone(),
+    );
+
     // WhatsApp calls arrive here, from Asterisk on the same box. Loopback by
     // default and deliberately: AudioSocket is unencrypted PCM, so this hop
     // must never cross a network — which is the reason Asterisk runs on this

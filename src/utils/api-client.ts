@@ -311,6 +311,9 @@ export const api = {
     flowVersions: <T>(id: string, context: AccessContext) =>
         request<T[]>(`/api/v1/flows/${id}/versions`, {}, context),
 
+    retryIntegrationRun: <T>(id: string, context: AccessContext) =>
+        request<T>(`/api/v1/integration-runs/${id}/retry`, { method: "POST" }, context),
+
     restoreFlowVersion: <T>(id: string, version: number, context: AccessContext) =>
         request<T>(`/api/v1/flows/${id}/versions/${version}/restore`, { method: "POST" }, context),
 

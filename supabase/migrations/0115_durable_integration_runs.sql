@@ -74,8 +74,9 @@ create policy org_member_access on public.integration_run_events for select to a
   using (public.is_org_member(org_id));
 grant select on public.integration_runs, public.integration_run_events to authenticated;
 
--- Resolve and enqueue in one statement. This is the only point at which
--- `published_at_execution` is evaluated; the chosen version stays on the row.
+-- Enqueue the exact immutable version the caller loaded and validated. The
+-- function verifies that version is a published integration in this workspace;
+-- it must never independently re-resolve "latest" after validation.
 create or replace function public.enqueue_integration_run(
   p_org_id              uuid,
   p_source_flow_id      uuid,
@@ -83,6 +84,7 @@ create or replace function public.enqueue_integration_run(
   p_source_execution_id text,
   p_source_node_id      text,
   p_target_flow_id      uuid,
+  p_target_flow_version integer,
   p_input               jsonb,
   p_idempotency_key     text default null,
   p_max_attempts        integer default 5,
@@ -94,7 +96,6 @@ security definer
 set search_path = public
 as $$
 declare
-  v_version integer;
   v_run     public.integration_runs;
   v_key     text := nullif(btrim(p_idempotency_key), '');
 begin
@@ -105,17 +106,17 @@ begin
     raise exception 'source flow is not in this workspace' using errcode = '42501';
   end if;
 
-  select fv.version into v_version
-    from public.flows f
-    join public.flow_versions fv on fv.flow_id = f.id and fv.org_id = f.org_id
-   where f.id = p_target_flow_id
-     and f.org_id = p_org_id
-     and f.family = 'integration'
-     and f.status = 'published'
-   order by fv.version desc
-   limit 1;
-  if v_version is null then
-    raise exception 'target is not a published integration in this workspace'
+  if not exists (
+    select 1
+      from public.flows f
+      join public.flow_versions fv on fv.flow_id = f.id and fv.org_id = f.org_id
+     where f.id = p_target_flow_id
+       and f.org_id = p_org_id
+       and f.family = 'integration'
+       and f.status = 'published'
+       and fv.version = p_target_flow_version
+  ) then
+    raise exception 'target version is not a published integration in this workspace'
       using errcode = '42501';
   end if;
 
@@ -125,7 +126,7 @@ begin
     input, idempotency_key, max_attempts
   ) values (
     p_org_id, p_source_flow_id, p_source_flow_version, p_source_execution_id,
-    p_source_call_id, p_source_node_id, p_target_flow_id, v_version,
+    p_source_call_id, p_source_node_id, p_target_flow_id, p_target_flow_version,
     coalesce(p_input, 'null'::jsonb), v_key, greatest(1, least(coalesce(p_max_attempts, 5), 20))
   )
   on conflict (org_id, target_flow_id, idempotency_key)
@@ -143,8 +144,8 @@ begin
 end;
 $$;
 
-revoke all on function public.enqueue_integration_run(uuid,uuid,integer,text,text,uuid,jsonb,text,integer,uuid) from public;
-grant execute on function public.enqueue_integration_run(uuid,uuid,integer,text,text,uuid,jsonb,text,integer,uuid) to service_role;
+revoke all on function public.enqueue_integration_run(uuid,uuid,integer,text,text,uuid,integer,jsonb,text,integer,uuid) from public;
+grant execute on function public.enqueue_integration_run(uuid,uuid,integer,text,text,uuid,integer,jsonb,text,integer,uuid) to service_role;
 
 create or replace function public.claim_integration_run(
   p_worker text,
@@ -182,6 +183,25 @@ $$;
 
 revoke all on function public.claim_integration_run(text,integer) from public;
 grant execute on function public.claim_integration_run(text,integer) to service_role;
+
+create or replace function public.renew_integration_run_lease(p_run_id uuid, p_worker text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_renewed boolean;
+begin
+  update public.integration_runs
+     set locked_at = now(), updated_at = now()
+   where id = p_run_id and status = 'running' and locked_by = p_worker
+   returning true into v_renewed;
+  return coalesce(v_renewed, false);
+end;
+$$;
+
+revoke all on function public.renew_integration_run_lease(uuid,text) from public;
+grant execute on function public.renew_integration_run_lease(uuid,text) to service_role;
 
 create or replace function public.integration_run_event(
   p_run_id uuid, p_worker text, p_node_id text, p_node_name text,
