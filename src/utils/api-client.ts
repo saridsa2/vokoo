@@ -208,11 +208,11 @@ export const api = {
     numberFlows: <T>(numberId: string, context: AccessContext) =>
         request<T[]>(`/api/v1/phone-numbers/${numberId}/flows`, {}, context),
 
-    /** Bind one event to a flow, or pass null to unbind it. */
-    setNumberFlow: (numberId: string, triggerEvent: string, flowId: string | null, context: AccessContext) =>
+    /** Select one call flow for a number, or pass null to unbind it. */
+    setNumberFlow: (numberId: string, flowId: string | null, context: AccessContext) =>
         request<unknown>(
             `/api/v1/phone-numbers/${numberId}/flows`,
-            { method: "PUT", body: JSON.stringify({ trigger_event: triggerEvent, flow_id: flowId }) },
+            { method: "PUT", body: JSON.stringify({ flow_id: flowId }) },
             context,
         ),
 

@@ -31,6 +31,7 @@ type Family = "call" | "post_call";
 
 const FAMILIES = {
     call: {
+        family: "call",
         trigger_event: "call.answered",
         trigger: "trigger.call_answered",
         triggerName: "Call answered",
@@ -38,6 +39,7 @@ const FAMILIES = {
         empty: "A call flow decides what happens when a number rings — which questions are asked, when the caller reaches a person, and how the call ends.",
     },
     post_call: {
+        family: "integration",
         trigger_event: "call.ended",
         trigger: "trigger.call_ended",
         triggerName: "Call ended",
@@ -68,7 +70,9 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
         const byFlow = new Map<string, string>();
         for (const number of numbers) {
             for (const binding of number.number_flows ?? []) {
-                if (binding.flows?.id) byFlow.set(binding.flows.id, number.number);
+                if (binding.trigger_event === "call.answered" && binding.flows?.id) {
+                    byFlow.set(binding.flows.id, number.number);
+                }
             }
         }
         return byFlow;
@@ -78,11 +82,11 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
         // One table, two boards. A flow that responds to something else is not
         // hidden by a filter somebody can clear — it belongs on the other
         // board, where its palette is.
-        const mine = records.filter((flow) => (flow.trigger_event ?? "call.answered") === kind.trigger_event);
+        const mine = records.filter((flow) => flow.family === kind.family);
         const needle = query.trim().toLowerCase();
         if (!needle) return mine;
         return mine.filter((flow) => `${flow.name} ${flow.description ?? ""}`.toLowerCase().includes(needle));
-    }, [records, query, kind.trigger_event]);
+    }, [records, query, kind.family]);
 
     return (
         <>
@@ -91,7 +95,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                 description={
                     family === "call"
                         ? "What happens while somebody is on the line."
-                        : "What happens after a call ends."
+                        : "Reusable workflows invoked explicitly by call and care-path flows."
                 }
                 search={
                     <div className="w-full md:w-64">
@@ -164,8 +168,11 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                                         </p>
 
                                         <p className="text-xs text-tertiary">
-                                            {/* A flow nothing dials never runs, however complete it looks. */}
-                                            {number ? `Answers ${number}` : "No number points here"}
+                                            {family === "call"
+                                                ? number
+                                                    ? `Answers ${number}`
+                                                    : "No number points here"
+                                                : "Invoked from another flow"}
                                         </p>
 
                                         {flow.updated_at && (
@@ -185,12 +192,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
 /**
  * A new flow. It asks for a name and nothing else.
  *
- * **When it runs is not a question here** — it is answered by which board you
- * opened, and that answer settles three things at once: the trigger node the
- * graph opens with, the nodes the palette may offer, and the
- * `number_flows(phone_number_id, trigger_event)` row that binds it. A dialog
- * asking again would let somebody create an integration from the calls board
- * and then wonder why the palette refuses a transfer.
+ * The board fixes the capability family and initial compatibility trigger.
  */
 function NewFlowDialog({
     kind,
@@ -218,6 +220,7 @@ function NewFlowDialog({
                     name: name.trim(),
                     description: "",
                     status: "draft",
+                    family: kind.family,
                     trigger_event: kind.trigger_event,
                     // The trigger and nothing else. A starter full of nodes
                     // somebody did not ask for is a graph they must read before

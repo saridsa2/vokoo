@@ -1102,17 +1102,13 @@ async fn set_agent_skills(
 
 #[derive(serde::Deserialize)]
 struct NumberBindingRequest {
-    trigger_event: String,
-    /// Absent or null unbinds this event.
+    /// Absent or null unbinds the number's call flow.
     #[serde(default)]
     flow_id: Option<String>,
 }
 
-/// Which flow answers which event on a number.
-///
-/// A call is the durable thing and flows are handlers bound to events on it, so
-/// a number has one binding per event rather than one flow. `resolve_for_event`
-/// reads exactly this.
+/// The call flow selected for a number. Legacy per-event rows are returned
+/// during migration, but the console collapses them to `call.answered`.
 async fn list_number_flows(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1149,7 +1145,7 @@ async fn set_number_flow(
             "set_number_flow",
             Some(json!({
                 "p_phone_number_id": id,
-                "p_trigger_event": body.trigger_event,
+                "p_trigger_event": "call.answered",
                 "p_flow_id": body.flow_id,
             })),
         )
