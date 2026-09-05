@@ -21,6 +21,7 @@
 ## File map
 
 - `supabase/migrations/0112_a_flow_has_many_triggers.sql`: additive family column, backfill, and graph-v3 publish validation.
+- `supabase/tests/0112_a_flow_has_many_triggers.sql`: transaction-wrapped migration contract test, safe to run against the VPS demo database.
 - `src/utils/flow-graph.ts`: graph versions, families, legacy normalization, trigger enumeration, selection, and validation.
 - `src/utils/flow-graph.test.ts`: pure TypeScript contract tests.
 - `src/lib/flow-diagram.ts`: lossless graph/canvas conversion for every trigger.
@@ -122,12 +123,13 @@ git commit -m "feat: add multi-trigger graph contract"
 
 **Files:**
 - Create: `supabase/migrations/0112_a_flow_has_many_triggers.sql`
+- Create: `supabase/tests/0112_a_flow_has_many_triggers.sql`
 
 **Interfaces:**
 - Consumes: graph-v3 event/key semantics.
 - Produces: `flows.family` and `validate_flow(graph, family, legacy_trigger_event)` used by `publish_flow`.
 
-- [ ] **Step 1: Add failing migration assertions**
+- [x] **Step 1: Add failing migration assertions**
 
 At migration end, assert that this fixture validates:
 
@@ -142,13 +144,13 @@ perform public.validate_flow(
 Add a nested exception assertion proving two default-key answered triggers raise
 SQLSTATE `P0001`.
 
-- [ ] **Step 2: Run RED migration**
+- [x] **Step 2: Run RED migration**
 
 Run: `supabase db reset`
 
 Expected: assertion fails until the family column and validator overload exist.
 
-- [ ] **Step 3: Implement migration**
+- [x] **Step 3: Implement migration**
 
 Add constrained, non-null `flows.family`; retain `trigger_event`. Backfill
 answered/failed rows as `call` and legacy ended rows as `integration` for display
@@ -161,13 +163,13 @@ snapshot. During compatibility only, an existing `integration` row whose
 must not offer that trigger for new integration graphs. This prevents opening
 and saving an existing CRM graph from becoming an accidental breaking change.
 
-- [ ] **Step 4: Run GREEN migration**
+- [x] **Step 4: Run GREEN migration**
 
 Run: `supabase db reset`
 
 Expected: all migrations and embedded assertions pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add supabase/migrations/0112_a_flow_has_many_triggers.sql
