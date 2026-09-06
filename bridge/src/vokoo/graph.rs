@@ -113,6 +113,11 @@ struct FlowRow {
     graph: Graph,
 }
 
+#[derive(Debug, Deserialize)]
+struct FlowVersionRow {
+    snapshot: Value,
+}
+
 fn legacy_graph_version() -> u64 {
     2
 }
@@ -255,7 +260,25 @@ impl Flow {
     }
 }
 
+fn flow_from_version_row(
+    value: Value,
+    registry: HashMap<String, NodeType>,
+    legacy_event: &str,
+) -> Result<Flow, EntryError> {
+    let version: FlowVersionRow = serde_json::from_value(value)
+        .map_err(|error| EntryError::InvalidGraph(error.to_string()))?;
+    let row: FlowRow = serde_json::from_value(version.snapshot)
+        .map_err(|error| EntryError::InvalidGraph(error.to_string()))?;
+    Flow::from_row(row, registry, legacy_event)
+}
+
 fn event_for_trigger_implementation(implementation: &str) -> String {
+    if matches!(
+        implementation,
+        "trigger.due" | "trigger.recurring" | "trigger.reported" | "trigger.document"
+    ) {
+        return format!("care_path.{}", implementation.trim_start_matches("trigger."));
+    }
     let encoded = implementation.strip_prefix("trigger.").unwrap_or(implementation);
     match encoded.split_once('_') {
         Some((family, event)) => format!("{family}.{event}"),
@@ -519,6 +542,67 @@ pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
         .map(|t| (t.id.clone(), t))
         .collect();
     Flow::from_row(row, registry, &legacy_event).ok()
+}
+
+/// One immutable published flow snapshot.
+///
+/// Real calls use this after `start_call` has pinned the identity. Unlike
+/// `load_flow`, this never consults the mutable row in `flows`.
+pub async fn load_flow_version(
+    base: &str,
+    key: &str,
+    flow_id: &str,
+    version: i32,
+    legacy_event: &str,
+) -> Option<Flow> {
+    if base.is_empty() || key.is_empty() || flow_id.is_empty() || version < 1 {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+
+    let rows = get(
+        &client,
+        base,
+        key,
+        "flow_versions",
+        &[
+            ("flow_id", format!("eq.{flow_id}")),
+            ("version", format!("eq.{version}")),
+            ("select", "snapshot".into()),
+            ("limit", "1".into()),
+        ],
+    )
+    .await
+    .map_err(|error| {
+        log::warn!("[flow] could not load pinned flow {flow_id} v{version}: {error}")
+    })
+    .ok()?;
+
+    let registry_rows = get(
+        &client,
+        base,
+        key,
+        "catalogue_node_types",
+        &[
+            ("is_active", "eq.true".into()),
+            ("select", "id,node_type,label,provider_action,suspends,default_timeout_seconds".into()),
+        ],
+    )
+    .await
+    .ok()?;
+    let registry = registry_rows
+        .into_iter()
+        .filter_map(|row| serde_json::from_value::<NodeType>(row).ok())
+        .map(|node_type| (node_type.id.clone(), node_type))
+        .collect();
+
+    let row = rows.into_iter().next()?;
+    flow_from_version_row(row, registry, legacy_event)
+        .map_err(|error| log::warn!("[flow] invalid pinned flow {flow_id} v{version}: {error}"))
+        .ok()
 }
 
 /// An organisation's key for a vendor, from the vault.
@@ -993,6 +1077,25 @@ mod tests {
     }
 
     #[test]
+    fn compiles_the_flow_row_stored_inside_a_version_snapshot() {
+        let snapshot = json!({
+            "snapshot": row(
+                json!([
+                    trigger("answered", "trigger.call_answered", None),
+                    trigger("ended", "trigger.call_ended", None)
+                ]),
+                None,
+                3,
+            )
+        });
+
+        let flow = flow_from_version_row(snapshot, HashMap::new(), TRIGGER_ANSWERED).unwrap();
+
+        assert_eq!(flow.id, "flow-1");
+        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+    }
+
+    #[test]
     fn selects_each_trigger_by_event_and_default_key() {
         let flow = Flow::from_value(
             row(
@@ -1010,6 +1113,34 @@ mod tests {
 
         assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "answered");
         assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+    }
+
+    #[test]
+    fn selects_first_class_care_path_triggers_by_care_path_event() {
+        let flow = Flow::from_value(
+            row(
+                json!([
+                    trigger("due", "trigger.due", Some("first-contact")),
+                    trigger("reported", "trigger.reported", Some("red-flags"))
+                ]),
+                None,
+                3,
+            ),
+            HashMap::new(),
+            "care_path.due",
+        )
+        .unwrap();
+
+        assert_eq!(
+            flow.entry_node(&EntryPoint::with_key("care_path.due", "first-contact"))
+                .unwrap(),
+            "due"
+        );
+        assert_eq!(
+            flow.entry_node(&EntryPoint::with_key("care_path.reported", "red-flags"))
+                .unwrap(),
+            "reported"
+        );
     }
 
     #[test]

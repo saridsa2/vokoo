@@ -253,8 +253,7 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
                     }[];
                     const answered = bindings.find((binding) => binding.trigger_event === "call.answered");
                     if (!answered?.flows?.name) return "Nothing";
-                    const after = bindings.filter((binding) => binding.trigger_event !== "call.answered").length;
-                    return after > 0 ? `${answered.flows.name} (+${after} after)` : answered.flows.name;
+                    return answered.flows.name;
                 },
             },
             { id: "status", label: "Status", render: statusCell() },

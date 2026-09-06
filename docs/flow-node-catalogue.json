@@ -96,10 +96,72 @@
   },
   {
     "default_timeout_seconds": null,
+    "description": "Another flow supplied a validated payload to this reusable integration.",
+    "families": [
+      "integration"
+    ],
+    "fields": [
+      {
+        "help": "The payload every caller of this integration must supply.",
+        "key": "input_schema_id",
+        "label": "Input schema",
+        "required": true,
+        "type": "structured_output"
+      },
+      {
+        "key": "clinical_payload_kind",
+        "label": "Clinical payload",
+        "options": [
+          {
+            "id": "person",
+            "label": "Person"
+          },
+          {
+            "id": "lab_report",
+            "label": "Lab report"
+          },
+          {
+            "id": "imaging_report",
+            "label": "Imaging report"
+          },
+          {
+            "id": "medication",
+            "label": "Medication"
+          },
+          {
+            "id": "family_health",
+            "label": "Family health"
+          }
+        ],
+        "required": false,
+        "type": "select"
+      }
+    ],
+    "id": "trigger.integration_invoked",
+    "is_active": true,
+    "is_addable": false,
+    "label": "Integration invoked",
+    "node_type": "trigger",
+    "outcomes": [
+      {
+        "id": "started",
+        "label": "Started"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": -1,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
     "description": "Take one path or the other, by comparing two values.",
     "families": [
-      "call",
-      "integration"
+      "integration",
+      "care_path",
+      "call"
     ],
     "fields": [
       {
@@ -209,8 +271,9 @@
     "default_timeout_seconds": null,
     "description": "Send the flow round again while a comparison holds. Bounded, always.",
     "families": [
-      "call",
-      "integration"
+      "integration",
+      "care_path",
+      "call"
     ],
     "fields": [
       {
@@ -322,8 +385,9 @@
     "default_timeout_seconds": null,
     "description": "Build a set of named values from earlier steps. What this node holds is what the next one receives.",
     "families": [
-      "call",
-      "integration"
+      "integration",
+      "care_path",
+      "call"
     ],
     "fields": [
       {
@@ -463,6 +527,7 @@
     "default_timeout_seconds": 600,
     "description": "Hands the conversation to an agent. It finishes as one of its outcomes and the flow continues from there. The agent never transfers anyone — it reports what happened and the flow decides what that means.",
     "families": [
+      "care_path",
       "call"
     ],
     "fields": [
@@ -888,9 +953,10 @@
   },
   {
     "default_timeout_seconds": 30,
-    "description": "Turn what was said into a filled-in schema, using a model. The result is written to the call before anything is sent anywhere.",
+    "description": "Turn persisted call or document data into a filled-in schema before invoking an integration.",
     "families": [
-      "integration"
+      "care_path",
+      "call"
     ],
     "fields": [
       {
@@ -911,7 +977,7 @@
     "id": "intelligence",
     "is_active": true,
     "is_addable": true,
-    "label": "Process call",
+    "label": "Extract data",
     "node_type": "custom",
     "outcomes": [
       {
@@ -1011,6 +1077,772 @@
     "output": "opaque",
     "provider_action": "http_request",
     "sort_order": 21,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Validate a mapped payload and enqueue a reusable integration workflow.",
+    "families": [
+      "care_path",
+      "general",
+      "message",
+      "call"
+    ],
+    "fields": [
+      {
+        "key": "target_flow_id",
+        "label": "Integration",
+        "required": true,
+        "type": "integration"
+      },
+      {
+        "help": "JSON or an expression that resolves to the target input.",
+        "key": "input",
+        "label": "Input",
+        "required": true,
+        "type": "template"
+      },
+      {
+        "key": "idempotency_key",
+        "label": "Idempotency key",
+        "required": false,
+        "type": "text"
+      },
+      {
+        "default": 5,
+        "key": "max_attempts",
+        "label": "Maximum attempts",
+        "required": false,
+        "type": "number"
+      }
+    ],
+    "id": "integration.invoke",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Invoke integration",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "queued",
+        "label": "Queued"
+      },
+      {
+        "id": "invalid_payload",
+        "label": "Invalid payload"
+      },
+      {
+        "id": "failed",
+        "label": "Could not queue"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 22,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Enter for one patient when an anchor plus an offset reaches its due window.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "help": "Stable within this care path, for example first-midwife-contact.",
+        "key": "key",
+        "label": "Milestone key",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "key": "anchor",
+        "label": "Count from",
+        "options": [
+          {
+            "id": "enrolment",
+            "label": "Enrolment"
+          },
+          {
+            "id": "birth",
+            "label": "Birth"
+          },
+          {
+            "id": "transfer_of_care",
+            "label": "Transfer of care"
+          },
+          {
+            "id": "discharge",
+            "label": "Discharge"
+          },
+          {
+            "id": "treatment_start",
+            "label": "Treatment start"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "default": 0,
+        "key": "offset_days",
+        "label": "Due after days",
+        "required": true,
+        "type": "number"
+      },
+      {
+        "default": 0,
+        "key": "window_days",
+        "label": "Window length in days",
+        "required": false,
+        "type": "number"
+      }
+    ],
+    "id": "trigger.due",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Milestone due",
+    "node_type": "trigger",
+    "outcomes": [
+      {
+        "id": "due",
+        "label": "Due"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 30,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Enter for one patient every configured number of days from a named anchor.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "key",
+        "label": "Milestone key",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "key": "anchor",
+        "label": "Count from",
+        "options": [
+          {
+            "id": "enrolment",
+            "label": "Enrolment"
+          },
+          {
+            "id": "birth",
+            "label": "Birth"
+          },
+          {
+            "id": "transfer_of_care",
+            "label": "Transfer of care"
+          },
+          {
+            "id": "discharge",
+            "label": "Discharge"
+          },
+          {
+            "id": "treatment_start",
+            "label": "Treatment start"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "key": "every_days",
+        "label": "Repeat every days",
+        "required": true,
+        "type": "number"
+      },
+      {
+        "key": "left",
+        "label": "Continue while value",
+        "required": false,
+        "type": "text"
+      },
+      {
+        "key": "operator",
+        "label": "Comparison",
+        "options": [
+          {
+            "id": "equals",
+            "label": "Equals"
+          },
+          {
+            "id": "not_equals",
+            "label": "Does not equal"
+          },
+          {
+            "id": "gt",
+            "label": "Greater than"
+          },
+          {
+            "id": "gte",
+            "label": "At least"
+          },
+          {
+            "id": "lt",
+            "label": "Less than"
+          },
+          {
+            "id": "lte",
+            "label": "At most"
+          }
+        ],
+        "required": false,
+        "type": "select"
+      },
+      {
+        "key": "right",
+        "label": "Compared with",
+        "required": false,
+        "type": "text"
+      }
+    ],
+    "id": "trigger.recurring",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Recurring milestone",
+    "node_type": "trigger",
+    "outcomes": [
+      {
+        "id": "due",
+        "label": "Due"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 31,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Enter when a patient or practitioner reports one of this trigger's named observations.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "key",
+        "label": "Trigger key",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "help": "One outcome and path is created for each observation.",
+        "key": "watch",
+        "label": "Reported observations",
+        "required": true,
+        "type": "branches"
+      }
+    ],
+    "id": "trigger.reported",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Reported by patient",
+    "node_type": "trigger",
+    "outcomes": [],
+    "outcomes_from": "watch",
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 32,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Enter when a document of the configured kind is attached to this patient's care path.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "key",
+        "label": "Trigger key",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "key": "document_kind",
+        "label": "Document kind",
+        "options": [
+          {
+            "id": "lab_report",
+            "label": "Lab report"
+          },
+          {
+            "id": "imaging_report",
+            "label": "Imaging report"
+          },
+          {
+            "id": "discharge_summary",
+            "label": "Discharge summary"
+          },
+          {
+            "id": "referral",
+            "label": "Referral"
+          },
+          {
+            "id": "other",
+            "label": "Other"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      }
+    ],
+    "id": "trigger.document",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Document received",
+    "node_type": "trigger",
+    "outcomes": [
+      {
+        "id": "received",
+        "label": "Received"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 33,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": 604800,
+    "description": "Create a durable outbound call request for this patient and wait for its result.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "agent_id",
+        "label": "Agent",
+        "required": true,
+        "type": "agent"
+      },
+      {
+        "default": 3,
+        "key": "attempts",
+        "label": "Attempts",
+        "required": false,
+        "type": "number"
+      },
+      {
+        "default": 4,
+        "key": "retry_hours",
+        "label": "Retry after hours",
+        "required": false,
+        "type": "number"
+      },
+      {
+        "default": 7,
+        "key": "expires_days",
+        "label": "Expire after days",
+        "required": false,
+        "type": "number"
+      }
+    ],
+    "id": "outreach.call",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Call patient",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "reached",
+        "label": "Reached"
+      },
+      {
+        "id": "not_reached",
+        "label": "Not reached"
+      },
+      {
+        "id": "declined",
+        "label": "Declined"
+      },
+      {
+        "id": "expired",
+        "label": "Expired"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 34,
+    "suspends": true,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": 86400,
+    "description": "Create a durable patient message for an external delivery adapter.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "template",
+        "label": "Message",
+        "required": true,
+        "type": "template"
+      },
+      {
+        "key": "channel",
+        "label": "Channel",
+        "options": [
+          {
+            "id": "app",
+            "label": "App"
+          },
+          {
+            "id": "whatsapp",
+            "label": "WhatsApp"
+          },
+          {
+            "id": "sms",
+            "label": "SMS"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "default": 1,
+        "key": "expires_days",
+        "label": "Expire after days",
+        "required": false,
+        "type": "number"
+      }
+    ],
+    "id": "outreach.message",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Message patient",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "reached",
+        "label": "Delivered"
+      },
+      {
+        "id": "not_reached",
+        "label": "Not delivered"
+      },
+      {
+        "id": "declined",
+        "label": "Opted out"
+      },
+      {
+        "id": "expired",
+        "label": "Expired"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 35,
+    "suspends": true,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": 604800,
+    "description": "Ask the patient to attend, complete a test, or upload a document; expiry is an explicit flow outcome.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "what",
+        "label": "Request",
+        "options": [
+          {
+            "id": "attendance",
+            "label": "Attend appointment"
+          },
+          {
+            "id": "lab_report",
+            "label": "Upload lab report"
+          },
+          {
+            "id": "imaging_report",
+            "label": "Upload imaging report"
+          },
+          {
+            "id": "test",
+            "label": "Complete a test"
+          },
+          {
+            "id": "medication_review",
+            "label": "Medication review"
+          },
+          {
+            "id": "other",
+            "label": "Other"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "key": "instructions",
+        "label": "Instructions",
+        "required": true,
+        "type": "template"
+      },
+      {
+        "default": 7,
+        "key": "expires_days",
+        "label": "Expire after days",
+        "required": true,
+        "type": "number"
+      }
+    ],
+    "id": "outreach.request",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Request from patient",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "fulfilled",
+        "label": "Fulfilled"
+      },
+      {
+        "id": "declined",
+        "label": "Declined"
+      },
+      {
+        "id": "expired",
+        "label": "Expired"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 36,
+    "suspends": true,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Persist a patient-scoped observation so the journey and later flows can use it.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "kind",
+        "label": "Observation kind",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "key": "value",
+        "label": "Value",
+        "required": true,
+        "type": "template"
+      },
+      {
+        "default": "workflow",
+        "key": "source",
+        "label": "Source",
+        "options": [
+          {
+            "id": "patient",
+            "label": "Patient"
+          },
+          {
+            "id": "practitioner",
+            "label": "Practitioner"
+          },
+          {
+            "id": "document",
+            "label": "Document"
+          },
+          {
+            "id": "workflow",
+            "label": "Workflow"
+          }
+        ],
+        "required": false,
+        "type": "select"
+      }
+    ],
+    "id": "care_path.record",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Record observation",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "recorded",
+        "label": "Recorded"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 37,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Mark a named patient milestone complete and retain the completion evidence.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "milestone_key",
+        "label": "Milestone key",
+        "required": true,
+        "type": "text"
+      },
+      {
+        "key": "evidence",
+        "label": "Completion evidence",
+        "required": false,
+        "type": "template"
+      }
+    ],
+    "id": "care_path.complete",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Complete milestone",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "completed",
+        "label": "Completed"
+      },
+      {
+        "id": "not_found",
+        "label": "Milestone not found"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 38,
+    "suspends": false,
+    "valid_triggers": []
+  },
+  {
+    "default_timeout_seconds": null,
+    "description": "Create trackable work for a clinician outside a live conversation.",
+    "families": [
+      "care_path"
+    ],
+    "fields": [
+      {
+        "key": "to",
+        "label": "Recipient",
+        "options": [
+          {
+            "id": "primary_team",
+            "label": "Primary care team"
+          },
+          {
+            "id": "on_call",
+            "label": "On-call clinician"
+          },
+          {
+            "id": "clinician",
+            "label": "Named clinician"
+          },
+          {
+            "id": "coordinator",
+            "label": "Care coordinator"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "key": "urgency",
+        "label": "Urgency",
+        "options": [
+          {
+            "id": "routine",
+            "label": "Routine"
+          },
+          {
+            "id": "soon",
+            "label": "Soon"
+          },
+          {
+            "id": "urgent",
+            "label": "Urgent"
+          },
+          {
+            "id": "immediate",
+            "label": "Immediate"
+          }
+        ],
+        "required": true,
+        "type": "select"
+      },
+      {
+        "key": "note",
+        "label": "Clinical note",
+        "required": true,
+        "type": "template"
+      }
+    ],
+    "id": "escalate.notify",
+    "is_active": true,
+    "is_addable": true,
+    "label": "Notify care team",
+    "node_type": "custom",
+    "outcomes": [
+      {
+        "id": "notified",
+        "label": "Notified"
+      },
+      {
+        "id": "failed",
+        "label": "Failed"
+      }
+    ],
+    "outcomes_from": null,
+    "output": "opaque",
+    "provider_action": null,
+    "sort_order": 39,
     "suspends": false,
     "valid_triggers": []
   },

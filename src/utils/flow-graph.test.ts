@@ -66,6 +66,32 @@ test("selects a trigger by event and defaults its key", () => {
     assert.equal(entryNodeId(graph, { event: "call.ended", key: "default" }), "ended");
 });
 
+test("maps first-class care-path triggers to their care-path events", () => {
+    const graph: FlowGraph = {
+        version: 3,
+        nodes: ["due", "recurring", "reported", "document"].map((kind, index) => ({
+            id: kind,
+            type: "trigger",
+            implementation: `trigger.${kind}`,
+            name: kind,
+            position: { x: 0, y: index * 100 },
+            config: { key: kind },
+        })),
+        transitions: [],
+        variables: [],
+    };
+
+    assert.deepEqual(
+        triggerEntries(graph).map(({ event, key }) => ({ event, key })),
+        [
+            { event: "care_path.due", key: "due" },
+            { event: "care_path.recurring", key: "recurring" },
+            { event: "care_path.reported", key: "reported" },
+            { event: "care_path.document", key: "document" },
+        ],
+    );
+});
+
 test("does not fall through to another trigger when an entry is missing", () => {
     assert.equal(entryNodeId(multiTriggerGraph(), { event: "message.received" }), null);
 });

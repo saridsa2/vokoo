@@ -1,5 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    // A linked Git worktree sits below the primary checkout, which also has a
+    // lockfile. Without explicit roots Next traces the parent checkout and
+    // emits `.next/standalone/.worktrees/<name>/server.js`; the VPS service
+    // expects the standalone entrypoint at its root.
+    outputFileTracingRoot: process.cwd(),
+    turbopack: {
+        root: process.cwd(),
+    },
     experimental: {
         optimizePackageImports: ["@untitledui/icons"],
     },

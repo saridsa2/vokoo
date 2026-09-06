@@ -2,7 +2,7 @@
 
 **Issue:** [#6](https://github.com/saridsa2/vokoo/issues/6)
 
-**Status:** Phase 1 implemented and verified; later phases remain proposed
+**Status:** Phases 1-3 implemented and verified locally; Phase 4 remains proposed. No VPS migration or deployment has been performed.
 
 **Rollout:** Compatibility first; no VPS deployment until user testing is complete
 
@@ -110,15 +110,15 @@ execution context into the integration's declared schema.
 
 ### Clinical payload schemas
 
-VoKoo vendors the owner-provided `wellally-schemas` source under
-`vendor/wellally-schemas`. Its health-domain models are the source of truth for
+VoKoo vendors the owner-provided `vokoo-schemas` source under
+`vendor/vokoo-clinical-schemas`. Its health-domain models are the source of truth for
 person, lab report, imaging report, medication, and family-health payloads. The
 bridge consumes the vendored Rust package and control-plane/editor validation
 consumes the same vendored schema definitions rather than maintaining a second
 set of clinical types. The standalone upstream licenses and generated artifacts
 are excluded; this first-party copy is governed by VoKoo's root license.
 
-The WellAlly models describe clinical data inside an invocation. VoKoo still
+The VoKoo models describe clinical data inside an invocation. VoKoo still
 owns the transport envelope: source execution identity, call lifecycle facts,
 tenant, target integration/version, idempotency key, attempt state, and trace.
 This keeps a reusable health-data standard separate from workflow-delivery
@@ -328,7 +328,7 @@ observable in the integration activity UI and API.
 
 ### Phase 3: integration invocation
 
-- Consume the owned `vendor/wellally-schemas` snapshot from both runtimes.
+- Consume the owned `vendor/vokoo-clinical-schemas` snapshot from both runtimes.
 - Add typed integration inputs and the two node implementations.
 - Add durable runs, worker, API, activity surface, retries, and idempotency.
 - Provide the assisted CRM migration path.
@@ -406,6 +406,6 @@ approval after local testing. Before any eventual rollout:
 - Call-data extraction belongs to the call flow.
 - Integrations are independent, typed, explicitly invoked workflows.
 - External integration work is durable and asynchronous.
-- Clinical payload types come from `vendor/wellally-schemas`; VoKoo owns
+- Clinical payload types come from `vendor/vokoo-clinical-schemas`; VoKoo owns
   invocation and delivery envelopes.
 - Migration is compatibility-first rather than a hard cutover.

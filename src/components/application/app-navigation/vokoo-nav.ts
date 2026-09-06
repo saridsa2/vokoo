@@ -61,6 +61,7 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         label: "Care",
         items: [
             { label: "Patients", href: "/patients", icon: IconPatients },
+            { label: "Care Paths", href: "/care-paths", icon: IconCohorts, badge: "Alpha" },
             { label: "Cohorts", href: "/cohorts", icon: IconCohorts },
             // Its own entry rather than a tab inside a cohort: an enrolment is
             // read from both ends — everyone on this path, and every path this
@@ -156,7 +157,7 @@ export const NAV_TITLES: Record<string, string> = Object.fromEntries(
  * the route alone, and guessing from the rendered markup would make the
  * navigation depend on what a screen happens to draw.
  */
-export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer", "/integrations"]);
+export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer", "/integrations", "/care-paths"]);
 
 /**
  * Routes that take the whole window, navigation included.

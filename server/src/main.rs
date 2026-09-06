@@ -300,6 +300,18 @@ const RESOURCES: &[Resource] = &[
     Resource { route: "vendor-rates", table: "catalogue_vendor_rates", order_by: "updated_at", select: "*" },
     Resource { route: "chat-logs", table: "chats", order_by: "updated_at", select: "*" },
     Resource { route: "structured-outputs", table: "structured_outputs", order_by: "updated_at", select: "*" },
+    Resource {
+        route: "integration-runs",
+        table: "integration_runs",
+        order_by: "created_at",
+        select: "id,org_id,source_flow_id,source_flow_version,source_execution_id,source_node_id,target_flow_id,target_flow_version,status,attempt_count,max_attempts,available_at,last_error,started_at,finished_at,created_at,updated_at",
+    },
+    Resource {
+        route: "integration-run-events",
+        table: "integration_run_events",
+        order_by: "created_at",
+        select: "*",
+    },
     // Human agents. **The SIP password is not selected.** PJSIP digest auth
     // needs it in plaintext, so it cannot be hashed the way a login password
     // is — which makes it a credential that must never be listed. Somebody's
@@ -337,6 +349,13 @@ const RESOURCES: &[Resource] = &[
         order_by: "created_at",
         select: "*,patients(id,full_name,phone,language,mrn),cohorts(id,name,org_id,flow_id)",
     },
+    Resource { route: "care-path-runs", table: "care_path_runs", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-anchors", table: "care_path_anchors", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-milestones", table: "care_path_milestones", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-observations", table: "care_path_observations", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-documents", table: "care_path_documents", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-outreach", table: "care_path_outreach", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-escalations", table: "care_path_escalations", order_by: "created_at", select: "*" },
 ];
 
 fn resource_for(route: &str) -> Result<Resource, ApiError> {
@@ -869,6 +888,24 @@ async fn metrics(
     }))
 }
 
+async fn retry_integration_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    org_id(&headers)?;
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("retry_integration_run", Some(json!({ "p_run_id": id })))
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "integration-runs", "action": "retry" }),
+    }))
+}
+
 /// Publish an agent.
 ///
 /// Delegates to the `publish_agent` database function rather than doing the
@@ -1102,17 +1139,13 @@ async fn set_agent_skills(
 
 #[derive(serde::Deserialize)]
 struct NumberBindingRequest {
-    trigger_event: String,
-    /// Absent or null unbinds this event.
+    /// Absent or null unbinds the number's call flow.
     #[serde(default)]
     flow_id: Option<String>,
 }
 
-/// Which flow answers which event on a number.
-///
-/// A call is the durable thing and flows are handlers bound to events on it, so
-/// a number has one binding per event rather than one flow. `resolve_for_event`
-/// reads exactly this.
+/// The call flow selected for a number. Legacy per-event rows are returned
+/// during migration, but the console collapses them to `call.answered`.
 async fn list_number_flows(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -1149,7 +1182,7 @@ async fn set_number_flow(
             "set_number_flow",
             Some(json!({
                 "p_phone_number_id": id,
-                "p_trigger_event": body.trigger_event,
+                "p_trigger_event": "call.answered",
                 "p_flow_id": body.flow_id,
             })),
         )
@@ -3992,6 +4025,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/calls/{id}/monitor", post(monitor_call))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
+        .route("/api/v1/integration-runs/{id}/retry", post(retry_integration_run))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
         .route("/api/v1/settings/members", get(list_members).post(add_member))
         .route("/api/v1/{resource}", get(list_resources).post(create_resource))
@@ -4035,7 +4069,26 @@ mod tests {
 
     #[test]
     fn resource_allowlist_maps_public_routes_to_tables() {
-        assert_eq!(resource_for("phone-numbers").unwrap().table, "phone_numbers");
+        assert_eq!(
+            resource_for("phone-numbers").unwrap().table,
+            "phone_numbers"
+        );
+        assert_eq!(
+            resource_for("care-path-runs").unwrap().table,
+            "care_path_runs"
+        );
+        assert_eq!(
+            resource_for("care-path-milestones").unwrap().table,
+            "care_path_milestones"
+        );
+        assert_eq!(
+            resource_for("care-path-outreach").unwrap().table,
+            "care_path_outreach"
+        );
+        assert_eq!(
+            resource_for("care-path-escalations").unwrap().table,
+            "care_path_escalations"
+        );
         assert!(resource_for("../../secrets").is_err());
     }
 

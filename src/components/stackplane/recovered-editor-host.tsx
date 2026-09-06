@@ -74,6 +74,7 @@ import {
   outcomesForNode,
   sizeForNode,
 } from "@/lib/architecture-model"
+import { CLINICAL_SCHEMA_OPTIONS } from "@/lib/vokoo-clinical-schemas"
 import { applyAgentOperation } from "@/lib/agent/apply"
 import type { CodingRunDescriptor, CodingRunsByNodeId } from "@/lib/agent/coding-runs-core"
 import { type AgentMode, type AgentOperation } from "@/lib/agent/tools"
@@ -411,7 +412,7 @@ function expressionPathsFor(
  */
 const InsertTarget = createContext<{ current: ((path: string) => void) | null }>({ current: null })
 
-const ReferenceData = createContext<{ agents: Referenceable[]; shapes: Referenceable[]; engineOptions: EngineOption[]; connectedVendors: string[]; shapeIsFixed: boolean; family: NodeFamily; board: BoardContext; expressionPaths: ExpressionGroup[] }>({ agents: [], shapes: [], engineOptions: [], connectedVendors: [], shapeIsFixed: false, family: "call", board: "call", expressionPaths: [] })
+const ReferenceData = createContext<{ agents: Referenceable[]; shapes: Referenceable[]; integrations: Referenceable[]; engineOptions: EngineOption[]; connectedVendors: string[]; shapeIsFixed: boolean; family: NodeFamily; board: BoardContext; expressionPaths: ExpressionGroup[] }>({ agents: [], shapes: [], integrations: [], engineOptions: [], connectedVendors: [], shapeIsFixed: false, family: "call", board: "call", expressionPaths: [] })
 
 export function RecoveredEditorHost({
   diagram: providedDiagram,
@@ -419,6 +420,7 @@ export function RecoveredEditorHost({
   onPublish,
   agents = [],
   shapes = [],
+  integrations = [],
   shapeIsFixed = false,
   backHref = "/composer",
   notice,
@@ -441,6 +443,8 @@ export function RecoveredEditorHost({
   agents?: Referenceable[]
   /** Named JSON schemas an intelligence node can fill in. */
   shapes?: Referenceable[]
+  /** Published reusable integrations an invoke node may target. */
+  integrations?: Referenceable[]
   /** A finished call, for the expression panel to show real values from. */
   sampleCall?: SampleCall
   /**
@@ -1491,7 +1495,7 @@ export function RecoveredEditorHost({
   }, [diagram?.graph.edges])
 
   return (
-    <ReferenceData.Provider value={{ agents, shapes, engineOptions, connectedVendors, shapeIsFixed, family: familyOf(diagram), board, expressionPaths }}>
+    <ReferenceData.Provider value={{ agents, shapes, integrations, engineOptions, connectedVendors, shapeIsFixed, family: familyOf(diagram), board, expressionPaths }}>
     <main className="app editor-shell">
       <section className="stage">
         <div
@@ -3230,6 +3234,10 @@ function ConfigFieldControl({
     return <ReferenceSelect field={field} value={value} onChange={onChange} kind="shape" />
   }
 
+  if (field.valueType === "integration") {
+    return <ReferenceSelect field={field} value={value} onChange={onChange} kind="integration" />
+  }
+
   // The field that decides how many paths leave the node.
   if (field.valueType === "branches") {
     return <BranchListEditor field={field} value={value} onChange={onChange} />
@@ -3381,7 +3389,7 @@ function OptionSelect({
   value: unknown
   onChange: (value: unknown) => void
 }) {
-  const options = field.options ?? []
+  const options = field.field === "clinical_payload_kind" ? CLINICAL_SCHEMA_OPTIONS : field.options ?? []
   const current = typeof value === "string" ? value : ""
   const fallback = typeof field.default === "string" ? field.default : ""
   const unknown = current && !options.some((option) => option.id === current)
@@ -3694,11 +3702,11 @@ function ReferenceSelect({
   value: unknown
   onChange: (value: unknown) => void
   /** Which list to offer. Both are rows chosen by name, not ids to paste. */
-  kind: "agent" | "shape"
+  kind: "agent" | "shape" | "integration"
 }) {
-  const { agents, shapes } = useContext(ReferenceData)
-  const options = kind === "agent" ? agents : shapes
-  const noun = kind === "agent" ? "agent" : "shape"
+  const { agents, shapes, integrations } = useContext(ReferenceData)
+  const options = kind === "agent" ? agents : kind === "shape" ? shapes : integrations
+  const noun = kind === "agent" ? "agent" : kind === "shape" ? "shape" : "integration"
   const current = typeof value === "string" ? value : ""
   // A value pointing at something that is gone must stay visible: silently
   // showing "Choose" would look like nothing was ever set.

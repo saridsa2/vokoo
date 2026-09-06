@@ -88,7 +88,9 @@ pub async fn send(
     // exactly the property an idempotency key needs.
     .header(
         "Idempotency-Key",
-        scope.call.get("call_id").and_then(Value::as_str).unwrap_or_default(),
+        scope.vars.get("idempotency_key").and_then(Value::as_str)
+            .or_else(|| scope.call.get("call_id").and_then(Value::as_str))
+            .unwrap_or_default(),
     )
     .header("User-Agent", "vokoo-postcall/1");
 

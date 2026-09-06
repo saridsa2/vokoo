@@ -13,6 +13,39 @@
 
 use serde_json::{json, Value};
 
+/// The immutable graph identity selected when the call began.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedFlow {
+    pub flow_id: String,
+    pub version: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StartedCall {
+    call_id: String,
+    pinned_flow: Option<PinnedFlow>,
+}
+
+fn decode_started_call(value: Value) -> Option<StartedCall> {
+    let call_id = value.get("call_id")?.as_str()?.to_owned();
+    if call_id.is_empty() {
+        return None;
+    }
+
+    let flow_id = value.get("flow_id").and_then(Value::as_str);
+    let version = value.get("flow_version").and_then(Value::as_i64);
+    let pinned_flow = match (flow_id, version) {
+        (None, None) => None,
+        (Some(flow_id), Some(version)) if !flow_id.is_empty() => Some(PinnedFlow {
+            flow_id: flow_id.to_owned(),
+            version: i32::try_from(version).ok()?,
+        }),
+        _ => return None,
+    };
+
+    Some(StartedCall { call_id, pinned_flow })
+}
+
 /// A call, as far as the database is concerned.
 #[derive(Clone)]
 pub struct CallRecord {
@@ -21,6 +54,7 @@ pub struct CallRecord {
     /// `None` when the row could not be created. Every method then does
     /// nothing, so the call proceeds unrecorded rather than not at all.
     call_id: Option<String>,
+    pinned_flow: Option<PinnedFlow>,
     /// Kept because `call_ended` is keyed on the carrier's id, not ours: the
     /// Hangup webhook carries the ucid and nothing else we assigned.
     ucid: String,
@@ -63,26 +97,26 @@ impl CallRecord {
         ucid: &str,
         did: &str,
         from: &str,
-        flow_id: Option<&str>,
     ) -> Self {
-        let call_id = if supabase_url.is_empty() || service_key.is_empty() {
+        let started = if supabase_url.is_empty() || service_key.is_empty() {
             None
         } else {
             rpc(
                 supabase_url,
                 service_key,
-                "call_started",
+                "start_call",
                 json!({
                     "p_carrier": "kookoo",
                     "p_ucid": ucid,
                     "p_did": did,
                     "p_from": from,
-                    "p_flow_id": flow_id,
                 }),
             )
             .await
-            .and_then(|v| v.as_str().map(str::to_owned))
+            .and_then(decode_started_call)
         };
+        let call_id = started.as_ref().map(|call| call.call_id.clone());
+        let pinned_flow = started.and_then(|call| call.pinned_flow);
 
         match &call_id {
             Some(id) => log::info!("[call-record] opened {id}"),
@@ -93,6 +127,7 @@ impl CallRecord {
             supabase_url: supabase_url.to_string(),
             service_key: service_key.to_string(),
             call_id,
+            pinned_flow,
             ucid: ucid.to_string(),
             started: std::time::Instant::now(),
         }
@@ -152,8 +187,41 @@ impl CallRecord {
         }
     }
 
+    /// Apply the carrier's final facts before any ended-trigger work reads the
+    /// call. The hangup webhook is authoritative for disconnect reason and the
+    /// recording URL, and integrations must never race those writes.
+    pub async fn finish_from_carrier(
+        base: &str,
+        key: &str,
+        ucid: &str,
+        disconnect_reason: Option<&str>,
+        recording_url: Option<&str>,
+    ) {
+        if base.is_empty() || key.is_empty() || ucid.is_empty() {
+            return;
+        }
+        rpc(
+            base,
+            key,
+            "call_ended",
+            json!({
+                "p_ucid": ucid,
+                "p_ended_reason": Value::Null,
+                "p_disconnect_reason": disconnect_reason,
+                "p_duration_seconds": Value::Null,
+                "p_recording_url": recording_url,
+                "p_variables": Value::Null,
+            }),
+        )
+        .await;
+    }
+
     pub fn id(&self) -> Option<&str> {
         self.call_id.as_deref()
+    }
+
+    pub fn pinned_flow(&self) -> Option<&PinnedFlow> {
+        self.pinned_flow.as_ref()
     }
 
     /// One node, and how it finished.
@@ -247,5 +315,49 @@ impl CallRecord {
             }),
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decodes_the_call_id_and_exact_flow_pin() {
+        let started = decode_started_call(json!({
+            "call_id": "call-1",
+            "flow_id": "flow-1",
+            "flow_version": 7
+        }))
+        .unwrap();
+
+        assert_eq!(started.call_id, "call-1");
+        assert_eq!(
+            started.pinned_flow,
+            Some(PinnedFlow { flow_id: "flow-1".into(), version: 7 })
+        );
+    }
+
+    #[test]
+    fn an_unconfigured_call_has_an_id_and_no_flow_pin() {
+        let started = decode_started_call(json!({
+            "call_id": "call-2",
+            "flow_id": null,
+            "flow_version": null
+        }))
+        .unwrap();
+
+        assert_eq!(started.call_id, "call-2");
+        assert_eq!(started.pinned_flow, None);
+    }
+
+    #[test]
+    fn rejects_half_of_a_pin() {
+        assert!(decode_started_call(json!({
+            "call_id": "call-3",
+            "flow_id": "flow-1",
+            "flow_version": null
+        }))
+        .is_none());
     }
 }

@@ -16,6 +16,8 @@ import { useResource } from "@/hooks/use-resource";
 import type { Flow } from "@/utils/flow-graph";
 import { readGraph } from "@/utils/flow-graph";
 import { dateTime } from "@/utils/format";
+import { IntegrationActivity } from "@/components/application/screens/integration-activity";
+import { CARE_PATH_WORKSPACE } from "@/lib/care-path-workspace";
 
 type PhoneNumber = {
     id: string;
@@ -26,11 +28,12 @@ type PhoneNumber = {
     number_flows?: { trigger_event: string; flows?: { id?: string } | null }[];
 };
 
-/** What this board is for. The two differ in more than a filter. */
-type Family = "call" | "post_call";
+/** What this board is for. The families differ in more than a filter. */
+type Family = "call" | "post_call" | "care_path";
 
 const FAMILIES = {
     call: {
+        family: "call",
         trigger_event: "call.answered",
         trigger: "trigger.call_answered",
         triggerName: "Call answered",
@@ -38,12 +41,14 @@ const FAMILIES = {
         empty: "A call flow decides what happens when a number rings — which questions are asked, when the caller reaches a person, and how the call ends.",
     },
     post_call: {
-        trigger_event: "call.ended",
-        trigger: "trigger.call_ended",
-        triggerName: "Call ended",
+        family: "integration",
+        trigger_event: "integration.invoked",
+        trigger: "trigger.integration_invoked",
+        triggerName: "Integration invoked",
         noun: "integration",
-        empty: "An integration runs once a call is over: read what was said into a shape, and send it to another system. Nobody is waiting, so it can take its time.",
+        empty: "An integration accepts a typed payload from a call, care path, message, or general flow and delivers it to another system.",
     },
+    care_path: CARE_PATH_WORKSPACE,
 } as const satisfies Record<Family, unknown>;
 
 /**
@@ -68,7 +73,9 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
         const byFlow = new Map<string, string>();
         for (const number of numbers) {
             for (const binding of number.number_flows ?? []) {
-                if (binding.flows?.id) byFlow.set(binding.flows.id, number.number);
+                if (binding.trigger_event === "call.answered" && binding.flows?.id) {
+                    byFlow.set(binding.flows.id, number.number);
+                }
             }
         }
         return byFlow;
@@ -78,20 +85,22 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
         // One table, two boards. A flow that responds to something else is not
         // hidden by a filter somebody can clear — it belongs on the other
         // board, where its palette is.
-        const mine = records.filter((flow) => (flow.trigger_event ?? "call.answered") === kind.trigger_event);
+        const mine = records.filter((flow) => flow.family === kind.family);
         const needle = query.trim().toLowerCase();
         if (!needle) return mine;
         return mine.filter((flow) => `${flow.name} ${flow.description ?? ""}`.toLowerCase().includes(needle));
-    }, [records, query, kind.trigger_event]);
+    }, [records, query, kind.family]);
 
     return (
         <>
             <ScreenHeader
-                title={family === "call" ? "Calls" : "Integrations"}
+                title={family === "call" ? "Calls" : family === "post_call" ? "Integrations" : "Care Paths"}
                 description={
                     family === "call"
                         ? "What happens while somebody is on the line."
-                        : "What happens after a call ends."
+                        : family === "post_call"
+                          ? "Reusable workflows invoked explicitly by call and care-path flows."
+                          : "Longitudinal journeys triggered by milestones, reports, documents, and recurrence."
                 }
                 search={
                     <div className="w-full md:w-64">
@@ -106,7 +115,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                 }
                 actions={
                     <Button size="sm" onClick={() => setCreating(true)}>
-                        {family === "call" ? "New call flow" : "New integration"}
+                        {family === "call" ? "New call flow" : family === "post_call" ? "New integration" : "New care path"}
                     </Button>
                 }
             />
@@ -114,6 +123,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
             <NewFlowDialog kind={kind} isOpen={creating} onClose={() => setCreating(false)} />
 
             <div className="min-h-0 flex-1 overflow-y-auto p-6">
+                {family === "post_call" ? <div className="mb-6"><IntegrationActivity /></div> : null}
                 {error ? (
                     <div className="rounded-xl bg-error-primary p-6 ring-1 ring-error_subtle">
                         <p className="text-sm font-semibold text-error-primary">Could not load flows</p>
@@ -164,8 +174,13 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                                         </p>
 
                                         <p className="text-xs text-tertiary">
-                                            {/* A flow nothing dials never runs, however complete it looks. */}
-                                            {number ? `Answers ${number}` : "No number points here"}
+                                            {family === "call"
+                                                ? number
+                                                    ? `Answers ${number}`
+                                                    : "No number points here"
+                                                : family === "post_call"
+                                                  ? "Invoked from another flow"
+                                                  : `${graph.nodes.filter((node) => node.implementation.startsWith("trigger.")).length} explicit triggers`}
                                         </p>
 
                                         {flow.updated_at && (
@@ -185,12 +200,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
 /**
  * A new flow. It asks for a name and nothing else.
  *
- * **When it runs is not a question here** — it is answered by which board you
- * opened, and that answer settles three things at once: the trigger node the
- * graph opens with, the nodes the palette may offer, and the
- * `number_flows(phone_number_id, trigger_event)` row that binds it. A dialog
- * asking again would let somebody create an integration from the calls board
- * and then wonder why the palette refuses a transfer.
+ * The board fixes the capability family and initial compatibility trigger.
  */
 function NewFlowDialog({
     kind,
@@ -207,6 +217,10 @@ function NewFlowDialog({
 
     const [name, setName] = useState("");
     const [saving, setSaving] = useState(false);
+    const [schemaId, setSchemaId] = useState("");
+    const { records: schemas } = useResource<{ id: string; name: string }>("structured-outputs");
+    const isIntegration = kind.family === "integration";
+    const isCarePath = kind.family === "care_path";
 
     const create = async () => {
         if (!context || !name.trim()) return;
@@ -218,14 +232,14 @@ function NewFlowDialog({
                     name: name.trim(),
                     description: "",
                     status: "draft",
+                    family: kind.family,
                     trigger_event: kind.trigger_event,
                     // The trigger and nothing else. A starter full of nodes
                     // somebody did not ask for is a graph they must read before
                     // they can begin, and the palette is the better teacher now
                     // that it only offers what belongs here.
                     graph: {
-                        version: 2,
-                        start: "trigger",
+                        version: 3,
                         variables: [],
                         nodes: [
                             {
@@ -233,7 +247,7 @@ function NewFlowDialog({
                                 name: kind.triggerName,
                                 type: "trigger",
                                 implementation: kind.trigger,
-                                config: {},
+                                config: isIntegration ? { input_schema_id: schemaId } : isCarePath ? kind.triggerConfig : {},
                                 position: { x: -420, y: 0 },
                             },
                         ],
@@ -244,6 +258,7 @@ function NewFlowDialog({
             );
             onClose();
             setName("");
+            setSchemaId("");
             router.push(`/flows/${data.id}`);
         } catch (problem) {
             notify.failure(`Could not create the ${kind.noun}`, problem);
@@ -259,24 +274,35 @@ function NewFlowDialog({
                     <div className="flex w-full flex-col gap-5 rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex flex-col gap-1">
                             <h2 className="text-lg font-semibold text-primary">
-                                {kind.trigger_event === "call.answered" ? "New call flow" : "New integration"}
+                                {kind.family === "call" ? "New call flow" : isIntegration ? "New integration" : "New care path"}
                             </h2>
                             <p className="text-sm text-tertiary">{kind.empty}</p>
                         </div>
 
                         <Input
                             label="Name"
-                            placeholder={kind.trigger_event === "call.answered" ? "Vayuveda main line" : "Lead capture"}
+                            placeholder={kind.family === "call" ? "Vayuveda main line" : isIntegration ? "Lead capture" : "Antenatal care"}
                             value={name}
                             onChange={(value) => setName(String(value))}
                             isRequired
                         />
 
+                        {isIntegration ? (
+                            <label className="flex flex-col gap-1.5 text-sm font-medium text-secondary">
+                                Input schema *
+                                <select className="rounded-lg bg-primary px-3 py-2.5 text-primary ring-1 ring-primary"
+                                    value={schemaId} onChange={(event) => setSchemaId(event.target.value)}>
+                                    <option value="">{schemas.length === 0 ? "No schemas available" : "Choose a schema"}</option>
+                                    {schemas.map((schema) => <option key={schema.id} value={schema.id}>{schema.name}</option>)}
+                                </select>
+                            </label>
+                        ) : null}
+
                         <div className="flex justify-end gap-2">
                             <Button color="secondary" size="sm" onClick={onClose} isDisabled={saving}>
                                 Cancel
                             </Button>
-                            <Button size="sm" onClick={create} isDisabled={!name.trim()} isLoading={saving}>
+                            <Button size="sm" onClick={create} isDisabled={!name.trim() || (isIntegration && !schemaId)} isLoading={saving}>
                                 Create
                             </Button>
                         </div>

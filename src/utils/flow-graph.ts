@@ -94,13 +94,23 @@ const DEFAULT_TRIGGER_OUTCOME: Record<string, string> = {
     "call.failed": "engine_failed",
 };
 
+const CARE_PATH_TRIGGER_EVENT: Record<string, string> = {
+    "trigger.due": "care_path.due",
+    "trigger.recurring": "care_path.recurring",
+    "trigger.reported": "care_path.reported",
+    "trigger.document": "care_path.document",
+};
+
 function eventForTriggerImplementation(implementation: string): string {
+    if (CARE_PATH_TRIGGER_EVENT[implementation]) return CARE_PATH_TRIGGER_EVENT[implementation];
     const encoded = implementation.slice("trigger.".length);
     const separator = encoded.indexOf("_");
     return separator < 0 ? encoded : `${encoded.slice(0, separator)}.${encoded.slice(separator + 1)}`;
 }
 
 function triggerImplementationForEvent(event: string): string {
+    const carePath = Object.entries(CARE_PATH_TRIGGER_EVENT).find(([, candidate]) => candidate === event);
+    if (carePath) return carePath[0];
     return `trigger.${event.replace(".", "_")}`;
 }
 

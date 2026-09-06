@@ -1,0 +1,7 @@
+Create an inbound call flow for a clinic appointment desk.
+
+When a call is answered, an agent should greet the caller, understand whether
+they want to book, reschedule, or cancel an appointment, collect only the
+information required for that request, and ask for a human when the request is
+outside those tasks. Transfer human handoffs to +918000000000. Do not claim an appointment is confirmed unless an
+available platform tool confirms it.
