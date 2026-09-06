@@ -8,6 +8,15 @@ use aisdk::core::{DynamicModel, LanguageModelRequest, Tool};
 use aisdk::providers::Anthropic;
 use schemars::Schema;
 
+mod harness;
+
+pub use harness::{
+    build_document_map, compile_document_with_minimax, extract_pdf_pages, link_fragments,
+    pages_from_text, scope_catalogue_to_explicit_triggers, validate_section_task,
+    DocumentCompilationReport, DocumentMapEntry, DocumentPage, SectionTask, SupervisorConclusion,
+    WorkerFragment, WorkerTrace,
+};
+
 const EMIT_TOOL: &str = "emit_agent_and_flow_drafts";
 
 #[derive(Clone, Debug, Deserialize)]
@@ -42,7 +51,7 @@ fn enabled() -> bool {
     true
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AgentDraft {
     pub key: String,
     pub name: String,
@@ -50,7 +59,7 @@ pub struct AgentDraft {
     pub first_message: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FlowNodeDraft {
     pub key: String,
     pub component: String,
@@ -61,14 +70,14 @@ pub struct FlowNodeDraft {
     pub config: Value,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FlowEdgeDraft {
     pub source: String,
     pub outcome: String,
     pub target: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FlowDraft {
     pub key: String,
     pub name: String,
@@ -77,7 +86,7 @@ pub struct FlowDraft {
     pub edges: Vec<FlowEdgeDraft>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CompilationDraft {
     pub agents: Vec<AgentDraft>,
     pub flows: Vec<FlowDraft>,
