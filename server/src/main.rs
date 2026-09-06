@@ -349,6 +349,13 @@ const RESOURCES: &[Resource] = &[
         order_by: "created_at",
         select: "*,patients(id,full_name,phone,language,mrn),cohorts(id,name,org_id,flow_id)",
     },
+    Resource { route: "care-path-runs", table: "care_path_runs", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-anchors", table: "care_path_anchors", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-milestones", table: "care_path_milestones", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-observations", table: "care_path_observations", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-documents", table: "care_path_documents", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-outreach", table: "care_path_outreach", order_by: "created_at", select: "*" },
+    Resource { route: "care-path-escalations", table: "care_path_escalations", order_by: "created_at", select: "*" },
 ];
 
 fn resource_for(route: &str) -> Result<Resource, ApiError> {
@@ -4062,7 +4069,26 @@ mod tests {
 
     #[test]
     fn resource_allowlist_maps_public_routes_to_tables() {
-        assert_eq!(resource_for("phone-numbers").unwrap().table, "phone_numbers");
+        assert_eq!(
+            resource_for("phone-numbers").unwrap().table,
+            "phone_numbers"
+        );
+        assert_eq!(
+            resource_for("care-path-runs").unwrap().table,
+            "care_path_runs"
+        );
+        assert_eq!(
+            resource_for("care-path-milestones").unwrap().table,
+            "care_path_milestones"
+        );
+        assert_eq!(
+            resource_for("care-path-outreach").unwrap().table,
+            "care_path_outreach"
+        );
+        assert_eq!(
+            resource_for("care-path-escalations").unwrap().table,
+            "care_path_escalations"
+        );
         assert!(resource_for("../../secrets").is_err());
     }
 

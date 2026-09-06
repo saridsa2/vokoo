@@ -6,7 +6,7 @@
         "dev": "next dev --turbopack",
         "build": "next build",
         "start": "next start",
-        "test:flows": "node --import tsx --test src/utils/flow-graph.test.ts src/lib/flow-diagram.test.ts src/utils/number-flow-binding.test.ts src/lib/integration-migration.test.ts src/lib/vokoo-clinical-schemas.test.ts",
+        "test:flows": "node --import tsx --test src/utils/flow-graph.test.ts src/lib/flow-diagram.test.ts src/lib/care-path-components.test.ts src/utils/number-flow-binding.test.ts src/lib/integration-migration.test.ts src/lib/vokoo-clinical-schemas.test.ts",
         "test:sdk": "node --test packages/sdk/src/*.test.ts",
         "test:cli": "node --test packages/cli/src/*.test.ts",
         "test": "npm run test:flows && npm run test:sdk && npm run test:cli",

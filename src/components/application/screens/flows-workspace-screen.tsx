@@ -17,6 +17,7 @@ import type { Flow } from "@/utils/flow-graph";
 import { readGraph } from "@/utils/flow-graph";
 import { dateTime } from "@/utils/format";
 import { IntegrationActivity } from "@/components/application/screens/integration-activity";
+import { CARE_PATH_WORKSPACE } from "@/lib/care-path-workspace";
 
 type PhoneNumber = {
     id: string;
@@ -27,8 +28,8 @@ type PhoneNumber = {
     number_flows?: { trigger_event: string; flows?: { id?: string } | null }[];
 };
 
-/** What this board is for. The two differ in more than a filter. */
-type Family = "call" | "post_call";
+/** What this board is for. The families differ in more than a filter. */
+type Family = "call" | "post_call" | "care_path";
 
 const FAMILIES = {
     call: {
@@ -47,6 +48,7 @@ const FAMILIES = {
         noun: "integration",
         empty: "An integration accepts a typed payload from a call, care path, message, or general flow and delivers it to another system.",
     },
+    care_path: CARE_PATH_WORKSPACE,
 } as const satisfies Record<Family, unknown>;
 
 /**
@@ -92,11 +94,13 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
     return (
         <>
             <ScreenHeader
-                title={family === "call" ? "Calls" : "Integrations"}
+                title={family === "call" ? "Calls" : family === "post_call" ? "Integrations" : "Care Paths"}
                 description={
                     family === "call"
                         ? "What happens while somebody is on the line."
-                        : "Reusable workflows invoked explicitly by call and care-path flows."
+                        : family === "post_call"
+                          ? "Reusable workflows invoked explicitly by call and care-path flows."
+                          : "Longitudinal journeys triggered by milestones, reports, documents, and recurrence."
                 }
                 search={
                     <div className="w-full md:w-64">
@@ -111,7 +115,7 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                 }
                 actions={
                     <Button size="sm" onClick={() => setCreating(true)}>
-                        {family === "call" ? "New call flow" : "New integration"}
+                        {family === "call" ? "New call flow" : family === "post_call" ? "New integration" : "New care path"}
                     </Button>
                 }
             />
@@ -174,7 +178,9 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
                                                 ? number
                                                     ? `Answers ${number}`
                                                     : "No number points here"
-                                                : "Invoked from another flow"}
+                                                : family === "post_call"
+                                                  ? "Invoked from another flow"
+                                                  : `${graph.nodes.filter((node) => node.implementation.startsWith("trigger.")).length} explicit triggers`}
                                         </p>
 
                                         {flow.updated_at && (
@@ -214,6 +220,7 @@ function NewFlowDialog({
     const [schemaId, setSchemaId] = useState("");
     const { records: schemas } = useResource<{ id: string; name: string }>("structured-outputs");
     const isIntegration = kind.family === "integration";
+    const isCarePath = kind.family === "care_path";
 
     const create = async () => {
         if (!context || !name.trim()) return;
@@ -240,7 +247,7 @@ function NewFlowDialog({
                                 name: kind.triggerName,
                                 type: "trigger",
                                 implementation: kind.trigger,
-                                config: isIntegration ? { input_schema_id: schemaId } : {},
+                                config: isIntegration ? { input_schema_id: schemaId } : isCarePath ? kind.triggerConfig : {},
                                 position: { x: -420, y: 0 },
                             },
                         ],
@@ -267,14 +274,14 @@ function NewFlowDialog({
                     <div className="flex w-full flex-col gap-5 rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex flex-col gap-1">
                             <h2 className="text-lg font-semibold text-primary">
-                                {kind.trigger_event === "call.answered" ? "New call flow" : "New integration"}
+                                {kind.family === "call" ? "New call flow" : isIntegration ? "New integration" : "New care path"}
                             </h2>
                             <p className="text-sm text-tertiary">{kind.empty}</p>
                         </div>
 
                         <Input
                             label="Name"
-                            placeholder={kind.trigger_event === "call.answered" ? "Vayuveda main line" : "Lead capture"}
+                            placeholder={kind.family === "call" ? "Vayuveda main line" : isIntegration ? "Lead capture" : "Antenatal care"}
                             value={name}
                             onChange={(value) => setName(String(value))}
                             isRequired

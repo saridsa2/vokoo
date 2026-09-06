@@ -45,6 +45,7 @@ type ScreenDefinition = {
 const SCREENS: Record<string, ScreenDefinition> = {
     composer: { title: "Calls", description: "What happens while somebody is on the line.", resource: "flows" },
     integrations: { title: "Integrations", description: "What happens after a call ends.", resource: "flows" },
+    "care-paths": { title: "Care Paths", description: "Patient journeys tracked over time.", resource: "flows" },
 
     agents: {
         title: "Agents",
@@ -132,6 +133,7 @@ export default async function ConsoleScreen({
     // by which screen you opened rather than by a question in a dialog.
     if (route === "composer") return <FlowsWorkspaceScreen family="call" />;
     if (route === "integrations") return <FlowsWorkspaceScreen family="post_call" />;
+    if (route === "care-paths") return <FlowsWorkspaceScreen family="care_path" />;
     if (route === "agents") return <AgentsScreen />;
     if (route === "runs") return <RunsScreen />;
     if (route === "structured-outputs") return <SchemasScreen />;

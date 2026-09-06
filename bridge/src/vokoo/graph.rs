@@ -273,6 +273,12 @@ fn flow_from_version_row(
 }
 
 fn event_for_trigger_implementation(implementation: &str) -> String {
+    if matches!(
+        implementation,
+        "trigger.due" | "trigger.recurring" | "trigger.reported" | "trigger.document"
+    ) {
+        return format!("care_path.{}", implementation.trim_start_matches("trigger."));
+    }
     let encoded = implementation.strip_prefix("trigger.").unwrap_or(implementation);
     match encoded.split_once('_') {
         Some((family, event)) => format!("{family}.{event}"),
@@ -1107,6 +1113,34 @@ mod tests {
 
         assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "answered");
         assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+    }
+
+    #[test]
+    fn selects_first_class_care_path_triggers_by_care_path_event() {
+        let flow = Flow::from_value(
+            row(
+                json!([
+                    trigger("due", "trigger.due", Some("first-contact")),
+                    trigger("reported", "trigger.reported", Some("red-flags"))
+                ]),
+                None,
+                3,
+            ),
+            HashMap::new(),
+            "care_path.due",
+        )
+        .unwrap();
+
+        assert_eq!(
+            flow.entry_node(&EntryPoint::with_key("care_path.due", "first-contact"))
+                .unwrap(),
+            "due"
+        );
+        assert_eq!(
+            flow.entry_node(&EntryPoint::with_key("care_path.reported", "red-flags"))
+                .unwrap(),
+            "reported"
+        );
     }
 
     #[test]

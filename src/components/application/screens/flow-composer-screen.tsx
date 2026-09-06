@@ -241,13 +241,17 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
             onPublish={publish}
             agents={agents}
             connectedVendors={connectedVendors}
-            // Calls and Integrations share this screen and differ in what a
-            // field may hold: only the post-call runner carries a scope, so
-            // only Integrations may author an expression.
-            board={diagram && familyOf(diagram) === "integration" ? "integration" : "call"}
+            // All flow families share this screen. Integrations and care paths
+            // carry runtime scope, so fields on those boards may use outputs
+            // produced by earlier nodes.
+            board={diagram && familyOf(diagram) === "integration"
+                ? "integration"
+                : diagram && familyOf(diagram) === "care_path"
+                  ? "care_path"
+                  : "call"}
             sampleCall={sampleCall}
             onDryRun={
-                sampleCall?.ucid && context
+                diagram && familyOf(diagram) === "call" && sampleCall?.ucid && context
                     ? async () => {
                           const { data } = await api.dryRunFlow<{ ok: boolean; error?: string; steps?: DryRunStep[] }>(
                               flowId,
@@ -264,7 +268,11 @@ export function FlowComposerScreen({ flowId }: { flowId: string }) {
             toolbarSlot={legacyIntegration ? <button type="button" onClick={() => setMigrationOpen(true)}>Migrate legacy CRM flow</button> : undefined}
             // Back to the board this flow belongs to. Sending an integration
             // to the calls list would look like it had been filtered out.
-            backHref={familyOf(diagram) === "integration" ? "/integrations" : "/composer"}
+            backHref={familyOf(diagram) === "integration"
+                ? "/integrations"
+                : familyOf(diagram) === "care_path"
+                  ? "/care-paths"
+                  : "/composer"}
         />
         <ModalOverlay isOpen={migrationOpen} onOpenChange={(open) => !open && setMigrationOpen(false)} isDismissable={!migrationSaving}>
             <Modal className="max-w-2xl"><Dialog><div className="flex flex-col gap-5 rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">

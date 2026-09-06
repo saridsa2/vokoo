@@ -56,6 +56,7 @@ const SECTION_OF: Record<string, keyof typeof SECTION_ACCENTS> = {
     "/dashboard": "Overview",
 
     "/patients": "Care",
+    "/care-paths": "Care",
     "/cohorts": "Care",
     "/enrolments": "Care",
 

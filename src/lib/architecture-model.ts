@@ -10,6 +10,10 @@ const NODE_VISUALS = {
   // should be able to tell the escalation path from the ordinary one.
   "trigger.call_failed": { color: "#fdf4f0", stroke: "#b5623c", icon: "triggerFailed" },
   "trigger.integration_invoked": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerEnded" },
+  "trigger.due": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerAnswered" },
+  "trigger.recurring": { color: "#f7f5ef", stroke: "#8a7a52", icon: "loop" },
+  "trigger.reported": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerAnswered" },
+  "trigger.document": { color: "#f7f5ef", stroke: "#8a7a52", icon: "triggerEnded" },
   condition: { color: "#f5f3ff", stroke: "#7c6ee6", icon: "condition" },
   loop: { color: "#eef7ff", stroke: "#2376a6", icon: "loop" },
   var: { color: "#effaf6", stroke: "#1d8f68", icon: "variable" },
@@ -31,6 +35,12 @@ const NODE_VISUALS = {
   intelligence: { color: "#f2f7ff", stroke: "#2f6fb8", icon: "intelligence" },
   "http.request": { color: "#f2f7ff", stroke: "#2f6fb8", icon: "webhook" },
   "integration.invoke": { color: "#eef4ff", stroke: "#4f67b0", icon: "webhook" },
+  "outreach.call": { color: "#f6f1ff", stroke: "#8b5bd6", icon: "agent" },
+  "outreach.message": { color: "#eef4ff", stroke: "#4f67b0", icon: "webhook" },
+  "outreach.request": { color: "#fff6eb", stroke: "#d38a32", icon: "tool" },
+  "care_path.record": { color: "#effaf6", stroke: "#1d8f68", icon: "variable" },
+  "care_path.complete": { color: "#eefaf4", stroke: "#2e9161", icon: "condition" },
+  "escalate.notify": { color: "#fdf4f0", stroke: "#b5623c", icon: "monitor" },
   // The one node whose branches the author writes rather than the type
   // declaring them, so it gets a hue of its own rather than joining a family.
   "kookoo.collect_digits": { color: "#fdf2fb", stroke: "#a3468f", icon: "keypad" },
@@ -68,7 +78,7 @@ export type NodeFamily = "call" | "integration" | "care_path" | "message" | "gen
  * the field — `language` is a string on an engine step and a string on a flow
  * node — it is a property of whether anything precedes it.
  */
-export type BoardContext = "engine" | "call" | "integration" | "tool"
+export type BoardContext = "engine" | "call" | "integration" | "care_path" | "tool"
 
 /**
  * Whether a field on this board may hold an expression.
@@ -82,7 +92,7 @@ export type BoardContext = "engine" | "call" | "integration" | "tool"
  * output. It becomes true the day it does, and this is the one line to change.
  */
 export function boardTakesExpressions(context: BoardContext): boolean {
-  return context === "integration"
+  return context === "integration" || context === "care_path"
 }
 
 export type CatalogueField = {

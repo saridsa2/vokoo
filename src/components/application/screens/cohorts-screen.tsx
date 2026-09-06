@@ -26,8 +26,9 @@ import { api } from "@/utils/api-client";
 import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useResource } from "@/hooks/use-resource";
 import { useSession } from "@/hooks/use-session";
+import { carePathOptions } from "@/lib/care-path-workspace";
 
-type FlowRow = { id: string; name?: string; status?: string };
+type FlowRow = { id: string; name?: string; family?: string; status?: string };
 
 export const CohortsScreen = () => {
     const [open, setOpen] = useState(false);
@@ -73,10 +74,7 @@ const CreateCohortDialog = ({
     const [flowId, setFlowId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
-    const options = useMemo(
-        () => (flows ?? []).map((flow) => ({ id: flow.id, label: flow.name || "Untitled flow" })),
-        [flows],
-    );
+    const options = useMemo(() => carePathOptions(flows ?? []), [flows]);
 
     const usable = name.trim().length > 0 && Boolean(flowId);
 
@@ -144,8 +142,7 @@ const CreateCohortDialog = ({
 
                         {!loadingFlows && options.length === 0 ? (
                             <p className="text-sm text-tertiary">
-                                There are no flows yet. A cohort needs a care path to follow — draw one under
-                                Composer first.
+                                There are no care paths yet. Draw one under Care Paths before creating a cohort.
                             </p>
                         ) : null}
 
