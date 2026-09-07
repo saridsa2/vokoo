@@ -326,6 +326,129 @@ should then be unpublishable until it does something.
 **Verify.** Publishing a one-node flow raises `P0004`, and `Lead capture` is
 either completed or no longer published.
 
+## Root causes
+
+Traced through the code on 7 September. Each is the line that produces the
+behaviour, not the file it lives in.
+
+### D1 — dialog with no accessible name
+
+Two halves, and either alone would be enough.
+
+`standard-dialog.tsx:142` renders the title as a plain heading:
+
+```tsx
+{title && <h2 className="text-lg font-semibold text-primary">{title}</h2>}
+```
+
+React Aria wires `aria-labelledby` only from a `<Heading slot="title">`. An
+`<h2>` is invisible to it.
+
+And `auth-2.tsx` passes no `title` at all — the sign-in screen renders its own
+`<h1>Sign in</h1>` inside `children`, where the component cannot see it.
+
+So the fix belongs in the component: render the title as
+`<Heading slot="title">`, and fall back to an `aria-label` when there is none.
+Callers then get a named dialog without having to know the rule.
+
+### D2 — token over plaintext to production
+
+Configuration, not code. `.env.local` sets
+`NEXT_PUBLIC_CONTROLPLANE_API_URL = http://212.38.94.176:8081`, and
+`api-client.ts:83` attaches `authorization` to every request. There is no TLS
+listener on that port — `https://` to it returns nothing — so `http` is not a
+choice made in the config, it is the only thing that answers.
+
+The second half, local testing writing to production, has the same single
+cause: there is no other control plane to point at.
+
+### D3 — nested schemas shown as strings
+
+`schema-detail-screen.tsx`, three lines that are individually reasonable:
+
+```ts
+const TYPES = ["string", "number", "integer", "boolean"] as const;   // :28
+type: typeof property.type === "string" ? property.type : "string",  // :46
+const compiled = useMemo(() => toSchema(fields), [fields]);          // :119
+```
+
+Line 46 reads the type correctly — `"object"` and `"array"` *are* strings, so
+they pass through. It is the `<select>` at line 28 that has no option for them,
+so the row falls back to displaying `string`.
+
+Line 119 is the one that does damage. The right-hand pane is not the stored
+schema; it is `toSchema` run over the flattened rows. So the pane headed *"what
+the model is shown"* is showing a recompilation of a lossy read.
+
+The deeper cause is stated in this repo already: the editor was built for a flat
+object because *"a flat object is what a CRM row is, and the day that is not
+enough the answer is a real schema editor rather than a half-nested one."* The
+clinical schemas are that day, and they were seeded without it.
+
+### D4 — Chinese field descriptions
+
+`scripts/inline-clinical-schemas.mjs` copies every `description` verbatim from
+`vendor/…/infrastructure/schemas`, which is written in Chinese. The script
+resolves references and drops `$defs`; it never looks at prose.
+
+Nothing downstream checks either, which is why 44 of 45 reached a production
+table without anyone seeing them. The inliner is the right place for the check —
+it already walks every node.
+
+### D5 — retired namespace in the descriptions
+
+Ordering. The migration's description is built as
+`'Clinical contract from ' || k.source`, and `source` was read from the artifact
+**at the moment the migration was generated** — before `d8c1fe7` renamed the
+namespace to `urn:vokoo:`. The artifact says `urn:vokoo:` today; the seeded rows
+still say `https://wellall.health`.
+
+Not a bug in the generator. A generated migration is a snapshot, and this one
+was taken on the wrong side of a rename.
+
+*(Checked while tracing this: the migration contains two `$ref` strings, and
+both are inside a SQL comment explaining why references are inlined. No seeded
+value carries one.)*
+
+### D6 — cohort pointing at a call flow
+
+The original cause is gone. `cohorts-screen.tsx` now builds its picker with
+`carePathOptions(flows)`, and `care-path-workspace.ts:21` filters
+`flow.family === "care_path"`. `0118` refuses the write in the database as well.
+
+What remains is only the row created before either existed. A trigger fires on
+insert and update, so it cannot see a row already sitting there — and the next
+update to that row will now fail with `23514`.
+
+### D7 — the empty segment in the agent list
+
+`agents-screen.tsx:539`:
+
+```tsx
+[
+    (agent.transcriber_config?.provider as string) ?? "no transcriber",
+    agent.model,
+    "kookoo",
+].join(" · ")
+```
+
+`agent.model` is an empty string, not null — an agent takes its model from its
+engine, so the column is never filled. `??` only catches `null` and `undefined`,
+so the empty string survives, and `join` prints its separator around nothing.
+
+### D8 — publishable flow that reaches nothing
+
+`validate_flow_release` iterates `p_graph->'nodes'` and checks each node against
+the catalogue, the family, and its own required config. `validate_care_path_release`
+does the same for trigger config.
+
+**Neither ever reads `p_graph->'edges'`.** Every rule is a statement about one
+node in isolation, so a graph with no edges at all satisfies all of them.
+
+The traversal belongs there rather than in the console: both functions are pure
+functions over the whole graph, so they already have what a walk needs, and a
+rule the UI merely honours is one the next screen forgets.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.
