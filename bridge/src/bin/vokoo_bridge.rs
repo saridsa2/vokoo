@@ -727,6 +727,46 @@ struct DryRunRequest {
     ucid: String,
 }
 
+#[derive(serde::Deserialize)]
+struct DocumentInspectionRequest {
+    org_id: String,
+    document_id: String,
+    version: i64,
+}
+
+async fn inspect_workspace_document(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<DocumentInspectionRequest>,
+) -> impl IntoResponse {
+    let presented = headers
+        .get("x-vokoo-internal")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
+    if state.cfg.internal_token.is_empty() || presented != state.cfg.internal_token {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
+    }
+    if request.version <= 0 || request.org_id.is_empty() || request.document_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "document version is required" })));
+    }
+
+    match rustvani::vokoo::intelligence::inspect_document(
+        &state.cfg.supabase_url,
+        &state.cfg.service_key,
+        &request.org_id,
+        &request.document_id,
+        request.version,
+    )
+    .await
+    {
+        Ok(inspection) => (StatusCode::OK, Json(json!(inspection))),
+        Err(problem) => {
+            log::warn!("[workspace-intelligence] document inspection failed: {problem}");
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": problem })))
+        }
+    }
+}
+
 async fn flow_dry_run(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -3250,6 +3290,7 @@ async fn main() {
         .route("/call/monitor", post(call_monitor))
         .route("/engine/preflight", post(engine_preflight))
         .route("/flow/dryrun", post(flow_dry_run))
+        .route("/workspace/intelligence/documents", post(inspect_workspace_document))
         .route("/catalogue/refresh", post(catalogue_refresh))
         .route("/kookoo", any(kookoo_webhook))
         .route("/asterisk/incoming", post(asterisk_incoming))

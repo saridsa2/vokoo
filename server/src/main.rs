@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -9,6 +9,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use base64::Engine as _;
 use supabase::types::SupabaseConfig;
 use supabase::Client;
 use thiserror::Error;
@@ -227,6 +228,40 @@ struct SetCredentialRequest {
 struct CreateOrganizationRequest {
     name: String,
     slug: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CreateDocumentRequest {
+    name: String,
+    mime_type: String,
+    content_base64: String,
+}
+
+const MAX_DOCUMENT_BYTES: usize = 15 * 1024 * 1024;
+
+fn validated_document_bytes(request: &CreateDocumentRequest) -> Result<Vec<u8>, ApiError> {
+    if request.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("document name is required".into()));
+    }
+    if !matches!(
+        request.mime_type.as_str(),
+        "application/pdf"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "text/plain"
+            | "text/markdown"
+    ) {
+        return Err(ApiError::BadRequest("choose a PDF, Word, or plain text document".into()));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&request.content_base64)
+        .map_err(|_| ApiError::BadRequest("document content is not valid base64".into()))?;
+    if bytes.is_empty() {
+        return Err(ApiError::BadRequest("the document is empty".into()));
+    }
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(ApiError::BadRequest("documents must be 15 MB or smaller".into()));
+    }
+    Ok(bytes)
 }
 
 #[derive(Debug, Serialize)]
@@ -1819,9 +1854,10 @@ async fn call_bridge(
     }
 
     let client = reqwest::Client::builder()
-        // Pre-flight opens real provider connections and waits on them, so this
-        // is deliberately longer than an ordinary API call.
-        .timeout(std::time::Duration::from_secs(30))
+        // Document inspection may include extraction and one model request.
+        // Nobody is on a live call, so a bounded two minutes is preferable to
+        // abandoning a result while the bridge is still producing it.
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|error| ApiError::Upstream(error.to_string()))?;
 
@@ -1836,9 +1872,84 @@ async fn call_bridge(
     let status = response.status();
     let data: Value = response.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        return Err(ApiError::Upstream(format!("the bridge answered {status}")));
+        let detail = data
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or("the internal intelligence service failed");
+        return Err(ApiError::Upstream(detail.to_string()));
     }
     Ok(Json(ApiResponse { data, meta: json!({ "resource": "engines" }) }))
+}
+
+/// Store one immutable source version and expose only its metadata.
+///
+/// The source lives in `file_versions`, not in `files.config`: listing a
+/// document library must never download every PDF in it. The database function
+/// performs the file/version insert atomically and advances current_version.
+async fn create_document(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateDocumentRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let bytes = validated_document_bytes(&request)?;
+    let content = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let data = client
+        .database()
+        .rpc(
+            "create_document",
+            Some(json!({
+                "p_org_id": organization,
+                "p_name": request.name.trim(),
+                "p_mime_type": request.mime_type,
+                "p_content_base64": content,
+            })),
+        )
+        .await
+        .map_err(|error| write_error(error.to_string()))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ApiResponse { data, meta: json!({ "resource": "documents" }) }),
+    ))
+}
+
+/// Ask Workspace Intelligence which registered compiler fits this version.
+///
+/// Authentication and tenant membership are resolved here. Provider secrets
+/// and source bytes stay behind the bridge's internal token, so neither is
+/// exposed to the browser or carried through this process.
+async fn analyze_document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let document = client
+        .database()
+        .from("files")
+        .select("id,current_version")
+        .eq("org_id", &organization)
+        .eq("id", &id)
+        .single_execute::<Value>()
+        .await
+        .map_err(|error| ApiError::upstream(error.to_string()))?
+        .ok_or_else(|| ApiError::NotFound(format!("document '{id}' was not found")))?;
+    let version = document
+        .get("current_version")
+        .and_then(Value::as_i64)
+        .filter(|version| *version > 0)
+        .ok_or_else(|| ApiError::Conflict("the document has no readable source version".into()))?;
+
+    call_bridge(
+        &state,
+        &headers,
+        "/workspace/intelligence/documents",
+        json!({ "org_id": organization, "document_id": id, "version": version }),
+    )
+    .await
 }
 
 /// The zone a business day is measured in.
@@ -4025,6 +4136,13 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/calls/{id}/monitor", post(monitor_call))
         .route("/api/v1/engines/{id}/preflight", post(preflight_engine))
         .route("/api/v1/flows/{id}/dry-run", post(dry_run_flow))
+        // Base64 adds one third to the source size; 21 MB carries the promised
+        // 15 MB source ceiling while the handler still validates decoded bytes.
+        .route(
+            "/api/v1/documents",
+            post(create_document).layer(DefaultBodyLimit::max(21 * 1024 * 1024)),
+        )
+        .route("/api/v1/documents/{id}/analyze", post(analyze_document))
         .route("/api/v1/integration-runs/{id}/retry", post(retry_integration_run))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
         .route("/api/v1/settings/members", get(list_members).post(add_member))
@@ -4107,5 +4225,27 @@ mod tests {
         let sanitized = mutable_payload(body, "right").unwrap();
         assert!(!sanitized.contains_key("id"));
         assert_eq!(sanitized.get("org_id"), Some(&json!("right")));
+    }
+
+    #[test]
+    fn document_uploads_are_bounded_before_the_database_sees_them() {
+        let valid = CreateDocumentRequest {
+            name: "NG194.pdf".into(),
+            mime_type: "application/pdf".into(),
+            content_base64: "JVBERg==".into(),
+        };
+        assert_eq!(validated_document_bytes(&valid).unwrap(), b"%PDF");
+
+        let unsupported = CreateDocumentRequest {
+            mime_type: "image/png".into(),
+            ..valid.clone()
+        };
+        assert!(matches!(validated_document_bytes(&unsupported), Err(ApiError::BadRequest(_))));
+
+        let malformed = CreateDocumentRequest {
+            content_base64: "not base64".into(),
+            ..valid
+        };
+        assert!(matches!(validated_document_bytes(&malformed), Err(ApiError::BadRequest(_))));
     }
 }

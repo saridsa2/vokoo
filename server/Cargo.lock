@@ -2826,6 +2826,7 @@ name = "vokoo-controlplane"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "dotenvy",

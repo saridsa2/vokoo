@@ -10,6 +10,7 @@ import { PatientsScreen } from "@/components/application/screens/patients-screen
 import { CohortsScreen } from "@/components/application/screens/cohorts-screen";
 import { EnrolmentsScreen } from "@/components/application/screens/enrolments-screen";
 import { OrganizationScreen } from "@/components/application/screens/settings-screens";
+import { DocumentsScreen } from "@/components/application/screens/documents-screen";
 
 /**
  * Resolves a console route to its screen.
@@ -30,7 +31,6 @@ import { OrganizationScreen } from "@/components/application/screens/settings-sc
 const LIST_SCREENS = new Set([
     "tools",
     "phone-numbers",
-    "files",
     "flows",
     "call-logs",
 ]);
@@ -61,8 +61,8 @@ const SCREENS: Record<string, ScreenDefinition> = {
     },
     engines: { title: "Engines", description: "The models and services a call runs through.", resource: "engines" },
     files: {
-        title: "Knowledge",
-        description: "Documents an agent can draw on when a caller asks something the prompt does not answer.",
+        title: "Documents",
+        description: "Versioned sources understood by Workspace Intelligence.",
         resource: "files",
     },
     flows: { title: "Flows", description: "Visual call flows.", resource: "flows" },
@@ -138,6 +138,7 @@ export default async function ConsoleScreen({
     if (route === "runs") return <RunsScreen />;
     if (route === "structured-outputs") return <SchemasScreen />;
     if (route === "skills") return <SkillsScreen />;
+    if (route === "files") return <DocumentsScreen />;
     // The care population. Each owns its create dialog, so none of the three is
     // a plain list screen — a "Add Patient" button that does nothing is worse
     // than no button.

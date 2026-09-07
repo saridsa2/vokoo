@@ -36,6 +36,7 @@ use aisdk::core::{DynamicModel, LanguageModelRequest, Tool};
 use aisdk::providers::{Anthropic, OpenAI};
 use schemars::Schema;
 use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
 
 use super::graph::{vendor_secret, FlowNode};
 
@@ -87,6 +88,278 @@ pub fn is_reader(provider: &str) -> bool {
 /// The one tool the model is given, and required to call. Its arguments are the
 /// reading.
 const RECORD_TOOL: &str = "record_the_call";
+const ROUTE_DOCUMENT_TOOL: &str = "route_document";
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DocumentEvidence {
+    pub page: Option<usize>,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CompilerRecommendation {
+    pub compiler_id: String,
+    pub confidence: f64,
+    pub reason: String,
+    #[serde(default)]
+    pub evidence: Vec<DocumentEvidence>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DocumentInspection {
+    pub summary: String,
+    #[serde(default)]
+    pub recommendations: Vec<CompilerRecommendation>,
+    #[serde(default)]
+    pub gaps: Vec<String>,
+}
+
+/// The model may only route to compilers registered by the platform.
+/// JSON Schema constrains the normal path; this second boundary protects
+/// persisted or provider-mutated output before the console can act on it.
+pub fn bound_document_inspection(mut inspection: DocumentInspection) -> DocumentInspection {
+    inspection.recommendations.retain(|item| item.compiler_id == "care_path");
+    for recommendation in &mut inspection.recommendations {
+        recommendation.confidence = recommendation.confidence.clamp(0.0, 1.0);
+        recommendation.evidence.retain(|item| !item.text.trim().is_empty());
+        recommendation.evidence.truncate(5);
+    }
+    inspection
+}
+
+pub fn extract_document_text(mime_type: &str, bytes: &[u8]) -> Result<String, String> {
+    match mime_type {
+        "text/plain" | "text/markdown" => String::from_utf8(bytes.to_vec())
+            .map_err(|_| "the text document is not UTF-8".to_string()),
+        "application/pdf" => extract_with_command("pdf", bytes, "pdftotext", &["-layout"]),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+            let xml = extract_with_command("docx", bytes, "unzip", &["-p", "{file}", "word/document.xml"])?;
+            Ok(xml
+                .replace("</w:p>", "\n")
+                .replace("</w:tab>", "\t")
+                .split('<')
+                .filter_map(|part| part.split_once('>').map(|(_, text)| text))
+                .collect::<String>())
+        }
+        _ => Err("the document type is not supported".into()),
+    }
+}
+
+fn extract_with_command(
+    extension: &str,
+    bytes: &[u8],
+    program: &str,
+    arguments: &[&str],
+) -> Result<String, String> {
+    let path = std::env::temp_dir().join(format!(
+        "vokoo-document-{}.{}",
+        uuid::Uuid::new_v4(),
+        extension
+    ));
+    std::fs::write(&path, bytes).map_err(|error| format!("could not stage the document: {error}"))?;
+    let path_text = path.to_string_lossy().to_string();
+    let mut command = std::process::Command::new(program);
+    for argument in arguments {
+        command.arg(if *argument == "{file}" { path_text.as_str() } else { *argument });
+    }
+    if program == "pdftotext" {
+        command.arg(&path).arg("-");
+    }
+    let output = command.output();
+    let _ = std::fs::remove_file(&path);
+    let output = output.map_err(|error| format!("could not run {program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{program} could not read the document: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|_| format!("{program} returned non-UTF-8 text"))
+}
+
+/// Inspect one immutable document version and recommend registered compilers.
+/// This is routing only: it creates no agents, flows, or compiler run.
+pub async fn inspect_document(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    document_id: &str,
+    version: i64,
+) -> Result<DocumentInspection, String> {
+    let source = load_document_version(base, key, org_id, document_id, version).await?;
+    let mime_type = source["mime_type"].as_str().unwrap_or_default();
+    let encoded = source["content"]
+        .as_str()
+        .and_then(|value| value.strip_prefix("\\x"))
+        .ok_or_else(|| "the document source was not returned as bytea".to_string())?;
+    let bytes = hex::decode(encoded).map_err(|error| format!("the document source is invalid: {error}"))?;
+    let text = extract_document_text(mime_type, &bytes)?;
+    if text.trim().is_empty() {
+        return Err("the document contains no extractable text".into());
+    }
+
+    let (provider, model) = reader(base, key, org_id)
+        .await
+        .ok_or_else(|| "could not read the workspace intelligence provider".to_string())?;
+    if !is_reader(&provider) {
+        return Err(format!("{provider} cannot inspect documents"));
+    }
+    let secret = super::graph::vendor_secret(base, key, org_id, &provider)
+        .await
+        .ok_or_else(|| format!("no {provider} key is connected for this workspace"))?;
+    let inspection = ask_document(&provider, &secret, &model, &text).await?;
+    let inspection = bound_document_inspection(inspection);
+    store_document_inspection(base, key, org_id, document_id, version, &text, &inspection).await?;
+    Ok(inspection)
+}
+
+async fn load_document_version(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    document_id: &str,
+    version: i64,
+) -> Result<Value, String> {
+    let response = http()?
+        .get(format!("{base}/rest/v1/file_versions"))
+        .query(&[
+            ("org_id", format!("eq.{org_id}")),
+            ("file_id", format!("eq.{document_id}")),
+            ("version", format!("eq.{version}")),
+            ("select", "id,mime_type,content".into()),
+        ])
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
+        .send()
+        .await
+        .map_err(|error| format!("could not load the document: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("could not load the document: answered {}", response.status()));
+    }
+    let rows: Vec<Value> = response.json().await.map_err(|error| error.to_string())?;
+    rows.into_iter().next().ok_or_else(|| "the document version was not found".into())
+}
+
+async fn ask_document(
+    provider: &str,
+    secret: &str,
+    model: &str,
+    text: &str,
+) -> Result<DocumentInspection, String> {
+    let schema = Schema::try_from(json!({
+        "type": "object",
+        "required": ["summary", "recommendations", "gaps"],
+        "properties": {
+            "summary": {"type": "string"},
+            "recommendations": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["compiler_id", "confidence", "reason", "evidence"],
+                    "properties": {
+                        "compiler_id": {"type": "string", "enum": ["care_path"]},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                        "reason": {"type": "string"},
+                        "evidence": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["page", "text"],
+                                "properties": {
+                                    "page": {"type": ["integer", "null"]},
+                                    "text": {"type": "string"}
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "gaps": {"type": "array", "items": {"type": "string"}}
+        }
+    })).map_err(|error| format!("could not build the routing schema: {error}"))?;
+    let captured: Arc<Mutex<Option<DocumentInspection>>> = Arc::new(Mutex::new(None));
+    let sink = Arc::clone(&captured);
+    let tool = Tool::builder()
+        .name(ROUTE_DOCUMENT_TOOL)
+        .description("Record which registered workspace compilers are suitable for this document.")
+        .input_schema(schema)
+        .execute(ToolExecute::from_sync(move |_context, value: Value| {
+            let inspection = serde_json::from_value(value)
+                .map_err(|error| aisdk::error::Error::ToolCallError(error.to_string()))?;
+            *sink.lock().map_err(|_| aisdk::error::Error::ToolCallError("routing lock poisoned".into()))? = Some(inspection);
+            Ok("routing recorded".to_string())
+        }))
+        .build()
+        .map_err(|error| format!("could not build the routing tool: {error}"))?;
+    let system = "You are Workspace Intelligence. Identify what this source document is and which registered compiler can translate it into workspace artifacts. The only registered compiler is care_path, which applies to clinical guidelines defining longitudinal care, monitoring, timing, escalation, or patient follow-up. Do not recommend it for invoices, policies, FAQs, marketing material, or patient-specific clinical records. Cite short source evidence with physical PDF page numbers when the source contains page boundaries. A recommendation is advisory and must not run the compiler. You must call route_document exactly once.";
+    let numbered = text
+        .split('\u{000c}')
+        .enumerate()
+        .map(|(index, page)| format!("[physical page {}]\n{}", index + 1, page))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .chars()
+        .take(160_000)
+        .collect::<String>();
+    let body = if anthropic_base(provider).is_some() {
+        json!({ "tool_choice": { "type": "tool", "name": ROUTE_DOCUMENT_TOOL } })
+    } else {
+        json!({ "tool_choice": { "type": "function", "name": ROUTE_DOCUMENT_TOOL } })
+    };
+
+    if let Some(base_url) = anthropic_base(provider) {
+        let chosen = Anthropic::<DynamicModel>::builder()
+            .model_name(model).api_key(secret).base_url(base_url).build()
+            .map_err(|error| format!("could not build the {provider} client: {error}"))?;
+        LanguageModelRequest::builder().model(chosen).system(system).prompt(numbered)
+            .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
+            .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
+    } else {
+        let chosen = OpenAI::<DynamicModel>::builder().model_name(model).api_key(secret).build()
+            .map_err(|error| format!("could not build the openai client: {error}"))?;
+        LanguageModelRequest::builder().model(chosen).system(system).prompt(numbered)
+            .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
+            .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
+    }
+    let result = captured
+        .lock()
+        .map_err(|_| "routing lock poisoned".to_string())?
+        .take()
+        .ok_or_else(|| "Workspace Intelligence answered without routing the document".into());
+    result
+}
+
+async fn store_document_inspection(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    document_id: &str,
+    version: i64,
+    text: &str,
+    inspection: &DocumentInspection,
+) -> Result<(), String> {
+    let client = http()?;
+    let version_response = client
+        .patch(format!("{base}/rest/v1/file_versions"))
+        .query(&[("org_id", format!("eq.{org_id}")), ("file_id", format!("eq.{document_id}")), ("version", format!("eq.{version}"))])
+        .header("apikey", key).header("Authorization", format!("Bearer {key}"))
+        .header("Content-Type", "application/json")
+        .json(&json!({ "status": "analyzed", "extracted_text": text, "intelligence": inspection }))
+        .send().await.map_err(|error| error.to_string())?;
+    if !version_response.status().is_success() {
+        return Err(format!("could not store the document analysis: answered {}", version_response.status()));
+    }
+    let file_response = client
+        .patch(format!("{base}/rest/v1/files"))
+        .query(&[("org_id", format!("eq.{org_id}")), ("id", format!("eq.{document_id}"))])
+        .header("apikey", key).header("Authorization", format!("Bearer {key}"))
+        .header("Content-Type", "application/json")
+        .json(&json!({ "status": "analyzed", "intelligence": inspection }))
+        .send().await.map_err(|error| error.to_string())?;
+    if file_response.status().is_success() { Ok(()) } else {
+        Err(format!("could not update the document: answered {}", file_response.status()))
+    }
+}
 
 /// Fill in the node's shape from the call.
 ///
@@ -523,5 +796,38 @@ mod tests {
             .and_then(|blocks| blocks.iter().find(|b| b["type"] == "tool_use"));
 
         assert!(reading.is_none(), "prose must not be read as a filled-in shape");
+    }
+
+    #[test]
+    fn document_routing_cannot_name_an_unregistered_compiler() {
+        let routed = DocumentInspection {
+            summary: "A clinical guideline with timed recommendations.".into(),
+            recommendations: vec![
+                CompilerRecommendation {
+                    compiler_id: "care_path".into(),
+                    confidence: 0.92,
+                    reason: "Defines longitudinal care steps.".into(),
+                    evidence: vec![DocumentEvidence { page: Some(12), text: "within 36 hours".into() }],
+                },
+                CompilerRecommendation {
+                    compiler_id: "invented".into(),
+                    confidence: 1.0,
+                    reason: "Not in the platform registry.".into(),
+                    evidence: vec![],
+                },
+            ],
+            gaps: vec![],
+        };
+
+        let bounded = bound_document_inspection(routed);
+        assert_eq!(bounded.recommendations.len(), 1);
+        assert_eq!(bounded.recommendations[0].compiler_id, "care_path");
+    }
+
+    #[test]
+    fn plain_text_documents_are_extracted_without_a_system_command() {
+        let text = extract_document_text("text/plain", b"First line\nSecond line")
+            .expect("plain text is directly readable");
+        assert_eq!(text, "First line\nSecond line");
     }
 }

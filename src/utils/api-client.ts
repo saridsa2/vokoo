@@ -237,6 +237,16 @@ export const api = {
     create: <T>(resource: string, body: unknown, context: AccessContext) =>
         request<T>(`/api/v1/${resource}`, { method: "POST", body: JSON.stringify(body) }, context),
 
+    /** Store a source as an immutable document version. */
+    uploadDocument: <T>(
+        body: { name: string; mime_type: string; content_base64: string },
+        context: AccessContext,
+    ) => request<T>("/api/v1/documents", { method: "POST", body: JSON.stringify(body) }, context),
+
+    /** Ask Workspace Intelligence to recommend registered compilers. */
+    analyzeDocument: <T>(id: string, context: AccessContext) =>
+        request<T>(`/api/v1/documents/${encodeURIComponent(id)}/analyze`, { method: "POST" }, context),
+
     update: <T>(resource: string, id: string, body: unknown, context: AccessContext) =>
         request<T>(`/api/v1/${resource}/${id}`, { method: "PATCH", body: JSON.stringify(body) }, context),
 

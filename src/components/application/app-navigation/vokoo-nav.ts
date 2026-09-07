@@ -95,10 +95,9 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
             // named schema too, and seeing both together is how a schema pushed
             // from the CLI becomes visible without opening a repository.
             { label: "Schemas", href: "/structured-outputs", icon: IconShapes },
-            // "Knowledge", not "Files": what goes here is what the agent can
-            // draw on, and a file is only how it arrives. Naming it after the
-            // upload describes the mechanism rather than the purpose.
-            { label: "Knowledge", href: "/files", icon: IconFiles },
+            // A document is the versioned source Workspace Intelligence reads;
+            // "Files" would describe only how that source happened to arrive.
+            { label: "Documents", href: "/files", icon: IconFiles },
         ],
     },
     {
@@ -157,7 +156,7 @@ export const NAV_TITLES: Record<string, string> = Object.fromEntries(
  * the route alone, and guessing from the rendered markup would make the
  * navigation depend on what a screen happens to draw.
  */
-export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer", "/integrations", "/care-paths"]);
+export const SPLIT_SCREEN_ROUTES = new Set(["/agents", "/composer", "/integrations", "/care-paths", "/files"]);
 
 /**
  * Routes that take the whole window, navigation included.
