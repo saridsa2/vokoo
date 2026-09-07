@@ -711,6 +711,6 @@ Deployment evidence: the service path was exercised with two immutable synthetic
 
 Delete the synthetic logical document through its scoped database/API path so cascade removes versions, chunks, embeddings, and jobs. Inspect worker, control-plane, bridge, and console logs for errors and verify no source passage was logged.
 
-- [ ] **Step 9: Commit any verification-only fixes and push**
+- [x] **Step 9: Commit any verification-only fixes and push**
 
 Stage only named in-scope files, commit with a focused message, push `console-and-canvas`, and report the exact commit ids, migration versions, service health, browser checks, and any remaining unverified behavior.
