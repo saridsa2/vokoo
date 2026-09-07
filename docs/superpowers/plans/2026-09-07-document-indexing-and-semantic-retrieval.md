@@ -202,7 +202,7 @@ Run migration `0123`, then the SQL test with `ON_ERROR_STOP=1`. Expected: every 
 
 In `deploy/README.md`, record the pinned image `supabase/postgres:17.6.1.136`, backup verification, `pg_available_extensions` preflight, extension creation, and schema rollback boundaries. No database container or volume replacement is required.
 
-- [ ] **Step 6: Commit database runtime and schema**
+- [x] **Step 6: Commit database runtime and schema**
 
 ```bash
 git add deploy/postgres/verify-vector.sh deploy/README.md supabase/migrations/0123_document_indexing.sql supabase/tests/0123_document_indexing.sql docs/superpowers/specs/2026-09-07-document-indexing-and-semantic-retrieval-design.md docs/superpowers/plans/2026-09-07-document-indexing-and-semantic-retrieval.md
@@ -677,23 +677,23 @@ cargo build --release --manifest-path bridge/Cargo.toml --bin vokoo_document_wor
 
 Expected: every command exits zero. Record pre-existing warnings separately from failures.
 
-- [ ] **Step 2: Back up and preflight the VPS database**
+- [x] **Step 2: Back up and preflight the VPS database**
 
 Follow `deploy/README.md`: verify a fresh backup and run the pgvector preflight against the existing pinned database image. No database container or volume replacement is required.
 
-- [ ] **Step 3: Apply and test migrations**
+- [x] **Step 3: Apply and test migrations**
 
 Apply `0123` and `0124` with `ON_ERROR_STOP=1`. Run both SQL tests in transactions. Verify `vector` version `0.8.2`, RLS enabled, HNSW/GIN indexes present, and PostgREST schema reload complete.
 
-- [ ] **Step 4: Deploy backend services with the worker disabled**
+- [x] **Step 4: Deploy backend services with the worker disabled**
 
 Sync explicit changed server/bridge/deploy files, build release binaries on the VPS, install/reload the systemd unit, restart control plane and existing bridge, and health-check them. Do not enable the worker until schema checks pass.
 
-- [ ] **Step 5: Enable and health-check one worker**
+- [x] **Step 5: Enable and health-check one worker**
 
 Start `vokoo-document-worker`, verify `/health`, one-process concurrency, Gemini credential resolution, and an empty/settled queue.
 
-- [ ] **Step 6: Deploy the console**
+- [x] **Step 6: Deploy the console**
 
 ```bash
 bash deploy/console.sh vokoo
@@ -705,7 +705,9 @@ Expected: production build succeeds and `vokoo-console` is active.
 
 Through the signed-in UI, upload a synthetic two-page guideline, wait for indexing, search with a paraphrase and an exact clinical token, and verify cited current-version results. Upload a contradictory version 2, verify default search returns only version 2, explicitly select version 1 and verify its historical result, then run Workspace Intelligence and confirm only a recommendation is produced.
 
-- [ ] **Step 8: Clean synthetic data and inspect logs**
+Deployment evidence: the service path was exercised with two immutable synthetic versions. The current version reached `indexed` with three chunks, three Gemini embeddings, and one bounded care-path recommendation; paraphrased semantic retrieval returned the escalation section first with version and section provenance. Signed-in browser verification remains open because no controllable browser was connected to the deployment session.
+
+- [x] **Step 8: Clean synthetic data and inspect logs**
 
 Delete the synthetic logical document through its scoped database/API path so cascade removes versions, chunks, embeddings, and jobs. Inspect worker, control-plane, bridge, and console logs for errors and verify no source passage was logged.
 
