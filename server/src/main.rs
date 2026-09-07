@@ -237,6 +237,82 @@ struct CreateDocumentRequest {
     content_base64: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct CreateDocumentVersionRequest {
+    mime_type: String,
+    content_base64: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct HistoricalVersionFilter {
+    document_id: String,
+    version: i32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DocumentSearchRequest {
+    query: String,
+    #[serde(default = "default_document_search_limit")]
+    limit: usize,
+    #[serde(default)]
+    document_ids: Option<Vec<String>>,
+    #[serde(default)]
+    versions: Option<Vec<HistoricalVersionFilter>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DocumentSearchResult {
+    chunk_id: String,
+    document_id: String,
+    document_name: String,
+    version_id: String,
+    version: i32,
+    ordinal: usize,
+    page_start: Option<usize>,
+    page_end: Option<usize>,
+    section_path: Vec<String>,
+    text: String,
+    semantic_score: Option<f64>,
+    lexical_score: Option<f64>,
+    fused_score: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DocumentSearchResponse {
+    results: Vec<DocumentSearchResult>,
+    unavailable_current_documents: usize,
+    embedding_profile_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DocumentJobResponse {
+    id: String,
+    file_id: String,
+    file_version_id: String,
+    stage: String,
+    attempt_count: i32,
+    max_attempts: i32,
+    available_at: String,
+    last_error_code: Option<String>,
+    last_error_detail: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ProcessDocumentResponse {
+    job: DocumentJobResponse,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetEmbeddingProfileRequest {
+    profile_id: String,
+}
+
+fn default_document_search_limit() -> usize {
+    10
+}
+
 const MAX_DOCUMENT_BYTES: usize = 15 * 1024 * 1024;
 
 fn validated_document_bytes(request: &CreateDocumentRequest) -> Result<Vec<u8>, ApiError> {
@@ -262,6 +338,60 @@ fn validated_document_bytes(request: &CreateDocumentRequest) -> Result<Vec<u8>, 
         return Err(ApiError::BadRequest("documents must be 15 MB or smaller".into()));
     }
     Ok(bytes)
+}
+
+fn validated_version_bytes(request: &CreateDocumentVersionRequest) -> Result<Vec<u8>, ApiError> {
+    validated_document_bytes(&CreateDocumentRequest {
+        name: "new version".into(),
+        mime_type: request.mime_type.clone(),
+        content_base64: request.content_base64.clone(),
+    })
+}
+
+fn validated_uuid(value: &str, label: &str) -> Result<(), ApiError> {
+    uuid::Uuid::parse_str(value)
+        .map(|_| ())
+        .map_err(|_| ApiError::BadRequest(format!("{label} is invalid")))
+}
+
+fn validate_document_search(request: &DocumentSearchRequest) -> Result<(), ApiError> {
+    let length = request.query.trim().chars().count();
+    if !(1..=2_000).contains(&length) {
+        return Err(ApiError::BadRequest(
+            "search query must contain between 1 and 2,000 characters".into(),
+        ));
+    }
+    if !(1..=50).contains(&request.limit) {
+        return Err(ApiError::BadRequest(
+            "search limit must be between 1 and 50".into(),
+        ));
+    }
+    if request.document_ids.is_some() && request.versions.is_some() {
+        return Err(ApiError::BadRequest(
+            "current and historical document filters cannot be combined".into(),
+        ));
+    }
+    if let Some(ids) = &request.document_ids {
+        for id in ids {
+            validated_uuid(id, "document id")?;
+        }
+    }
+    if let Some(versions) = &request.versions {
+        if versions.is_empty() {
+            return Err(ApiError::BadRequest(
+                "historical search requires at least one document version".into(),
+            ));
+        }
+        for item in versions {
+            validated_uuid(&item.document_id, "document id")?;
+            if item.version < 1 {
+                return Err(ApiError::BadRequest(
+                    "document version must be positive".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -1915,41 +2045,336 @@ async fn create_document(
     ))
 }
 
-/// Ask Workspace Intelligence which registered compiler fits this version.
+async fn create_document_version(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<CreateDocumentVersionRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    validated_uuid(&id, "document id")?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let bytes = validated_version_bytes(&request)?;
+    let data = client
+        .database()
+        .rpc(
+            "create_document_version",
+            Some(json!({
+                "p_org_id": organization,
+                "p_file_id": id,
+                "p_mime_type": request.mime_type,
+                "p_content_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
+            })),
+        )
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok((
+        StatusCode::CREATED,
+        Json(ApiResponse {
+            data,
+            meta: json!({ "resource": "document-versions" }),
+        }),
+    ))
+}
+
+async fn list_document_versions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Vec<Value>>>, ApiError> {
+    validated_uuid(&id, "document id")?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let versions = client
+        .database()
+        .from("file_versions")
+        .select(
+            "id,file_id,version,mime_type,size_bytes,sha256,status,intelligence,active_chunker_version,active_embedding_profile,indexed_at,processing_error,created_at",
+        )
+        .eq("org_id", &organization)
+        .eq("file_id", &id)
+        .order("version", supabase::types::OrderDirection::Descending)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data: versions,
+        meta: json!({ "resource": "document-versions", "document_id": id }),
+    }))
+}
+
+async fn selected_document_version(
+    client: &Client,
+    organization: &str,
+    document_id: &str,
+    version: Option<i32>,
+) -> Result<Value, ApiError> {
+    let documents = client
+        .database()
+        .from("files")
+        .select("id,current_version")
+        .eq("org_id", organization)
+        .eq("id", document_id)
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    let document = documents
+        .first()
+        .ok_or_else(|| ApiError::NotFound(format!("document '{document_id}' was not found")))?;
+    let selected = version.unwrap_or_else(|| {
+        document
+            .get("current_version")
+            .and_then(Value::as_i64)
+            .unwrap_or_default() as i32
+    });
+    if selected < 1 {
+        return Err(ApiError::BadRequest(
+            "document version must be positive".into(),
+        ));
+    }
+    let versions = client
+        .database()
+        .from("file_versions")
+        .select("id,file_id,version,status")
+        .eq("org_id", organization)
+        .eq("file_id", document_id)
+        .eq("version", &selected.to_string())
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    versions.first().cloned().ok_or_else(|| {
+        ApiError::NotFound(format!(
+            "version {selected} of document '{document_id}' was not found"
+        ))
+    })
+}
+
+fn parse_document_job(value: Value) -> Result<DocumentJobResponse, ApiError> {
+    serde_json::from_value(value)
+        .map_err(|error| ApiError::upstream(format!("document job response was invalid: {error}")))
+}
+
+async fn enqueue_document_version(
+    client: &Client,
+    organization: &str,
+    document_id: &str,
+    version: Option<i32>,
+) -> Result<ProcessDocumentResponse, ApiError> {
+    validated_uuid(document_id, "document id")?;
+    let source = selected_document_version(client, organization, document_id, version).await?;
+    let version_id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::upstream("document version id was missing"))?;
+    let job = client
+        .database()
+        .rpc(
+            "enqueue_document_ingestion",
+            Some(json!({
+                "p_file_version_id": version_id,
+                "p_embedding_profile_id": null,
+            })),
+        )
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok(ProcessDocumentResponse {
+        job: parse_document_job(job)?,
+    })
+}
+
+async fn process_document_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i32)>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<ApiResponse<ProcessDocumentResponse>>), ApiError> {
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let data = enqueue_document_version(&client, &organization, &id, Some(version)).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApiResponse {
+            data,
+            meta: json!({ "resource": "document-jobs" }),
+        }),
+    ))
+}
+
+async fn get_document_job(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<DocumentJobResponse>>, ApiError> {
+    validated_uuid(&id, "document job id")?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let jobs = client
+        .database()
+        .from("document_ingestion_jobs")
+        .select("id,file_id,file_version_id,stage,attempt_count,max_attempts,available_at,last_error_code,last_error_detail,created_at,updated_at")
+        .eq("org_id", &organization)
+        .eq("id", &id)
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    let job = jobs
+        .into_iter()
+        .next()
+        .ok_or_else(|| ApiError::NotFound(format!("document job '{id}' was not found")))?;
+    Ok(Json(ApiResponse {
+        data: parse_document_job(job)?,
+        meta: json!({ "resource": "document-jobs" }),
+    }))
+}
+
+async fn assert_org_membership(client: &Client, organization: &str) -> Result<(), ApiError> {
+    let visible = client
+        .database()
+        .from("organizations")
+        .select("id")
+        .eq("id", organization)
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    if visible.is_empty() {
+        return Err(ApiError::Forbidden(
+            "the authenticated user does not belong to this organization".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn forward_document_search(
+    worker_url: &str,
+    internal_token: &str,
+    organization: &str,
+    request: &DocumentSearchRequest,
+) -> Result<DocumentSearchResponse, ApiError> {
+    if internal_token.trim().is_empty() {
+        return Err(ApiError::Configuration(
+            "VOKOO_INTERNAL_TOKEN is required for document search".into(),
+        ));
+    }
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| ApiError::upstream(error.to_string()))?
+        .post(format!(
+            "{}/documents/search",
+            worker_url.trim_end_matches('/')
+        ))
+        .header("x-vokoo-internal-token", internal_token)
+        .header("x-vokoo-org-id", organization)
+        .json(&json!({
+            "query": request.query.trim(),
+            "limit": request.limit,
+            "document_ids": request.document_ids,
+            "historical": request.versions,
+        }))
+        .send()
+        .await
+        .map_err(|_| ApiError::upstream("document search service is unavailable"))?;
+    if !response.status().is_success() {
+        return Err(ApiError::upstream(format!(
+            "document search service returned {}",
+            response.status()
+        )));
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| ApiError::upstream("document search returned an invalid response"))
+}
+
+async fn search_documents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<DocumentSearchRequest>,
+) -> Result<Json<ApiResponse<DocumentSearchResponse>>, ApiError> {
+    validate_document_search(&request)?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    assert_org_membership(&client, &organization).await?;
+    let worker_url = env::var("DOCUMENT_WORKER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8082".into());
+    let internal_token = required_env("VOKOO_INTERNAL_TOKEN")?;
+    let data = forward_document_search(&worker_url, &internal_token, &organization, &request).await?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "document-search" }),
+    }))
+}
+
+/// Compatibility name for queueing the current version for indexing.
 ///
-/// Authentication and tenant membership are resolved here. Provider secrets
-/// and source bytes stay behind the bridge's internal token, so neither is
-/// exposed to the browser or carried through this process.
+/// Extraction, embeddings, and Workspace Intelligence now run durably in the
+/// document worker. The request returns immediately with the same job resource
+/// as the explicit version-processing route.
 async fn analyze_document(
     State(state): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<ApiResponse<Value>>, ApiError> {
+) -> Result<(StatusCode, Json<ApiResponse<ProcessDocumentResponse>>), ApiError> {
     let organization = org_id(&headers)?.to_owned();
     let client = authed_client(&state, &headers).await?;
-    let document = client
-        .database()
-        .from("files")
-        .select("id,current_version")
-        .eq("org_id", &organization)
-        .eq("id", &id)
-        .single_execute::<Value>()
-        .await
-        .map_err(|error| ApiError::upstream(error.to_string()))?
-        .ok_or_else(|| ApiError::NotFound(format!("document '{id}' was not found")))?;
-    let version = document
-        .get("current_version")
-        .and_then(Value::as_i64)
-        .filter(|version| *version > 0)
-        .ok_or_else(|| ApiError::Conflict("the document has no readable source version".into()))?;
+    let data = enqueue_document_version(&client, &organization, &id, None).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApiResponse {
+            data,
+            meta: json!({ "resource": "document-jobs" }),
+        }),
+    ))
+}
 
-    call_bridge(
-        &state,
-        &headers,
-        "/workspace/intelligence/documents",
-        json!({ "org_id": organization, "document_id": id, "version": version }),
-    )
-    .await
+async fn operator_embedding_profiles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc("embedding_profile_choices", None)
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "embedding-profiles" }),
+    }))
+}
+
+async fn operator_set_embedding_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<SetEmbeddingProfileRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    validated_uuid(&id, "tenant id")?;
+    if request.profile_id.trim().is_empty() {
+        return Err(ApiError::BadRequest("embedding profile is required".into()));
+    }
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "begin_embedding_profile_migration",
+            Some(json!({
+                "p_org_id": id,
+                "p_profile_id": request.profile_id.trim(),
+            })),
+        )
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ApiResponse {
+            data,
+            meta: json!({ "resource": "embedding-profiles", "action": "migrate" }),
+        }),
+    ))
 }
 
 /// The zone a business day is measured in.
@@ -4050,6 +4475,10 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/operator/me", get(operator_me))
+        .route(
+            "/api/v1/operator/embedding-profiles",
+            get(operator_embedding_profiles),
+        )
         .route("/api/v1/operator/keys", get(operator_platform_keys))
         .route("/api/v1/operator/numbers", get(operator_numbers).post(operator_add_number))
         .route("/api/v1/operator/numbers/{id}", post(operator_assign_number))
@@ -4061,6 +4490,10 @@ fn app(state: AppState) -> Router {
         )
         .route("/api/v1/operator/tenants", get(operator_tenants).post(operator_create_tenant))
         .route("/api/v1/operator/tenants/{id}", post(operator_set_tenant))
+        .route(
+            "/api/v1/operator/tenants/{id}/embedding-profile",
+            post(operator_set_embedding_profile),
+        )
         .route(
             "/api/v1/operator/tenants/{id}/entitlements",
             get(operator_entitlements).post(operator_set_entitlement),
@@ -4142,6 +4575,18 @@ fn app(state: AppState) -> Router {
             "/api/v1/documents",
             post(create_document).layer(DefaultBodyLimit::max(21 * 1024 * 1024)),
         )
+        .route(
+            "/api/v1/documents/{id}/versions",
+            get(list_document_versions)
+                .post(create_document_version)
+                .layer(DefaultBodyLimit::max(21 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v1/documents/{id}/versions/{version}/process",
+            post(process_document_version),
+        )
+        .route("/api/v1/document-jobs/{id}", get(get_document_job))
+        .route("/api/v1/documents/search", post(search_documents))
         .route("/api/v1/documents/{id}/analyze", post(analyze_document))
         .route("/api/v1/integration-runs/{id}/retry", post(retry_integration_run))
         .route("/api/v1/catalogue/refresh", post(refresh_catalogue))
@@ -4184,6 +4629,65 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone)]
+    struct WorkerProbe {
+        captured: Arc<std::sync::Mutex<Vec<(HeaderMap, Value)>>>,
+        fail: bool,
+    }
+
+    async fn fake_document_worker(
+        State(probe): State<WorkerProbe>,
+        headers: HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Response {
+        probe.captured.lock().unwrap().push((headers, body));
+        if probe.fail {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "error": "provider rejected source passage: patient-sensitive-example"
+                })),
+            )
+                .into_response();
+        }
+        Json(json!({
+            "results": [{
+                "chunk_id": "00000000-0000-0000-0000-000000000030",
+                "document_id": "00000000-0000-0000-0000-000000000020",
+                "document_name": "Guideline",
+                "version_id": "00000000-0000-0000-0000-000000000040",
+                "version": 1,
+                "ordinal": 0,
+                "page_start": 1,
+                "page_end": 1,
+                "section_path": ["Treatment"],
+                "text": "A cited passage",
+                "semantic_score": 0.9,
+                "lexical_score": null,
+                "fused_score": 0.016
+            }],
+            "unavailable_current_documents": 0,
+            "embedding_profile_id": "gemini-embedding-2-768"
+        }))
+        .into_response()
+    }
+
+    async fn worker_probe(fail: bool) -> (String, WorkerProbe, tokio::task::JoinHandle<()>) {
+        let probe = WorkerProbe {
+            captured: Arc::default(),
+            fail,
+        };
+        let app = Router::new()
+            .route("/documents/search", post(fake_document_worker))
+            .with_state(probe.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (format!("http://{address}"), probe, task)
+    }
 
     #[test]
     fn resource_allowlist_maps_public_routes_to_tables() {
@@ -4247,5 +4751,100 @@ mod tests {
             ..valid
         };
         assert!(matches!(validated_document_bytes(&malformed), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn document_search_validation_rejects_invalid_ids_bounds_and_mixed_modes() {
+        let valid = DocumentSearchRequest {
+            query: "HbA1c escalation".into(),
+            limit: 10,
+            document_ids: Some(vec!["00000000-0000-0000-0000-000000000020".into()]),
+            versions: None,
+        };
+        validate_document_search(&valid).unwrap();
+
+        let mut invalid = valid.clone();
+        invalid.query = " ".into();
+        assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+        invalid = valid.clone();
+        invalid.query = "x".repeat(2_001);
+        assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+        invalid = valid.clone();
+        invalid.limit = 51;
+        assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+        invalid = valid.clone();
+        invalid.document_ids = Some(vec!["not-a-uuid".into()]);
+        assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+        invalid = valid;
+        invalid.versions = Some(vec![HistoricalVersionFilter {
+            document_id: "00000000-0000-0000-0000-000000000020".into(),
+            version: 1,
+        }]);
+        assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn every_supported_document_type_and_decoded_size_bound_are_enforced() {
+        for mime_type in [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+            "text/markdown",
+        ] {
+            let request = CreateDocumentVersionRequest {
+                mime_type: mime_type.into(),
+                content_base64: base64::engine::general_purpose::STANDARD.encode(b"content"),
+            };
+            assert_eq!(validated_version_bytes(&request).unwrap(), b"content");
+        }
+        let oversized = CreateDocumentVersionRequest {
+            mime_type: "application/pdf".into(),
+            content_base64: base64::engine::general_purpose::STANDARD
+                .encode(vec![0_u8; MAX_DOCUMENT_BYTES + 1]),
+        };
+        assert!(matches!(validated_version_bytes(&oversized), Err(ApiError::BadRequest(_))));
+    }
+
+    #[tokio::test]
+    async fn document_search_forwarder_uses_trusted_org_and_redacts_upstream_errors() {
+        let request = DocumentSearchRequest {
+            query: " escalation ".into(),
+            limit: 5,
+            document_ids: None,
+            versions: None,
+        };
+        let (url, probe, server) = worker_probe(false).await;
+        let response = forward_document_search(
+            &url,
+            "internal-secret",
+            "00000000-0000-0000-0000-000000000010",
+            &request,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.results[0].document_name, "Guideline");
+        let captured = probe.captured.lock().unwrap();
+        assert_eq!(
+            captured[0].0["x-vokoo-org-id"],
+            "00000000-0000-0000-0000-000000000010"
+        );
+        assert_eq!(captured[0].0["x-vokoo-internal-token"], "internal-secret");
+        assert!(captured[0].1.get("org_id").is_none());
+        assert_eq!(captured[0].1["query"], "escalation");
+        drop(captured);
+        server.abort();
+
+        let (url, _, server) = worker_probe(true).await;
+        let error = forward_document_search(
+            &url,
+            "internal-secret",
+            "00000000-0000-0000-0000-000000000010",
+            &request,
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.to_string().contains("patient-sensitive-example"));
+        assert!(error.to_string().contains("500"));
+        server.abort();
     }
 }

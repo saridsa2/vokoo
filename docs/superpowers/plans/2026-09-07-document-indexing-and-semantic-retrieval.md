@@ -551,15 +551,15 @@ git commit -m "feat: search versioned document chunks"
 - Produces: version append/history, process/retry, job status, search, operator profile choices, and profile-migration APIs; existing analyze route returns the same queued-job shape.
 - Consumes: authenticated `x-org-id`, database RPCs, `DOCUMENT_WORKER_URL=http://127.0.0.1:8082`, and `VOKOO_INTERNAL_TOKEN`.
 
-- [ ] **Step 1: Write failing control-plane tests**
+- [x] **Step 1: Write failing control-plane tests**
 
 Add pure validation tests for document/version ids, current versus explicit history filters, query length 1–2,000, result limit 1–50, supported MIME types, and the 15 MiB decoded upload bound. Add handler tests with fake upstreams proving the authenticated organization overrides any body value and internal errors do not expose provider responses containing source text.
 
-- [ ] **Step 2: Implement request and response types**
+- [x] **Step 2: Implement request and response types**
 
 Add `CreateDocumentVersionRequest`, `ProcessDocumentResponse`, `DocumentJobResponse`, `DocumentSearchRequest`, `HistoricalVersionFilter`, and `DocumentSearchResult`. Reject `document_ids` and `versions` when they conflict for the same document.
 
-- [ ] **Step 3: Implement routes**
+- [x] **Step 3: Implement routes**
 
 Add:
 
@@ -575,15 +575,15 @@ POST /api/v1/operator/tenants/{id}/embedding-profile
 
 The search route forwards only the authenticated org id and validated filters to the internal worker. The two embedding-profile routes call the operator-guarded database RPCs and never return credentials. Give upload routes a 21 MiB JSON body cap for 15 MiB base64 sources.
 
-- [ ] **Step 4: Convert the analyze compatibility route**
+- [x] **Step 4: Convert the analyze compatibility route**
 
 `POST /api/v1/documents/{id}/analyze` calls the same enqueue helper as `process` and returns `202 Accepted` with a job resource. Remove its direct 120-second reasoning request.
 
-- [ ] **Step 5: Add typed browser API methods**
+- [x] **Step 5: Add typed browser API methods**
 
 In `api-client.ts`, add `uploadDocumentVersion`, `listDocumentVersions`, `processDocumentVersion`, `getDocumentJob`, and `searchDocuments`. Keep organization and bearer headers in the shared `request` function.
 
-- [ ] **Step 6: Verify and commit APIs**
+- [x] **Step 6: Verify and commit APIs**
 
 ```bash
 cargo test --manifest-path server/Cargo.toml

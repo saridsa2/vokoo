@@ -244,8 +244,39 @@ begin
   ) values (
     v_version.org_id, v_version.file_id, v_version.id, v_profile
   ) on conflict (file_version_id, chunker_version, embedding_profile_id)
-    do update set updated_at = public.document_ingestion_jobs.updated_at
+    do update set
+      stage = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                   then 'queued' else public.document_ingestion_jobs.stage end,
+      attempt_count = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                           then 0 else public.document_ingestion_jobs.attempt_count end,
+      available_at = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                          then now() else public.document_ingestion_jobs.available_at end,
+      lease_owner = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                         then null else public.document_ingestion_jobs.lease_owner end,
+      lease_expires_at = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                              then null else public.document_ingestion_jobs.lease_expires_at end,
+      last_error_code = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                             then null else public.document_ingestion_jobs.last_error_code end,
+      last_error_detail = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                               then null else public.document_ingestion_jobs.last_error_detail end,
+      completed_at = case when public.document_ingestion_jobs.stage in ('retryable_failed', 'permanent_failed')
+                          then null else public.document_ingestion_jobs.completed_at end,
+      updated_at = now()
   returning * into v_job;
+
+  if v_job.stage = 'queued' and v_job.embedding_profile_id = (
+    select embedding_profile_id from public.organizations where id = v_job.org_id
+  ) then
+    update public.file_versions
+       set status = 'queued', processing_error = null
+     where id = v_job.file_version_id;
+    update public.files f
+       set status = 'queued', updated_at = now()
+      from public.file_versions v
+     where v.id = v_job.file_version_id
+       and f.id = v.file_id and f.org_id = v.org_id
+       and f.current_version = v.version;
+  end if;
   return to_jsonb(v_job);
 end;
 $$;

@@ -27,6 +27,54 @@ export type AccessContext = {
     organizationId: string;
 };
 
+export type HistoricalDocumentVersion = {
+    document_id: string;
+    version: number;
+};
+
+export type DocumentSearchRequest = {
+    query: string;
+    limit?: number;
+    document_ids?: string[];
+    versions?: HistoricalDocumentVersion[];
+};
+
+export type DocumentSearchResult = {
+    chunk_id: string;
+    document_id: string;
+    document_name: string;
+    version_id: string;
+    version: number;
+    ordinal: number;
+    page_start: number | null;
+    page_end: number | null;
+    section_path: string[];
+    text: string;
+    semantic_score: number | null;
+    lexical_score: number | null;
+    fused_score: number;
+};
+
+export type DocumentSearchResponse = {
+    results: DocumentSearchResult[];
+    unavailable_current_documents: number;
+    embedding_profile_id: string;
+};
+
+export type DocumentJob = {
+    id: string;
+    file_id: string;
+    file_version_id: string;
+    stage: string;
+    attempt_count: number;
+    max_attempts: number;
+    available_at: string;
+    last_error_code: string | null;
+    last_error_detail: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
 export type SupabaseSession = {
     access_token: string;
     refresh_token: string;
@@ -243,9 +291,51 @@ export const api = {
         context: AccessContext,
     ) => request<T>("/api/v1/documents", { method: "POST", body: JSON.stringify(body) }, context),
 
+    /** Append an immutable source version to an existing logical document. */
+    uploadDocumentVersion: <T>(
+        id: string,
+        body: { mime_type: string; content_base64: string },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/documents/${encodeURIComponent(id)}/versions`,
+            { method: "POST", body: JSON.stringify(body) },
+            context,
+        ),
+
+    listDocumentVersions: <T>(id: string, context: AccessContext) =>
+        request<T[]>(`/api/v1/documents/${encodeURIComponent(id)}/versions`, {}, context),
+
+    processDocumentVersion: (id: string, version: number, context: AccessContext) =>
+        request<{ job: DocumentJob }>(
+            `/api/v1/documents/${encodeURIComponent(id)}/versions/${version}/process`,
+            { method: "POST" },
+            context,
+        ),
+
+    getDocumentJob: (id: string, context: AccessContext) =>
+        request<DocumentJob>(`/api/v1/document-jobs/${encodeURIComponent(id)}`, {}, context),
+
+    searchDocuments: (body: DocumentSearchRequest, context: AccessContext) =>
+        request<DocumentSearchResponse>(
+            "/api/v1/documents/search",
+            { method: "POST", body: JSON.stringify(body) },
+            context,
+        ),
+
     /** Ask Workspace Intelligence to recommend registered compilers. */
     analyzeDocument: <T>(id: string, context: AccessContext) =>
         request<T>(`/api/v1/documents/${encodeURIComponent(id)}/analyze`, { method: "POST" }, context),
+
+    embeddingProfiles: <T>(context: AccessContext) =>
+        request<T>("/api/v1/operator/embedding-profiles", {}, asOperator(context)),
+
+    setTenantEmbeddingProfile: <T>(tenantId: string, profileId: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/tenants/${encodeURIComponent(tenantId)}/embedding-profile`,
+            { method: "POST", body: JSON.stringify({ profile_id: profileId }) },
+            asOperator(context),
+        ),
 
     update: <T>(resource: string, id: string, body: unknown, context: AccessContext) =>
         request<T>(`/api/v1/${resource}/${id}`, { method: "PATCH", body: JSON.stringify(body) }, context),

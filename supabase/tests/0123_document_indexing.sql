@@ -137,6 +137,18 @@ begin
   if (select intelligence from public.files where id = v_file) is not null then
     raise exception 'stale version intelligence overwrote the current document projection';
   end if;
+
+  update public.document_ingestion_jobs
+     set stage = 'permanent_failed', attempt_count = max_attempts,
+         last_error_code = 'bad_source', last_error_detail = 'expected test failure',
+         completed_at = now()
+   where id = (v_claim ->> 'id')::uuid;
+  v_job := public.enqueue_document_ingestion(v_version, 'gemini-embedding-2-768');
+  if v_job ->> 'stage' <> 'queued'
+     or (v_job ->> 'attempt_count')::integer <> 0
+     or v_job -> 'last_error_code' <> 'null'::jsonb then
+    raise exception 'an explicit retry did not reset failed work';
+  end if;
 end;
 $$;
 
