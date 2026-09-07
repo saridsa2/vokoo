@@ -282,6 +282,50 @@ hears and speaks.
 
 **Verify.** No agent subtitle contains `· ·`.
 
+---
+
+## D8 — A flow whose trigger reaches nothing can be published
+
+**Status:** open
+**Found:** 7 September 2026, `/integrations`
+**Severity:** an `integration.invoke` can name it, the invocation succeeds, and
+nothing happens. A silent no-op is the failure shape this project keeps
+recording — it looks like it worked.
+
+On screen:
+
+```
+Lead capture      published      1 node · 0 routes      Invoked from another flow
+```
+
+One node and no routes. That node is the trigger, so there is nothing after it.
+It is `published`, which means `integration.invoke` will accept it as a target —
+`validate_flow_release` requires the target be *published*, and it is.
+
+`validate_flow_release` checks a good deal:
+
+- every node belongs to the flow's family
+- an integration has exactly one `trigger.integration_invoked`
+- that trigger names an enabled input schema in this workspace
+- `integration.invoke` names a published integration in this workspace
+- `validate_care_path_release` then checks each trigger's own config —
+  an anchor and an integer offset for `trigger.due`, a positive interval for
+  `trigger.recurring`, at least one observation for `trigger.reported`
+
+**What it never checks is the graph.** No reachability, no terminal, no check
+that an entry point leads anywhere. Every rule is about a node in isolation.
+
+This is the same class as the two `validate_*_release` functions being pure
+functions over `jsonb`: they are the right place for graph invariants precisely
+because they already receive the whole graph. The check costs one traversal.
+
+**Fix.** In `validate_flow_release`, walk from each trigger over
+`p_graph->'edges'` and refuse a trigger that reaches no terminal. `Lead capture`
+should then be unpublishable until it does something.
+
+**Verify.** Publishing a one-node flow raises `P0004`, and `Lead capture` is
+either completed or no longer published.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.
@@ -313,8 +357,9 @@ Opened and clean on 7 September: `/dashboard`, `/patients`, `/care-paths`,
 `/structured-outputs`, `/call-logs`, `/settings/organization`. No console
 errors on any of them.
 
-Still unopened: `/integrations`, `/skills`, `/files`, `/phone-numbers`,
-`/runs`, `/team`.
+Also opened and clean: `/integrations`, `/phone-numbers`, `/team`.
+
+Still unopened: `/skills`, `/files`, `/runs`.
 
 **A note on route checking.** The first sweep tested invented paths — `/schemas`
 and `/calls` — and reported them 200 because a signed-out request redirects
