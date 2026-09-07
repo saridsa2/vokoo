@@ -110,3 +110,25 @@ The extension is additive. Rolling application code back does not require
 dropping it, its tables, or its indexes. A database rollback uses the verified
 pre-migration backup; do not improvise a partial destructive rollback and never
 run `docker compose down -v`.
+
+## Document worker
+
+`vokoo_document_worker` is deliberately separate from the call bridge. It
+claims one durable ingestion lease at a time and listens only on
+`127.0.0.1:8082` for health and internal document endpoints. Its environment
+file is `/opt/vokoo/rustvani/.env` and must already provide `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, and `VOKOO_INTERNAL_TOKEN`. The Gemini key is not
+duplicated there: the worker resolves the operator-managed `gemini` platform
+credential through `resolve_vendor_secret`.
+
+Install or update the unit only after migration 0123 succeeds:
+
+```bash
+ssh vokoo 'sudo cp /opt/vokoo/rustvani/deploy/vokoo-document-worker.service /etc/systemd/system/'
+ssh vokoo 'sudo systemctl daemon-reload && sudo systemctl enable --now vokoo-document-worker'
+ssh vokoo 'curl --fail --silent http://127.0.0.1:8082/health'
+```
+
+There must be only one enabled instance initially. The database lease remains
+the correctness boundary if the process restarts; systemd uses a five-second
+restart delay and the worker resumes from already-persisted chunks and vectors.

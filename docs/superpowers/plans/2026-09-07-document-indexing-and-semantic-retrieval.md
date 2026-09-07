@@ -412,7 +412,7 @@ git commit -m "feat: embed document chunks with Gemini"
 - Produces: `JobRepository`, `DocumentWorker::run_once() -> Result<RunOutcome, WorkerError>`, health endpoint `GET /health`, and internal endpoint `POST /documents/search` reserved for Task 7.
 - Consumes: extraction/chunking, `Embedder`, service-role Supabase URL/key, internal token, and Workspace Intelligence routing.
 
-- [ ] **Step 1: Write failing repository and worker tests**
+- [x] **Step 1: Write failing repository and worker tests**
 
 Against fake PostgREST/Gemini servers, start with these orchestration assertions:
 
@@ -436,11 +436,11 @@ async fn retryable_embedding_failure_resumes_after_chunks() {
 
 Complete the harness with explicit assertions for successful stage order, lease renewal, restart after extraction, restart after partial embedding, permanent corrupt-source failure, stale-version intelligence stored only on its version, and repeated completion producing no duplicates.
 
-- [ ] **Step 2: Implement typed job repository calls**
+- [x] **Step 2: Implement typed job repository calls**
 
 Define `ClaimedJob`, `JobStage`, `JobFailure`, and repository methods `claim`, `renew_lease`, `store_extraction`, `upsert_chunks`, `upsert_embeddings`, `complete`, and `fail`. Every database request includes `org_id`, and state-changing RPC responses are checked rather than discarded.
 
-- [ ] **Step 3: Implement `run_once` orchestration**
+- [x] **Step 3: Implement `run_once` orchestration**
 
 Process exactly one lease per call:
 
@@ -455,19 +455,19 @@ pub async fn run_once(&self) -> Result<RunOutcome, WorkerError> {
 
 Persist each completed stage before starting the next. Resolve the Gemini key through `resolve_vendor_secret`; do not load it from a new environment variable.
 
-- [ ] **Step 4: Change Workspace Intelligence to retrieved evidence input**
+- [x] **Step 4: Change Workspace Intelligence to retrieved evidence input**
 
 Replace the 160,000-character prefix contract with `DocumentEvidence { outline, representative_chunks, compiler_matches }`. Preserve the forced `route_document` tool and registered compiler allowlist. Persist page, section, chunk id, and version with every cited evidence item.
 
-- [ ] **Step 5: Add the worker binary and unit**
+- [x] **Step 5: Add the worker binary and unit**
 
 The binary loads the existing Supabase service settings and `VOKOO_INTERNAL_TOKEN`, polls one job at a time, exposes health on `127.0.0.1:8082`, and shuts down on SIGTERM. The systemd unit uses `Restart=always`, a five-second restart delay, `Nice=10`, and no more than one worker process.
 
-- [ ] **Step 6: Add source-safe metrics**
+- [x] **Step 6: Add source-safe metrics**
 
 Expose counters/gauges for queued and leased work, stage duration, extracted page/character totals, chunk/embedding counts, Gemini latency/retries, permanent error codes, and retrieval latency/candidate totals. Metric labels may contain provider, model, stage, and error code. A focused test scans rendered metric labels and rejects document ids, names, source text, and chunk text.
 
-- [ ] **Step 7: Run worker and intelligence tests**
+- [x] **Step 7: Run worker and intelligence tests**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml documents::jobs
@@ -478,7 +478,7 @@ cargo build --release --manifest-path bridge/Cargo.toml --bin vokoo_document_wor
 
 Expected: tests pass and the release worker builds.
 
-- [ ] **Step 8: Commit the durable worker**
+- [x] **Step 8: Commit the durable worker**
 
 ```bash
 git add bridge/src/vokoo/documents bridge/src/vokoo/intelligence.rs bridge/src/bin/vokoo_document_worker.rs bridge/Cargo.toml bridge/Cargo.lock deploy/vokoo-document-worker.service deploy/README.md

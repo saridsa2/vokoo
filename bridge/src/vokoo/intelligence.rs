@@ -91,8 +91,16 @@ const RECORD_TOOL: &str = "record_the_call";
 const ROUTE_DOCUMENT_TOOL: &str = "route_document";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DocumentEvidence {
+pub struct DocumentCitation {
     pub page: Option<usize>,
+    #[serde(default)]
+    pub chunk_id: Option<String>,
+    #[serde(default)]
+    pub version_id: Option<String>,
+    #[serde(default)]
+    pub page_end: Option<usize>,
+    #[serde(default)]
+    pub section_path: Vec<String>,
     pub text: String,
 }
 
@@ -102,7 +110,7 @@ pub struct CompilerRecommendation {
     pub confidence: f64,
     pub reason: String,
     #[serde(default)]
-    pub evidence: Vec<DocumentEvidence>,
+    pub evidence: Vec<DocumentCitation>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -163,10 +171,70 @@ pub async fn inspect_document(
     let secret = super::graph::vendor_secret(base, key, org_id, &provider)
         .await
         .ok_or_else(|| format!("no {provider} key is connected for this workspace"))?;
-    let inspection = ask_document(&provider, &secret, &model, &text).await?;
+    let prompt = numbered_document(&text);
+    let inspection = ask_document(&provider, &secret, &model, prompt).await?;
     let inspection = bound_document_inspection(inspection);
     store_document_inspection(base, key, org_id, document_id, version, &text, &inspection).await?;
     Ok(inspection)
+}
+
+/// Route a document from indexed, version-scoped evidence. The model may quote
+/// only chunks supplied here; persisted citations are rebound to their stored
+/// provenance before they leave this boundary.
+pub async fn inspect_document_evidence(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    evidence: &super::documents::DocumentEvidence,
+) -> Result<DocumentInspection, String> {
+    let (provider, model) = reader(base, key, org_id)
+        .await
+        .ok_or_else(|| "could not read the workspace intelligence provider".to_string())?;
+    if !is_reader(&provider) {
+        return Err(format!("{provider} cannot inspect documents"));
+    }
+    let secret = super::graph::vendor_secret(base, key, org_id, &provider)
+        .await
+        .ok_or_else(|| format!("no {provider} key is connected for this workspace"))?;
+    let prompt = format!(
+        "Review only this indexed document evidence. Every citation must name one supplied chunk_id and version_id.\n\n{}",
+        serde_json::to_string(evidence)
+            .map_err(|error| format!("could not encode document evidence: {error}"))?
+    );
+    let inspection = ask_document(&provider, &secret, &model, prompt).await?;
+    Ok(bound_indexed_document_inspection(inspection, evidence))
+}
+
+fn bound_indexed_document_inspection(
+    inspection: DocumentInspection,
+    evidence: &super::documents::DocumentEvidence,
+) -> DocumentInspection {
+    let mut inspection = bound_document_inspection(inspection);
+    for recommendation in &mut inspection.recommendations {
+        recommendation.evidence.retain_mut(|citation| {
+            let Some(chunk_id) = citation.chunk_id.as_deref() else {
+                return false;
+            };
+            let Some(chunk) = evidence
+                .representative_chunks
+                .iter()
+                .find(|chunk| chunk.chunk_id == chunk_id)
+            else {
+                return false;
+            };
+            if citation.version_id.as_deref() != Some(chunk.version_id.as_str()) {
+                return false;
+            }
+            citation.page = chunk.page_start;
+            citation.page_end = chunk.page_end;
+            citation.section_path = chunk.section_path.clone();
+            if !chunk.text.contains(citation.text.trim()) {
+                citation.text = chunk.text.chars().take(320).collect();
+            }
+            true
+        });
+    }
+    inspection
 }
 
 async fn load_document_version(
@@ -200,7 +268,7 @@ async fn ask_document(
     provider: &str,
     secret: &str,
     model: &str,
-    text: &str,
+    prompt: String,
 ) -> Result<DocumentInspection, String> {
     let schema = Schema::try_from(json!({
         "type": "object",
@@ -223,6 +291,10 @@ async fn ask_document(
                                 "required": ["page", "text"],
                                 "properties": {
                                     "page": {"type": ["integer", "null"]},
+                                    "chunk_id": {"type": ["string", "null"]},
+                                    "version_id": {"type": ["string", "null"]},
+                                    "page_end": {"type": ["integer", "null"]},
+                                    "section_path": {"type": "array", "items": {"type": "string"}},
                                     "text": {"type": "string"}
                                 }
                             }
@@ -247,16 +319,8 @@ async fn ask_document(
         }))
         .build()
         .map_err(|error| format!("could not build the routing tool: {error}"))?;
-    let system = "You are Workspace Intelligence. Identify what this source document is and which registered compiler can translate it into workspace artifacts. The only registered compiler is care_path, which applies to clinical guidelines defining longitudinal care, monitoring, timing, escalation, or patient follow-up. Do not recommend it for invoices, policies, FAQs, marketing material, or patient-specific clinical records. Cite short source evidence with physical PDF page numbers when the source contains page boundaries. A recommendation is advisory and must not run the compiler. You must call route_document exactly once.";
-    let numbered = text
-        .split('\u{000c}')
-        .enumerate()
-        .map(|(index, page)| format!("[physical page {}]\n{}", index + 1, page))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-        .chars()
-        .take(160_000)
-        .collect::<String>();
+    let system = "You are Workspace Intelligence. Identify what this source document is and which registered compiler can translate it into workspace artifacts. The only registered compiler is care_path, which applies to clinical guidelines defining longitudinal care, monitoring, timing, escalation, or patient follow-up. Do not recommend it for invoices, policies, FAQs, marketing material, or patient-specific clinical records. Cite short source evidence with its supplied chunk, version, section, and physical page provenance. A recommendation is advisory and must not run the compiler. You must call route_document exactly once.";
+    let prompt = prompt.chars().take(160_000).collect::<String>();
     let body = if anthropic_base(provider).is_some() {
         json!({ "tool_choice": { "type": "tool", "name": ROUTE_DOCUMENT_TOOL } })
     } else {
@@ -267,13 +331,13 @@ async fn ask_document(
         let chosen = Anthropic::<DynamicModel>::builder()
             .model_name(model).api_key(secret).base_url(base_url).build()
             .map_err(|error| format!("could not build the {provider} client: {error}"))?;
-        LanguageModelRequest::builder().model(chosen).system(system).prompt(numbered)
+        LanguageModelRequest::builder().model(chosen).system(system).prompt(prompt)
             .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
             .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
     } else {
         let chosen = OpenAI::<DynamicModel>::builder().model_name(model).api_key(secret).build()
             .map_err(|error| format!("could not build the openai client: {error}"))?;
-        LanguageModelRequest::builder().model(chosen).system(system).prompt(numbered)
+        LanguageModelRequest::builder().model(chosen).system(system).prompt(prompt)
             .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
             .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
     }
@@ -283,6 +347,18 @@ async fn ask_document(
         .take()
         .ok_or_else(|| "Workspace Intelligence answered without routing the document".into());
     result
+}
+
+fn numbered_document(text: &str) -> String {
+    text
+        .split('\u{000c}')
+        .enumerate()
+        .map(|(index, page)| format!("[physical page {}]\n{}", index + 1, page))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .chars()
+        .take(160_000)
+        .collect::<String>()
 }
 
 async fn store_document_inspection(
@@ -763,7 +839,14 @@ mod tests {
                     compiler_id: "care_path".into(),
                     confidence: 0.92,
                     reason: "Defines longitudinal care steps.".into(),
-                    evidence: vec![DocumentEvidence { page: Some(12), text: "within 36 hours".into() }],
+                    evidence: vec![DocumentCitation {
+                        page: Some(12),
+                        chunk_id: None,
+                        version_id: None,
+                        page_end: None,
+                        section_path: Vec::new(),
+                        text: "within 36 hours".into(),
+                    }],
                 },
                 CompilerRecommendation {
                     compiler_id: "invented".into(),
@@ -778,6 +861,57 @@ mod tests {
         let bounded = bound_document_inspection(routed);
         assert_eq!(bounded.recommendations.len(), 1);
         assert_eq!(bounded.recommendations[0].compiler_id, "care_path");
+    }
+
+    #[test]
+    fn indexed_routing_rejects_unknown_citations_and_rebinds_provenance() {
+        let evidence = super::super::documents::DocumentEvidence {
+            outline: vec!["Diabetes > Escalation".into()],
+            compiler_matches: vec!["care_path".into()],
+            representative_chunks: vec![super::super::documents::EvidenceChunk {
+                chunk_id: "chunk-1".into(),
+                version_id: "version-2".into(),
+                page_start: Some(7),
+                page_end: Some(8),
+                section_path: vec!["Diabetes".into(), "Escalation".into()],
+                text: "Escalate to specialist review after fourteen days.".into(),
+            }],
+        };
+        let inspection = DocumentInspection {
+            summary: "A guideline".into(),
+            recommendations: vec![CompilerRecommendation {
+                compiler_id: "care_path".into(),
+                confidence: 0.9,
+                reason: "Timed escalation".into(),
+                evidence: vec![
+                    DocumentCitation {
+                        page: None,
+                        chunk_id: Some("chunk-1".into()),
+                        version_id: Some("version-2".into()),
+                        page_end: None,
+                        section_path: vec![],
+                        text: "after fourteen days".into(),
+                    },
+                    DocumentCitation {
+                        page: Some(99),
+                        chunk_id: Some("invented".into()),
+                        version_id: Some("version-2".into()),
+                        page_end: None,
+                        section_path: vec![],
+                        text: "invented evidence".into(),
+                    },
+                ],
+            }],
+            gaps: vec![],
+        };
+
+        let bounded = bound_indexed_document_inspection(inspection, &evidence);
+
+        assert_eq!(bounded.recommendations[0].evidence.len(), 1);
+        let citation = &bounded.recommendations[0].evidence[0];
+        assert_eq!(citation.page, Some(7));
+        assert_eq!(citation.page_end, Some(8));
+        assert_eq!(citation.section_path, evidence.representative_chunks[0].section_path);
     }
 
     #[test]

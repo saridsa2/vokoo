@@ -1,0 +1,18 @@
+[Unit]
+Description=Sarvathra document indexing worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vokoo/rustvani
+EnvironmentFile=/opt/vokoo/rustvani/.env
+ExecStart=/opt/vokoo/rustvani/target/release/vokoo_document_worker
+Restart=always
+RestartSec=5
+Nice=10
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

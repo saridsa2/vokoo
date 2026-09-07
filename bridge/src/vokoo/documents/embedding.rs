@@ -30,7 +30,7 @@ pub struct EmbedError {
 }
 
 impl EmbedError {
-    fn retryable(message: impl Into<String>, retry_after: Option<Duration>) -> Self {
+    pub fn retryable(message: impl Into<String>, retry_after: Option<Duration>) -> Self {
         Self {
             kind: EmbedErrorKind::Retryable,
             message: message.into(),
@@ -38,7 +38,7 @@ impl EmbedError {
         }
     }
 
-    fn permanent(message: impl Into<String>) -> Self {
+    pub fn permanent(message: impl Into<String>) -> Self {
         Self {
             kind: EmbedErrorKind::Permanent,
             message: message.into(),
