@@ -330,6 +330,13 @@ export const api = {
     embeddingProfiles: <T>(context: AccessContext) =>
         request<T>("/api/v1/operator/embedding-profiles", {}, asOperator(context)),
 
+    tenantEmbeddingProfile: <T>(tenantId: string, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/tenants/${encodeURIComponent(tenantId)}/embedding-profile`,
+            {},
+            asOperator(context),
+        ),
+
     setTenantEmbeddingProfile: <T>(tenantId: string, profileId: string, context: AccessContext) =>
         request<T>(
             `/api/v1/operator/tenants/${encodeURIComponent(tenantId)}/embedding-profile`,

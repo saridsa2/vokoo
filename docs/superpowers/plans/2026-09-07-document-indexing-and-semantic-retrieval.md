@@ -608,11 +608,11 @@ git commit -m "feat: expose document indexing APIs"
 - Produces: version selection/history, upload replacement, process/retry polling, evidence rendering, and operator embedding-profile selection.
 - Consumes: Task 7 API client methods and the existing `useResource`/notification/dialog components.
 
-- [ ] **Step 1: Write failing UI-domain tests**
+- [x] **Step 1: Write failing UI-domain tests**
 
 Test `selectDocumentVersion`, `documentProcessingLabel`, `shouldPollDocumentJob`, `validateHistoricalSearch`, and `normalizeDocumentEvidence`. Include stale selected versions, terminal versus retryable jobs, missing page numbers, conflicting search filters, and unknown compiler ids.
 
-- [ ] **Step 2: Run the tests to prove helpers are missing**
+- [x] **Step 2: Run the tests to prove helpers are missing**
 
 ```bash
 node --import tsx --test src/lib/document-workspace.test.ts
@@ -620,19 +620,19 @@ node --import tsx --test src/lib/document-workspace.test.ts
 
 Expected: failure on missing helpers/types.
 
-- [ ] **Step 3: Implement types and pure helpers**
+- [x] **Step 3: Implement types and pure helpers**
 
 Add `DocumentVersion`, `DocumentJob`, `DocumentEvidence`, `DocumentSearchRequest`, and state helpers. Keep unknown compiler recommendations filtered at the client boundary.
 
-- [ ] **Step 4: Implement Documents-pane states**
+- [x] **Step 4: Implement Documents-pane states**
 
 Add a version menu, “Upload new version,” current/historical labeling, queued/extracting/chunking/embedding/classifying progress, retryable/permanent failure messages, retry action, and cited evidence with version/page/section. Poll only nonterminal jobs and stop polling after unmount or terminal state.
 
-- [ ] **Step 5: Implement operator embedding profile selection**
+- [x] **Step 5: Implement operator embedding profile selection**
 
 Load catalogue profiles through an operator endpoint backed by the migration RPC. Show active and pending profiles. Saving a different profile starts the controlled backfill and explains that active search remains on the prior profile until completion. Never render credential material.
 
-- [ ] **Step 6: Run accessibility-oriented component checks and builds**
+- [x] **Step 6: Run accessibility-oriented component checks and builds**
 
 ```bash
 npm run test:flows
@@ -642,7 +642,7 @@ npm run build
 
 Expected: tests/typecheck/build pass; dialogs and progress regions have accessible names and live status does not trap focus.
 
-- [ ] **Step 7: Commit the UI**
+- [x] **Step 7: Commit the UI**
 
 ```bash
 git add src/lib/document-workspace.ts src/lib/document-workspace.test.ts src/components/application/screens/documents-screen.tsx src/components/application/screens/tenant-detail-screen.tsx package.json

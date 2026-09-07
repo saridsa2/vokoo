@@ -221,4 +221,17 @@ begin
 end;
 $$;
 
+do $$
+declare
+  v_org uuid := '10000000-0000-0000-0000-000000000124';
+  v_profile jsonb;
+begin
+  v_profile := public.operator_tenant_embedding_profile(v_org);
+  if v_profile ->> 'active_profile_id' <> 'gemini-next-768'
+     or v_profile -> 'pending_profile_id' <> 'null'::jsonb then
+    raise exception 'operator tenant embedding profile omitted active or pending state';
+  end if;
+end;
+$$;
+
 rollback;

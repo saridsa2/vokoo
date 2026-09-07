@@ -9,6 +9,10 @@ const ACCEPTED_DOCUMENT_TYPES = new Set([
 
 export type CompilerEvidence = {
     page: number | null;
+    page_end?: number | null;
+    chunk_id?: string | null;
+    version_id?: string | null;
+    section_path?: string[];
     text: string;
 };
 
@@ -42,6 +46,52 @@ export type WorkspaceDocument = {
     intelligence: DocumentIntelligence | null;
 };
 
+export type DocumentVersion = {
+    id: string;
+    file_id: string;
+    version: number;
+    mime_type: string;
+    size_bytes: number;
+    sha256: string;
+    status: string;
+    intelligence: DocumentIntelligence | null;
+    active_chunker_version: string | null;
+    active_embedding_profile: string | null;
+    indexed_at: string | null;
+    processing_error: { code?: string; detail?: string; retryable?: boolean } | null;
+    created_at: string;
+};
+
+export type DocumentJob = {
+    id: string;
+    file_id: string;
+    file_version_id: string;
+    stage: string;
+    attempt_count: number;
+    max_attempts: number;
+    available_at: string;
+    last_error_code: string | null;
+    last_error_detail: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
+export type DocumentEvidence = CompilerEvidence & {
+    page_end: number | null;
+    chunk_id: string | null;
+    version_id: string | null;
+    section_path: string[];
+};
+
+export type HistoricalDocumentVersion = { document_id: string; version: number };
+
+export type DocumentSearchRequest = {
+    query: string;
+    limit?: number;
+    document_ids?: string[];
+    versions?: HistoricalDocumentVersion[];
+};
+
 type BrowserFile = Pick<File, "name" | "type" | "size">;
 
 export function documentUploadProblem(file: BrowserFile): string | null {
@@ -58,6 +108,49 @@ export function documentUploadProblem(file: BrowserFile): string | null {
 export function selectDocument(documents: WorkspaceDocument[], selectedId: string | null): string | null {
     if (selectedId && documents.some((document) => document.id === selectedId)) return selectedId;
     return documents[0]?.id ?? null;
+}
+
+export function selectDocumentVersion(
+    versions: DocumentVersion[],
+    selectedId: string | null,
+    currentVersion: number,
+): string | null {
+    if (selectedId && versions.some((version) => version.id === selectedId)) return selectedId;
+    return versions.find((version) => version.version === currentVersion)?.id ?? versions[0]?.id ?? null;
+}
+
+const PROCESSING_LABELS: Record<string, string> = {
+    queued: "Queued for indexing",
+    extracting: "Extracting source text",
+    chunking: "Building clinical sections",
+    embedding: "Creating search embeddings",
+    classifying: "Workspace Intelligence is reviewing evidence",
+    retryable_failed: "Waiting to retry",
+    permanent_failed: "Indexing failed",
+    failed: "Indexing failed",
+    ready: "Indexed",
+    indexed: "Indexed",
+    analyzed: "Indexed",
+};
+
+export function documentProcessingLabel(stage: string): string {
+    return PROCESSING_LABELS[stage] ?? "Preparing document";
+}
+
+export function shouldPollDocumentJob(job: Pick<DocumentJob, "stage"> | null): boolean {
+    return !!job && !["ready", "permanent_failed"].includes(job.stage);
+}
+
+export function validateHistoricalSearch(request: DocumentSearchRequest): string | null {
+    const length = request.query.trim().length;
+    if (length < 1 || length > 2_000) return "Enter between 1 and 2,000 characters.";
+    if (request.document_ids && request.versions) {
+        return "Current and historical document filters cannot be combined.";
+    }
+    if (request.versions?.some((item) => !item.document_id || item.version < 1)) {
+        return "Choose a valid document version.";
+    }
+    return null;
 }
 
 const COMPILERS = {
@@ -77,6 +170,62 @@ export function normalizeCompilerRecommendations(
             confidence: Math.max(0, Math.min(1, recommendation.confidence)),
         }];
     });
+}
+
+export function normalizeDocumentEvidence(input: unknown): DocumentIntelligence | null {
+    if (!input || typeof input !== "object") return null;
+    const raw = input as Record<string, unknown>;
+    if (typeof raw.summary !== "string") return null;
+    const recommendations = Array.isArray(raw.recommendations)
+        ? raw.recommendations.flatMap((item): RawCompilerRecommendation[] => {
+              if (!item || typeof item !== "object") return [];
+              const recommendation = item as Record<string, unknown>;
+              if (
+                  typeof recommendation.compiler_id !== "string" ||
+                  typeof recommendation.reason !== "string" ||
+                  typeof recommendation.confidence !== "number"
+              ) {
+                  return [];
+              }
+              const evidence = Array.isArray(recommendation.evidence)
+                  ? recommendation.evidence.flatMap((entry): DocumentEvidence[] => {
+                        if (!entry || typeof entry !== "object") return [];
+                        const value = entry as Record<string, unknown>;
+                        if (typeof value.text !== "string" || !value.text.trim()) return [];
+                        const pageValue = value.page_start ?? value.page;
+                        const page = typeof pageValue === "number" && pageValue > 0 ? pageValue : null;
+                        const pageEnd =
+                            typeof value.page_end === "number" && value.page_end >= (page ?? 1)
+                                ? value.page_end
+                                : page;
+                        return [{
+                            text: value.text.trim(),
+                            page,
+                            page_end: pageEnd,
+                            chunk_id: typeof value.chunk_id === "string" ? value.chunk_id : null,
+                            version_id: typeof value.version_id === "string" ? value.version_id : null,
+                            section_path: Array.isArray(value.section_path)
+                                ? value.section_path.filter((part): part is string => typeof part === "string")
+                                : [],
+                        }];
+                    })
+                  : [];
+              return [{
+                  compiler_id: recommendation.compiler_id,
+                  confidence: recommendation.confidence,
+                  reason: recommendation.reason,
+                  evidence,
+              }];
+          })
+        : [];
+    return {
+        summary: raw.summary,
+        recommendations: normalizeCompilerRecommendations(recommendations),
+        gaps: Array.isArray(raw.gaps)
+            ? raw.gaps.filter((gap): gap is string => typeof gap === "string")
+            : [],
+        analyzed_at: typeof raw.analyzed_at === "string" ? raw.analyzed_at : undefined,
+    };
 }
 
 export function formatDocumentSize(bytes: number | null): string {

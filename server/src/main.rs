@@ -2377,6 +2377,27 @@ async fn operator_set_embedding_profile(
     ))
 }
 
+async fn operator_tenant_embedding_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    validated_uuid(&id, "tenant id")?;
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "operator_tenant_embedding_profile",
+            Some(json!({ "p_org_id": id })),
+        )
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "embedding-profiles", "tenant_id": id }),
+    }))
+}
+
 /// The zone a business day is measured in.
 ///
 /// The organisation's own, when somebody has set one; otherwise the viewer's
@@ -4492,7 +4513,7 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/operator/tenants/{id}", post(operator_set_tenant))
         .route(
             "/api/v1/operator/tenants/{id}/embedding-profile",
-            post(operator_set_embedding_profile),
+            get(operator_tenant_embedding_profile).post(operator_set_embedding_profile),
         )
         .route(
             "/api/v1/operator/tenants/{id}/entitlements",

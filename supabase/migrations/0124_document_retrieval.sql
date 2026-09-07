@@ -217,6 +217,34 @@ $$;
 revoke all on function public.embedding_profile_choices() from public, anon;
 grant execute on function public.embedding_profile_choices() to authenticated;
 
+create or replace function public.operator_tenant_embedding_profile(p_org_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_result jsonb;
+begin
+  if not public.is_platform_admin() then
+    raise exception 'platform administrator access required' using errcode = '42501';
+  end if;
+  select jsonb_build_object(
+    'active_profile_id', embedding_profile_id,
+    'pending_profile_id', pending_embedding_profile_id
+  ) into v_result
+    from public.organizations where id = p_org_id;
+  if v_result is null then
+    raise exception 'organization not found' using errcode = 'P0004';
+  end if;
+  return v_result;
+end;
+$$;
+
+revoke all on function public.operator_tenant_embedding_profile(uuid) from public, anon;
+grant execute on function public.operator_tenant_embedding_profile(uuid) to authenticated;
+
 create or replace function public.begin_embedding_profile_migration(
   p_org_id uuid,
   p_profile_id text

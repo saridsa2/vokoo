@@ -837,6 +837,19 @@ type Choices = {
     }>;
 };
 
+type EmbeddingProfileChoice = {
+    id: string;
+    provider_id: string;
+    provider_model_id: string;
+    dimensions: number;
+    distance_metric: string;
+};
+
+type TenantEmbeddingProfile = {
+    active_profile_id: string;
+    pending_profile_id: string | null;
+};
+
 /**
  * How a workspace is set up — and now, how it is changed.
  *
@@ -855,6 +868,8 @@ const ConfigurationTab = ({ id }: { id: string }) => {
     const notify = useNotify();
     const [config, setConfig] = useState<Config | null>(null);
     const [choices, setChoices] = useState<Choices | null>(null);
+    const [embeddingProfiles, setEmbeddingProfiles] = useState<EmbeddingProfileChoice[]>([]);
+    const [tenantEmbedding, setTenantEmbedding] = useState<TenantEmbeddingProfile | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState<string | null>(null);
 
@@ -866,6 +881,21 @@ const ConfigurationTab = ({ id }: { id: string }) => {
     }, [context, id]);
 
     useEffect(load, [load]);
+
+    const loadEmbeddingProfile = useCallback(() => {
+        if (!context) return;
+        void Promise.all([
+            api.embeddingProfiles<EmbeddingProfileChoice[]>(context),
+            api.tenantEmbeddingProfile<TenantEmbeddingProfile>(id, context),
+        ])
+            .then(([profiles, tenant]) => {
+                setEmbeddingProfiles(profiles.data ?? []);
+                setTenantEmbedding(tenant.data ?? null);
+            })
+            .catch((problem) => notify.failure("Could not load document indexing settings", problem));
+    }, [context, id, notify]);
+
+    useEffect(loadEmbeddingProfile, [loadEmbeddingProfile]);
 
     // Fetched once and not with `load`: the lists do not change when a setting
     // is saved, and refetching 518 timezones on every keystroke-committed edit
@@ -1056,6 +1086,62 @@ const ConfigurationTab = ({ id }: { id: string }) => {
                         ))}
                     </ul>
                 )}
+            </section>
+
+            <section className="border border-secondary p-5" aria-labelledby="embedding-profile-title">
+                <h2 id="embedding-profile-title" className="text-sm font-medium text-primary">
+                    Document search embeddings
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm text-tertiary">
+                    The active profile serves search while a different profile is backfilled. The switch occurs only after every current document is ready.
+                </p>
+                <div className="mt-4 max-w-md">
+                    <Select
+                        aria-label="Document embedding profile"
+                        size="sm"
+                        placeholder="not configured"
+                        selectedKey={tenantEmbedding?.pending_profile_id ?? tenantEmbedding?.active_profile_id ?? null}
+                        isDisabled={saving === "embedding-profile" || embeddingProfiles.length === 0}
+                        items={embeddingProfiles.map((profile) => ({
+                            id: profile.id,
+                            label: profile.provider_model_id,
+                        }))}
+                        onSelectionChange={(key) => {
+                            if (
+                                !context ||
+                                !key ||
+                                key === tenantEmbedding?.active_profile_id ||
+                                key === tenantEmbedding?.pending_profile_id
+                            ) return;
+                            setSaving("embedding-profile");
+                            void api
+                                .setTenantEmbeddingProfile(id, String(key), context)
+                                .then(loadEmbeddingProfile)
+                                .catch((problem) =>
+                                    notify.failure("Could not change the embedding profile", problem),
+                                )
+                                .finally(() => setSaving(null));
+                        }}
+                    >
+                        {(profile: SelectItemType) => (
+                            <Select.Item id={profile.id}>{profile.label}</Select.Item>
+                        )}
+                    </Select>
+                </div>
+                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                        <dt className="text-tertiary">Active for search</dt>
+                        <dd className="mt-1 font-mono text-xs text-primary">
+                            {tenantEmbedding?.active_profile_id ?? "Loading…"}
+                        </dd>
+                    </div>
+                    <div>
+                        <dt className="text-tertiary">Pending backfill</dt>
+                        <dd className="mt-1 font-mono text-xs text-primary" role="status" aria-live="polite">
+                            {tenantEmbedding?.pending_profile_id ?? "None"}
+                        </dd>
+                    </div>
+                </dl>
             </section>
 
             <section className="border border-secondary p-5">
