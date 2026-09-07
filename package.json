@@ -10,6 +10,9 @@
         "test:sdk": "node --test packages/sdk/src/*.test.ts",
         "test:cli": "node --test packages/cli/src/*.test.ts",
         "test": "npm run test:flows && npm run test:sdk && npm run test:cli",
+        "tools:check": "node scripts/seed-clinical-tools.mjs --check",
+        "schemas:inline": "node scripts/inline-clinical-schemas.mjs",
+        "schemas:check": "node scripts/inline-clinical-schemas.mjs --check",
         "catalogue:sync": "node scripts/sync-node-catalogue.mjs",
         "catalogue:check": "node scripts/sync-node-catalogue.mjs --check",
         "build:deploy": "env $(grep -v '^#' .env.production | grep -v '^$' | xargs) next build"
