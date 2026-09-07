@@ -1,35 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNotify } from "@/components/application/notifications/notification-provider";
+import { Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
-import { Tabs } from "@/components/application/tabs/tabs";
-import { Tooltip } from "@/components/base/tooltip/tooltip";
 import { TextArea } from "@/components/base/textarea/textarea";
+import { Tooltip } from "@/components/base/tooltip/tooltip";
 import { ClockRewind, Copy01, SearchLg } from "@/components/icons";
-import { useResource } from "@/hooks/use-resource";
-import { useClipboard } from "@/hooks/use-clipboard";
-import { useNotify } from "@/components/application/notifications/notification-provider";
-import { useSession } from "@/hooks/use-session";
-import { api } from "@/utils/api-client";
-import { diffAgents } from "@/utils/agent-diff";
-import { modelsFor, type CapabilityScope } from "@/utils/capability-registry";
-import { reconcileModel, reconcileProvider, type Rewrite } from "@/utils/capability-reconcile";
 import { useCatalogue } from "@/hooks/use-catalogue";
+import { useClipboard } from "@/hooks/use-clipboard";
 import { useFindings, useMarkTabSeen } from "@/hooks/use-findings";
-import { FindingList, RewriteNotice, TabMarker } from "./finding-markers";
-import { statusColor, statusLabel } from "@/utils/status";
+import { useResource } from "@/hooks/use-resource";
+import { useSession } from "@/hooks/use-session";
+import { agentStackSubtitle } from "@/lib/agent-display";
+import { diffAgents } from "@/utils/agent-diff";
+import { api } from "@/utils/api-client";
+import { type Rewrite, reconcileModel, reconcileProvider } from "@/utils/capability-reconcile";
+import { type CapabilityScope, modelsFor } from "@/utils/capability-registry";
 import { timeAgo } from "@/utils/format";
+import { statusColor, statusLabel } from "@/utils/status";
 import { AgentPublishDialog } from "./agent-publish-dialog";
-import { AgentVersionsPanel } from "./agent-versions-panel";
-import {
-    ConfigCard,
-    configValue,
-    type JsonConfig,
-} from "./agent-tabs";
 import { AgentSkillsPanel } from "./agent-skills-panel";
+import { ConfigCard, type JsonConfig, configValue } from "./agent-tabs";
+import { AgentVersionsPanel } from "./agent-versions-panel";
+import { FindingList, RewriteNotice, TabMarker } from "./finding-markers";
 
 /**
  * Agent configuration.
@@ -73,8 +70,6 @@ type Agent = {
  * not of who the agent is.
  */
 const TABS = ["Persona", "Skills"] as const;
-
-
 
 const FIRST_MESSAGE_MODES = [
     { id: "agent-first", label: "Agent speaks first" },
@@ -122,9 +117,7 @@ const EngineSummary = ({ engine }: { engine: EngineOption }) => (
     <div className="flex max-w-xl flex-col gap-1 rounded-lg bg-secondary p-4 ring-1 ring-secondary">
         <span className="text-sm font-medium text-secondary">Runs through</span>
         <span className="text-md text-primary">{engine.name}</span>
-        {engine.description ? (
-            <p className="text-sm text-tertiary">{engine.description}</p>
-        ) : null}
+        {engine.description ? <p className="text-sm text-tertiary">{engine.description}</p> : null}
     </div>
 );
 
@@ -346,10 +339,7 @@ export function AgentsScreen() {
      * this is not a new array on every render.
      */
     const { markerFor } = findings;
-    const tabItems = useMemo(
-        () => TABS.map((name) => ({ id: name, label: name, badge: <TabMarker severity={markerFor(name)} /> })),
-        [markerFor],
-    );
+    const tabItems = useMemo(() => TABS.map((name) => ({ id: name, label: name, badge: <TabMarker severity={markerFor(name)} /> })), [markerFor]);
 
     const providerItems = catalogue.providers.map((provider) => ({
         id: provider.id,
@@ -459,9 +449,7 @@ export function AgentsScreen() {
 
     // Filter by name only. The subtitle is derived, so matching against it would
     // surface agents whose name has nothing to do with what was typed.
-    const visible = query.trim()
-        ? records.filter((record) => record.name.toLowerCase().includes(query.trim().toLowerCase()))
-        : records;
+    const visible = query.trim() ? records.filter((record) => record.name.toLowerCase().includes(query.trim().toLowerCase())) : records;
 
     if (error) {
         return (
@@ -514,8 +502,7 @@ export function AgentsScreen() {
                         <div className="px-3 py-8 text-center">
                             <p className="text-sm font-medium text-primary">No agents yet</p>
                             <p className="mt-1 text-sm text-tertiary">
-                                An agent defines how VoKoo answers a call — what it says, which model thinks, which voice
-                                speaks.
+                                An agent defines how VoKoo answers a call — what it says, which model thinks, which voice speaks.
                             </p>
                         </div>
                     )}
@@ -536,11 +523,7 @@ export function AgentsScreen() {
                             <span className="block truncate text-xs text-tertiary">
                                 {/* Mirrors the reference's "deepgram · openai · vapi" subtitle, but
                                     describing the stack this agent actually runs on. */}
-                                {[
-                                    (agent.transcriber_config?.provider as string) ?? "no transcriber",
-                                    agent.model,
-                                    "kookoo",
-                                ].join(" · ")}
+                                {agentStackSubtitle(agent.transcriber_config?.provider as string | undefined, agent.model)}
                             </span>
                         </button>
                     ))}
@@ -614,11 +597,7 @@ export function AgentsScreen() {
                                         }
                                         description={blockingCount > 0 ? `See ${blockingTabs}.` : undefined}
                                     >
-                                        <Button
-                                            size="sm"
-                                            isDisabled={!isDirty || blockingCount > 0}
-                                            onClick={() => setIsReviewOpen(true)}
-                                        >
+                                        <Button size="sm" isDisabled={!isDirty || blockingCount > 0} onClick={() => setIsReviewOpen(true)}>
                                             Publish
                                         </Button>
                                     </Tooltip>
@@ -629,7 +608,7 @@ export function AgentsScreen() {
                                 and arrow-key navigation, which a row of plain
                                 buttons does not. */}
                             <Tabs selectedKey={tab} onSelectionChange={(key) => setTab(key as (typeof TABS)[number])}>
-                                <Tabs.List type="underline" className="-mb-px mt-4" items={tabItems}>
+                                <Tabs.List type="underline" className="mt-4 -mb-px" items={tabItems}>
                                     {(item) => <Tabs.Item {...item} />}
                                 </Tabs.List>
                             </Tabs>
@@ -658,9 +637,7 @@ export function AgentsScreen() {
                                             label="First Message Mode"
                                             items={FIRST_MESSAGE_MODES}
                                             selectedKey={configValue(draft.config, "first_message_mode", "agent-first")}
-                                            onSelectionChange={(key) =>
-                                                patch({ config: { ...draft.config, first_message_mode: String(key) } })
-                                            }
+                                            onSelectionChange={(key) => patch({ config: { ...draft.config, first_message_mode: String(key) } })}
                                             hint="KooKoo does not stream caller audio until our end sends audio first. User-first still sends priming silence — it never sends nothing."
                                         >
                                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
@@ -681,9 +658,7 @@ export function AgentsScreen() {
                                             hint="Sent to the model on every turn."
                                         />
 
-                                        {draft.updated_at && (
-                                            <p className="text-sm text-tertiary">Last updated {timeAgo(draft.updated_at)}.</p>
-                                        )}
+                                        {draft.updated_at && <p className="text-sm text-tertiary">Last updated {timeAgo(draft.updated_at)}.</p>}
                                     </ConfigCard>
 
                                     <ConfigCard title="How it speaks" description="The engine this agent runs on.">
@@ -704,9 +679,7 @@ export function AgentsScreen() {
                                                     supportingText: option.description ?? undefined,
                                                 })),
                                             ]}
-                                            hint={
-                                                engineHint ?? "How this agent hears and speaks."
-                                            }
+                                            hint={engineHint ?? "How this agent hears and speaks."}
                                         >
                                             {(item) => (
                                                 <Select.Item id={item.id} supportingText={item.supportingText}>
@@ -719,45 +692,39 @@ export function AgentsScreen() {
                                             <EngineSummary engine={attachedEngine} />
                                         ) : (
                                             <div className="grid gap-4 sm:grid-cols-2">
-                                            <Select
-                                                label="Provider"
-                                                items={providerItems}
-                                                selectedKey={draft.provider}
-                                                onSelectionChange={(key) => changeProvider(String(key))}
-                                                hint={
-                                                    draft.engine_id
-                                                        ? "Set by the engine."
-                                                        : "Where caller audio is processed."
-                                                }
-                                            >
-                                                {(item) => (
-                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
-                                                        {item.label}
-                                                    </Select.Item>
-                                                )}
-                                            </Select>
+                                                <Select
+                                                    label="Provider"
+                                                    items={providerItems}
+                                                    selectedKey={draft.provider}
+                                                    onSelectionChange={(key) => changeProvider(String(key))}
+                                                    hint={draft.engine_id ? "Set by the engine." : "Where caller audio is processed."}
+                                                >
+                                                    {(item) => (
+                                                        <Select.Item id={item.id} supportingText={item.supportingText}>
+                                                            {item.label}
+                                                        </Select.Item>
+                                                    )}
+                                                </Select>
 
-                                            {/* Filtered by provider. An unfiltered list lets you
+                                                {/* Filtered by provider. An unfiltered list lets you
                                                 pick a model that cannot run where you chose to
                                                 run it, and the failure surfaces on a call. */}
-                                            <Select
-                                                label="Model"
-                                                items={modelItems}
-                                                placeholder={modelItems.length ? "Select a model" : "No models for this provider"}
-                                                isDisabled={!modelItems.length}
-                                                selectedKey={draft.model}
-                                                onSelectionChange={(key) => changeModel(String(key))}
-                                            >
-                                                {(item) => (
-                                                    <Select.Item id={item.id} supportingText={item.supportingText}>
-                                                        {item.label}
-                                                    </Select.Item>
-                                                )}
-                                            </Select>
-                                        </div>
-
+                                                <Select
+                                                    label="Model"
+                                                    items={modelItems}
+                                                    placeholder={modelItems.length ? "Select a model" : "No models for this provider"}
+                                                    isDisabled={!modelItems.length}
+                                                    selectedKey={draft.model}
+                                                    onSelectionChange={(key) => changeModel(String(key))}
+                                                >
+                                                    {(item) => (
+                                                        <Select.Item id={item.id} supportingText={item.supportingText}>
+                                                            {item.label}
+                                                        </Select.Item>
+                                                    )}
+                                                </Select>
+                                            </div>
                                         )}
-
                                     </ConfigCard>
                                 </div>
                             ) : tab === "Skills" ? (

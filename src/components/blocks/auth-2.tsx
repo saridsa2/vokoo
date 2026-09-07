@@ -50,6 +50,7 @@ export function Auth2({ children }: { children: ReactNode }) {
         // somebody signs in.
         <StandardDialog
             isOpen
+            title="Sign in"
             // Never closes. The only way past this dialog is through it.
             onOpenChange={() => {}}
             preventOutsideClose

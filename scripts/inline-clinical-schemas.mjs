@@ -76,18 +76,23 @@ function inline(node, scope, depth = 0) {
 
     const ref = node.$ref;
     if (typeof ref === "string") {
+        const siblings = inline(Object.fromEntries(Object.entries(node).filter(([key]) => key !== "$ref")), scope, depth + 1);
+        let resolved;
         if (ref.startsWith("#/$defs/")) {
             const name = ref.slice("#/$defs/".length);
             if (!(name in scope)) throw new Error(`unresolved local $ref: ${ref}`);
-            return inline(structuredClone(scope[name]), scope, depth + 1);
-        }
-        if (ref.startsWith(COMMON_ID)) {
+            resolved = inline(structuredClone(scope[name]), scope, depth + 1);
+        } else if (ref.startsWith(COMMON_ID)) {
             const name = ref.split("$defs/").pop();
             if (!(name in COMMON_DEFS)) throw new Error(`unresolved common $ref: ${ref}`);
             // Scope switches: this definition's own refs are _common's.
-            return inline(structuredClone(COMMON_DEFS[name]), COMMON_DEFS, depth + 1);
+            resolved = inline(structuredClone(COMMON_DEFS[name]), COMMON_DEFS, depth + 1);
+        } else {
+            throw new Error(`$ref points outside the vendored schemas: ${ref}`);
         }
-        throw new Error(`$ref points outside the vendored schemas: ${ref}`);
+        // JSON Schema permits sibling annotations beside `$ref`. They describe
+        // the field at this use site and must survive reference resolution.
+        return { ...resolved, ...siblings };
     }
 
     // `$defs` is dropped: every reference to it has just been substituted, so

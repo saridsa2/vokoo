@@ -42,6 +42,7 @@
  * `dialog-pop-in` behind `[data-tatva-motion=on]`. Nothing depends on it.
  */
 import type { ReactNode } from "react";
+import { Heading } from "react-aria-components";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
 import { X } from "@/components/icons";
@@ -139,7 +140,11 @@ export function StandardDialog({
 
             {hasHeader && (
                 <div className="flex shrink-0 flex-col gap-1 p-6">
-                    {title && <h2 className="text-lg font-semibold text-primary">{title}</h2>}
+                    {title && (
+                        <Heading slot="title" className="text-lg font-semibold text-primary">
+                            {title}
+                        </Heading>
+                    )}
                     {description && <p className="text-sm text-tertiary">{description}</p>}
                 </div>
             )}
@@ -170,7 +175,7 @@ export function StandardDialog({
     return (
         <ModalOverlay isOpen={isOpen} onOpenChange={onOpenChange} isDismissable={!preventOutsideClose && !isSubmitting}>
             <Modal className={SIZES[size]}>
-                <Dialog>
+                <Dialog aria-label={title ? undefined : "Dialog"}>
                     {/* The decorative lift, and nothing depends on it: the card
                         is at its resting state without it. Switch it on by
                         putting `data-vokoo-motion="on"` on an ancestor. */}

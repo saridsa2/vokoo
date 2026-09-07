@@ -1,47 +1,50 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:vokoo:clinical:schema:imaging-report:v0.1.0",
-  "title": "VoKoo Imaging Report",
-  "description": "影像报告结构化 Schema，参考 DICOM 影像模式代码和 SNOMED CT 部位编码。",
-  "type": "object",
-  "required": ["id", "patientId", "modality", "bodySite", "reportedAt"],
-  "properties": {
-    "id": { "type": "string" },
-    "patientId": { "type": "string" },
-    "studyInstanceUid": { "type": "string", "description": "DICOM Study Instance UID。" },
-    "modality": { "$ref": "urn:vokoo:clinical:schema:common:v0.1.0#/$defs/Modality" },
-    "bodySite": { "$ref": "urn:vokoo:clinical:schema:common:v0.1.0#/$defs/Coding", "description": "检查部位，建议 SNOMED CT 解剖部位代码。" },
-    "reportedAt": { "type": "string", "format": "date-time" },
-    "performer": {
-      "type": "object",
-      "properties": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:vokoo:clinical:schema:imaging-report:v0.1.0",
+    "title": "VoKoo Imaging Report",
+    "description": "Structured imaging report using DICOM modality codes and SNOMED CT body-site codes.",
+    "type": "object",
+    "required": ["id", "patientId", "modality", "bodySite", "reportedAt"],
+    "properties": {
         "id": { "type": "string" },
-        "name": { "type": "string" },
-        "role": { "type": "string" }
-      }
-    },
-    "findings": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "影像所见。"
-    },
-    "impression": { "type": "string", "description": "诊断结论/印象。" },
-    "radiationDose": {
-      "type": "object",
-      "properties": {
-        "ctdiVol_mGy": { "type": "number", "description": "CT 剂量体积指数。" },
-        "dlp_mGy_cm": { "type": "number", "description": "剂量长度乘积。" }
-      }
-    },
-    "attachments": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "url": { "type": "string", "format": "uri" },
-          "type": { "type": "string", "description": "缩略图、报告 PDF 等" }
+        "patientId": { "type": "string" },
+        "studyInstanceUid": { "type": "string", "description": "DICOM Study Instance UID." },
+        "modality": { "$ref": "urn:vokoo:clinical:schema:common:v0.1.0#/$defs/Modality" },
+        "bodySite": {
+            "$ref": "urn:vokoo:clinical:schema:common:v0.1.0#/$defs/Coding",
+            "description": "Examined body site, preferably coded with a SNOMED CT anatomical structure code."
+        },
+        "reportedAt": { "type": "string", "format": "date-time" },
+        "performer": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "role": { "type": "string" }
+            }
+        },
+        "findings": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Imaging findings."
+        },
+        "impression": { "type": "string", "description": "Diagnostic conclusion or impression." },
+        "radiationDose": {
+            "type": "object",
+            "properties": {
+                "ctdiVol_mGy": { "type": "number", "description": "Computed tomography dose index by volume, in mGy." },
+                "dlp_mGy_cm": { "type": "number", "description": "Dose-length product, in mGy cm." }
+            }
+        },
+        "attachments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "format": "uri" },
+                    "type": { "type": "string", "description": "Attachment type, such as a thumbnail or report PDF." }
+                }
+            }
         }
-      }
     }
-  }
 }

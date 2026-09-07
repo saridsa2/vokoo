@@ -103,8 +103,8 @@ ready in 172ms, no build errors.
 - `npm install` fails with `E401` unless `FA_PACKAGE_TOKEN` is set. The token is
   at `~/.fa_package_token` (mode 600) on this Mac:
   `FA_PACKAGE_TOKEN=$(cat ~/.fa_package_token) npm install`
-- `.env.local` points the console at the live control plane on the VPS:
-  `NEXT_PUBLIC_CONTROLPLANE_API_URL=http://212.38.94.176:8081`
+- `.env.local` points the console at the VPS control plane through TLS:
+  `NEXT_PUBLIC_CONTROLPLANE_API_URL=https://api.sarvathra.ai`
   `NEXT_PUBLIC_DEFAULT_ORG_ID=d6e07acf-05ad-4936-a7cb-f4a9ec2f5e4c` (Vayuveda)
 - CORS works without change: `CORS_ORIGIN` is unset on the VPS and defaults to
   `http://localhost:3000`. Preflight verified.

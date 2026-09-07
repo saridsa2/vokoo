@@ -13,16 +13,15 @@
  * record is a place you go, and the pane that tells you whether it works
  * belongs beside it rather than a click away.
  */
-
 import { useCallback, useEffect, useMemo, useState } from "react";
-
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { ArrowLeft, IconLock, IconUnlock, Trash01 } from "@/components/icons";
-import { api } from "@/utils/api-client";
-import { useNotify } from "@/components/application/notifications/notification-provider";
 import { useSession } from "@/hooks/use-session";
+import { type JsonSchema, type SchemaTreeRow, schemaEditorPresentation } from "@/lib/schema-editor";
+import { api } from "@/utils/api-client";
 
 /** The types the SDK's `compileSchema` accepts, and nothing it does not. */
 const TYPES = ["string", "number", "integer", "boolean"] as const;
@@ -33,15 +32,19 @@ type Schema = {
     id: string;
     name: string;
     description: string;
-    schema: { type?: string; properties?: Record<string, Record<string, unknown>>; required?: string[] };
+    schema: JsonSchema;
     enabled: boolean;
     locked: boolean;
-    origin: "console" | "push";
+    origin: "console" | "push" | "vendor";
 };
 
 function toFields(schema: Schema["schema"]): Field[] {
-    const required = new Set(schema?.required ?? []);
-    return Object.entries(schema?.properties ?? {}).map(([name, property]) => ({
+    const required = new Set(Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === "string") : []);
+    const properties =
+        schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+            ? (schema.properties as Record<string, Record<string, unknown>>)
+            : {};
+    return Object.entries(properties).map(([name, property]) => ({
         name,
         type: typeof property.type === "string" ? property.type : "string",
         description: typeof property.description === "string" ? property.description : "",
@@ -62,16 +65,12 @@ function toSchema(fields: Field[]): Schema["schema"] {
     for (const field of fields) {
         const name = field.name.trim();
         if (!name) continue;
-        properties[name] = field.description.trim()
-            ? { type: field.type, description: field.description.trim() }
-            : { type: field.type };
+        properties[name] = field.description.trim() ? { type: field.type, description: field.description.trim() } : { type: field.type };
         if (field.required) required.push(name);
     }
     // `required: []` is rejected by some validators and means what saying
     // nothing means, so it is left out rather than emitted empty.
-    return required.length > 0
-        ? { type: "object", properties, required }
-        : { type: "object", properties };
+    return required.length > 0 ? { type: "object", properties, required } : { type: "object", properties };
 }
 
 export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
@@ -115,12 +114,13 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
         };
     }, [schemaId, context, isReady, notify]);
 
-    // Recomputed as you type. This is the whole point of the right pane.
-    const compiled = useMemo(() => toSchema(fields), [fields]);
+    const presentation = useMemo(() => schemaEditorPresentation(schema?.schema ?? {}), [schema]);
+    // Nested contracts cannot safely round-trip through the flat field editor.
+    // Their stored schema is the model contract and is therefore the preview.
+    const compiled = useMemo(() => (presentation.editableAsFields ? toSchema(fields) : presentation.preview), [fields, presentation]);
 
     const set = useCallback(
-        (index: number, patch: Partial<Field>) =>
-            setFields((rows) => rows.map((row, at) => (at === index ? { ...row, ...patch } : row))),
+        (index: number, patch: Partial<Field>) => setFields((rows) => rows.map((row, at) => (at === index ? { ...row, ...patch } : row))),
         [],
     );
 
@@ -151,12 +151,7 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
         setSaving(true);
         setSaved(false);
         try {
-            await api.update(
-                "structured-outputs",
-                schema.id,
-                { name: name.trim(), description: description.trim(), schema: compiled },
-                context,
-            );
+            await api.update("structured-outputs", schema.id, { name: name.trim(), description: description.trim(), schema: compiled }, context);
             setSaved(true);
         } catch (problem) {
             notify.failure("Could not save the schema", problem);
@@ -170,9 +165,7 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
             <div className="grid h-full place-items-center p-8">
                 <div className="max-w-md text-center">
                     <p className="text-sm font-medium text-primary">Could not open this schema</p>
-                    <p className="mt-1 text-sm text-tertiary">
-                        It may have been deleted, or the request did not reach the server.
-                    </p>
+                    <p className="mt-1 text-sm text-tertiary">It may have been deleted, or the request did not reach the server.</p>
                 </div>
             </div>
         );
@@ -224,7 +217,7 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                                 {schema.locked ? "Unlock" : "Lock"}
                             </Button>
                         ) : null}
-                        {schema.locked ? null : (
+                        {schema.locked || !presentation.editableAsFields ? null : (
                             <Button size="sm" onClick={save} isLoading={saving}>
                                 {saved ? "Saved" : "Save"}
                             </Button>
@@ -240,92 +233,95 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                     <p className="max-w-2xl text-sm text-tertiary">
                         {schema.origin === "push" ? (
                             <>
-                                This schema was pushed from a repository, so it is edited where it is written. Push it
-                                again with <code className="text-secondary">locked: false</code> to release it, or
-                                delete the file to take it over here.
+                                This schema was pushed from a repository, so it is edited where it is written. Push it again with{" "}
+                                <code className="text-secondary">locked: false</code> to release it, or delete the file to take it over here.
                             </>
                         ) : (
                             "Locked so it is not changed by accident. Unlock it to edit."
                         )}
                     </p>
                 ) : null}
+                {!presentation.editableAsFields ? (
+                    <p className="max-w-2xl text-sm text-tertiary">
+                        This nested contract is shown without flattening. Edit it at its source; the field editor only writes flat object schemas.
+                    </p>
+                ) : null}
             </header>
 
             <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 lg:px-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:overflow-hidden">
                 <section className="flex flex-col gap-4 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
-                    <Input label="Name" value={name} onChange={(v) => setName(String(v))} isDisabled={schema.locked} />
+                    <Input label="Name" value={name} onChange={(v) => setName(String(v))} isDisabled={schema.locked || !presentation.editableAsFields} />
                     <Input
                         label="What it is for"
                         hint="Read by a person choosing between schemas, and by the model filling this one in."
                         value={description}
                         onChange={(v) => setDescription(String(v))}
-                        isDisabled={schema.locked}
+                        isDisabled={schema.locked || !presentation.editableAsFields}
                     />
 
                     <fieldset className="flex flex-col gap-2">
                         <legend className="text-sm font-medium text-secondary">Fields</legend>
-                        {fields.map((field, index) => (
-                            <div
-                                key={index}
-                                className="grid grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1.3fr)_auto_2rem] items-center gap-2"
-                            >
-                                <input
-                                    className="h-9 rounded-lg bg-primary px-3 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
-                                    placeholder="patient_name"
-                                    aria-label="Field name"
-                                    value={field.name}
-                                    disabled={schema.locked}
-                                    onChange={(event) => set(index, { name: event.target.value })}
-                                />
-                                <select
-                                    className="h-9 rounded-lg bg-primary px-2 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
-                                    aria-label="Type"
-                                    value={field.type}
-                                    disabled={schema.locked}
-                                    onChange={(event) => set(index, { type: event.target.value })}
-                                >
-                                    {TYPES.map((type) => (
-                                        <option key={type} value={type}>
-                                            {type}
-                                        </option>
-                                    ))}
-                                </select>
-                                <input
-                                    className="h-9 rounded-lg bg-primary px-3 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
-                                    placeholder="The caller's name, as they said it"
-                                    aria-label="Description"
-                                    value={field.description}
-                                    disabled={schema.locked}
-                                    onChange={(event) => set(index, { description: event.target.value })}
-                                />
-                                <label className="flex items-center gap-1.5 text-xs text-tertiary">
+                        {presentation.editableAsFields ? (
+                            fields.map((field, index) => (
+                                <div key={index} className="grid grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,1.3fr)_auto_2rem] items-center gap-2">
                                     <input
-                                        type="checkbox"
-                                        checked={field.required}
+                                        className="h-9 rounded-lg bg-primary px-3 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
+                                        placeholder="patient_name"
+                                        aria-label="Field name"
+                                        value={field.name}
                                         disabled={schema.locked}
-                                        onChange={(event) => set(index, { required: event.target.checked })}
+                                        onChange={(event) => set(index, { name: event.target.value })}
                                     />
-                                    required
-                                </label>
-                                <button
-                                    type="button"
-                                    aria-label="Remove field"
-                                    disabled={schema.locked}
-                                    className="grid size-8 place-items-center rounded-lg text-fg-quaternary hover:bg-error-primary hover:text-error-primary disabled:opacity-50"
-                                    onClick={() => setFields((rows) => rows.filter((_, at) => at !== index))}
-                                >
-                                    <Trash01 className="size-4" aria-hidden="true" />
-                                </button>
-                            </div>
-                        ))}
-                        {schema.locked ? null : (
+                                    <select
+                                        className="h-9 rounded-lg bg-primary px-2 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
+                                        aria-label="Type"
+                                        value={field.type}
+                                        disabled={schema.locked}
+                                        onChange={(event) => set(index, { type: event.target.value })}
+                                    >
+                                        {TYPES.map((type) => (
+                                            <option key={type} value={type}>
+                                                {type}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        className="h-9 rounded-lg bg-primary px-3 text-sm text-primary ring-1 ring-secondary outline-none focus:ring-brand disabled:opacity-50"
+                                        placeholder="The caller's name, as they said it"
+                                        aria-label="Description"
+                                        value={field.description}
+                                        disabled={schema.locked}
+                                        onChange={(event) => set(index, { description: event.target.value })}
+                                    />
+                                    <label className="flex items-center gap-1.5 text-xs text-tertiary">
+                                        <input
+                                            type="checkbox"
+                                            checked={field.required}
+                                            disabled={schema.locked}
+                                            onChange={(event) => set(index, { required: event.target.checked })}
+                                        />
+                                        required
+                                    </label>
+                                    <button
+                                        type="button"
+                                        aria-label="Remove field"
+                                        disabled={schema.locked}
+                                        className="grid size-8 place-items-center rounded-lg text-fg-quaternary hover:bg-error-primary hover:text-error-primary disabled:opacity-50"
+                                        onClick={() => setFields((rows) => rows.filter((_, at) => at !== index))}
+                                    >
+                                        <Trash01 className="size-4" aria-hidden="true" />
+                                    </button>
+                                </div>
+                            ))
+                        ) : (
+                            <SchemaTree rows={presentation.rows} />
+                        )}
+                        {schema.locked || !presentation.editableAsFields ? null : (
                             <Button
                                 size="sm"
                                 color="secondary"
                                 className="self-start"
-                                onClick={() =>
-                                    setFields((rows) => [...rows, { name: "", type: "string", description: "", required: false }])
-                                }
+                                onClick={() => setFields((rows) => [...rows, { name: "", type: "string", description: "", required: false }])}
                             >
                                 Add a field
                             </Button>
@@ -336,8 +332,8 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                         <div className="flex flex-col gap-2 rounded-lg bg-secondary p-4">
                             <p className="text-sm font-medium text-primary">Named by</p>
                             <p className="text-sm text-tertiary">
-                                These tools carry a snapshot of this schema taken when they were pushed. Changing it
-                                here does not change theirs — push them again to bring them into step.
+                                These tools carry a snapshot of this schema taken when they were pushed. Changing it here does not change theirs — push them
+                                again to bring them into step.
                             </p>
                             <ul className="flex flex-wrap gap-2">
                                 {usedBy.map((tool) => (
@@ -355,7 +351,9 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                 <aside className="flex flex-col gap-2 xl:min-h-0">
                     <h2 className="text-sm font-semibold text-secondary">What the model is shown</h2>
                     <p className="text-sm text-tertiary">
-                        Compiled from the fields, and identical to what a push produces.
+                        {presentation.editableAsFields
+                            ? "Compiled from the fields, and identical to what a push produces."
+                            : "The complete stored contract, identical to what the model receives."}
                     </p>
                     <pre className="min-h-0 flex-1 overflow-auto rounded-lg bg-secondary p-4 font-mono text-xs text-primary">
                         {JSON.stringify(compiled, null, 2)}
@@ -363,5 +361,25 @@ export function SchemaDetailScreen({ schemaId }: { schemaId: string }) {
                 </aside>
             </div>
         </div>
+    );
+}
+
+function SchemaTree({ rows, depth = 0 }: { rows: SchemaTreeRow[]; depth?: number }) {
+    return (
+        <ul className={depth === 0 ? "rounded-lg ring-1 ring-secondary" : "mt-2 border-l border-secondary pl-4"}>
+            {rows.map((row) => (
+                <li key={`${depth}:${row.name}`} className="border-b border-secondary p-3 last:border-b-0">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="font-mono text-sm font-medium text-primary">{row.name}</span>
+                        <Badge size="sm" type="pill-color" color="gray">
+                            {row.type}
+                        </Badge>
+                        {row.required ? <span className="text-xs text-tertiary">required</span> : null}
+                    </div>
+                    {row.description ? <p className="mt-1 text-sm text-tertiary">{row.description}</p> : null}
+                    {row.children.length > 0 ? <SchemaTree rows={row.children} depth={depth + 1} /> : null}
+                </li>
+            ))}
+        </ul>
     );
 }

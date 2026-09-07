@@ -6,7 +6,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "urn:vokoo:clinical:schema:health:v0.1.0",
       "title": "VoKoo Health Core",
-      "description": "个人健康数据核心 Schema，参考 HL7 FHIR Patient 资源的最小可用字段。",
+      "description": "Core personal health record using a minimal practical subset of the HL7 FHIR Patient resource.",
       "type": "object",
       "required": [
         "id",
@@ -16,16 +16,16 @@
       "properties": {
         "id": {
           "type": "string",
-          "description": "全局唯一 ID（UUID/ULID）。"
+          "description": "Globally unique UUID or ULID."
         },
         "resourceType": {
           "type": "string",
           "const": "Person",
-          "description": "资源类型，固定为 Person。"
+          "description": "Resource type, always Person."
         },
         "identifier": {
           "type": "array",
-          "description": "外部标识（例如 MRN、国家 ID）。",
+          "description": "External identifiers such as a medical record number or national identifier.",
           "items": {
             "type": "object",
             "required": [
@@ -135,12 +135,12 @@
               }
             }
           },
-          "description": "姓名，至少包含一个条目。"
+          "description": "Names for the person, with at least one entry."
         },
         "birthDate": {
           "type": "string",
           "format": "date",
-          "description": "出生日期（ISO 8601）。"
+          "description": "Date of birth in ISO 8601 format."
         },
         "gender": {
           "type": "string",
@@ -150,7 +150,7 @@
             "other",
             "unknown"
           ],
-          "description": "性别，沿用 FHIR 枚举。"
+          "description": "Administrative gender using the FHIR value set."
         },
         "telecom": {
           "type": "array",
@@ -181,7 +181,7 @@
               }
             }
           },
-          "description": "联系方式（电话/邮箱）。"
+          "description": "Contact details such as telephone numbers and email addresses."
         },
         "address": {
           "type": "array",
@@ -208,7 +208,7 @@
               }
             }
           },
-          "description": "住址信息。"
+          "description": "Postal addresses for the person."
         },
         "maritalStatus": {
           "type": "object",
@@ -242,14 +242,15 @@
             "text": {
               "type": "string"
             }
-          }
+          },
+          "description": "Marital status, optionally coded with the HL7 v3 MaritalStatus value set."
         },
         "language": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "语言偏好，IETF BCP-47 语言标签。"
+          "description": "Preferred languages expressed as IETF BCP 47 language tags."
         },
         "clinicalSummary": {
           "type": "object",
@@ -290,7 +291,7 @@
                   }
                 }
               },
-              "description": "已知疾病/诊断，建议使用 SNOMED CT 或 ICD-10。"
+              "description": "Known conditions and diagnoses, preferably coded with SNOMED CT or ICD-10."
             },
             "allergies": {
               "type": "array",
@@ -328,15 +329,15 @@
                   }
                 }
               },
-              "description": "过敏史。"
+              "description": "Known allergies."
             },
             "bloodType": {
               "type": "string",
-              "description": "血型，如 A+, O-。"
+              "description": "Blood group, such as A+ or O-."
             },
             "primaryCareProvider": {
               "type": "string",
-              "description": "首诊/负责医生或机构 ID。"
+              "description": "Identifier of the person's primary clinician or care organization."
             }
           }
         }
@@ -350,7 +351,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "urn:vokoo:clinical:schema:lab-report:v0.1.0",
       "title": "VoKoo Lab Report",
-      "description": "生化检验报告结构化 Schema，参考 LOINC 与 UCUM 作为编码与单位体系。",
+      "description": "Structured laboratory report using LOINC for test codes and UCUM for units.",
       "type": "object",
       "required": [
         "id",
@@ -364,7 +365,7 @@
         },
         "patientId": {
           "type": "string",
-          "description": "关联健康档案 Person.id"
+          "description": "Person.id of the associated health record."
         },
         "issuedAt": {
           "type": "string",
@@ -437,7 +438,7 @@
                     "PLAS",
                     "UR"
                   ],
-                  "description": "常见标本：全血、血清、血浆、尿液。"
+                  "description": "Common specimen types: whole blood, serum, plasma, and urine."
                 },
                 "display": {
                   "type": "string"
@@ -492,10 +493,11 @@
                   "text": {
                     "type": "string"
                   }
-                }
+                },
+                "description": "LOINC code identifying the laboratory test."
               },
               "value": {
-                "description": "检验结果值：支持数值(Quantity)、定性(字符串)、或编码值(CodeableConcept)。",
+                "description": "Laboratory result as a numeric quantity, qualitative string, or coded concept.",
                 "oneOf": [
                   {
                     "type": "object",
@@ -555,15 +557,15 @@
                               "mmol/mol",
                               "{titer}"
                             ],
-                            "description": "常用 UCUM 单位子集（严格模式），覆盖血常规/生化/免疫/肿瘤标志物等场景。"
+                            "description": "Strict subset of common UCUM units covering blood counts, biochemistry, immunology, and tumour-marker tests."
                           },
                           {
                             "type": "string",
                             "pattern": "^[A-Za-z0-9%\\[\\]{}().*/^+-]+$",
-                            "description": "UCUM 样式校验（允许常见 UCUM 字符集，避免空格）。"
+                            "description": "Validates common UCUM-style unit characters and disallows spaces."
                           }
                         ],
-                        "description": "UCUM 单位（默认宽松模式）。如需严格控制，使用 UCUMUnitStrict。"
+                        "description": "UCUM unit using the permissive default pattern. Use UCUMUnitStrict when a restricted unit set is required."
                       }
                     }
                   },
@@ -668,15 +670,15 @@
                               "mmol/mol",
                               "{titer}"
                             ],
-                            "description": "常用 UCUM 单位子集（严格模式），覆盖血常规/生化/免疫/肿瘤标志物等场景。"
+                            "description": "Strict subset of common UCUM units covering blood counts, biochemistry, immunology, and tumour-marker tests."
                           },
                           {
                             "type": "string",
                             "pattern": "^[A-Za-z0-9%\\[\\]{}().*/^+-]+$",
-                            "description": "UCUM 样式校验（允许常见 UCUM 字符集，避免空格）。"
+                            "description": "Validates common UCUM-style unit characters and disallows spaces."
                           }
                         ],
-                        "description": "UCUM 单位（默认宽松模式）。如需严格控制，使用 UCUMUnitStrict。"
+                        "description": "UCUM unit using the permissive default pattern. Use UCUMUnitStrict when a restricted unit set is required."
                       }
                     }
                   },
@@ -738,15 +740,15 @@
                               "mmol/mol",
                               "{titer}"
                             ],
-                            "description": "常用 UCUM 单位子集（严格模式），覆盖血常规/生化/免疫/肿瘤标志物等场景。"
+                            "description": "Strict subset of common UCUM units covering blood counts, biochemistry, immunology, and tumour-marker tests."
                           },
                           {
                             "type": "string",
                             "pattern": "^[A-Za-z0-9%\\[\\]{}().*/^+-]+$",
-                            "description": "UCUM 样式校验（允许常见 UCUM 字符集，避免空格）。"
+                            "description": "Validates common UCUM-style unit characters and disallows spaces."
                           }
                         ],
-                        "description": "UCUM 单位（默认宽松模式）。如需严格控制，使用 UCUMUnitStrict。"
+                        "description": "UCUM unit using the permissive default pattern. Use UCUMUnitStrict when a restricted unit set is required."
                       }
                     }
                   },
@@ -763,7 +765,7 @@
                   "H",
                   "A"
                 ],
-                "description": "N 正常，L 偏低，H 偏高，A 异常。"
+                "description": "Interpretation: N normal, L low, H high, or A abnormal."
               },
               "method": {
                 "type": "object",
@@ -812,7 +814,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "urn:vokoo:clinical:schema:imaging-report:v0.1.0",
       "title": "VoKoo Imaging Report",
-      "description": "影像报告结构化 Schema，参考 DICOM 影像模式代码和 SNOMED CT 部位编码。",
+      "description": "Structured imaging report using DICOM modality codes and SNOMED CT body-site codes.",
       "type": "object",
       "required": [
         "id",
@@ -830,7 +832,7 @@
         },
         "studyInstanceUid": {
           "type": "string",
-          "description": "DICOM Study Instance UID。"
+          "description": "DICOM Study Instance UID."
         },
         "modality": {
           "type": "object",
@@ -852,7 +854,7 @@
                 "XR",
                 "PT"
               ],
-              "description": "常用影像模式：CT/MR/US/XR/PET。"
+              "description": "Common imaging modalities: CT, MR, ultrasound, radiography, and PET."
             },
             "display": {
               "type": "string"
@@ -876,7 +878,8 @@
             "display": {
               "type": "string"
             }
-          }
+          },
+          "description": "Examined body site, preferably coded with a SNOMED CT anatomical structure code."
         },
         "reportedAt": {
           "type": "string",
@@ -901,22 +904,22 @@
           "items": {
             "type": "string"
           },
-          "description": "影像所见。"
+          "description": "Imaging findings."
         },
         "impression": {
           "type": "string",
-          "description": "诊断结论/印象。"
+          "description": "Diagnostic conclusion or impression."
         },
         "radiationDose": {
           "type": "object",
           "properties": {
             "ctdiVol_mGy": {
               "type": "number",
-              "description": "CT 剂量体积指数。"
+              "description": "Computed tomography dose index by volume, in mGy."
             },
             "dlp_mGy_cm": {
               "type": "number",
-              "description": "剂量长度乘积。"
+              "description": "Dose-length product, in mGy cm."
             }
           }
         },
@@ -931,7 +934,7 @@
               },
               "type": {
                 "type": "string",
-                "description": "缩略图、报告 PDF 等"
+                "description": "Attachment type, such as a thumbnail or report PDF."
               }
             }
           }
@@ -946,7 +949,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "urn:vokoo:clinical:schema:medication:v0.1.0",
       "title": "VoKoo Medication Record",
-      "description": "用药记录 Schema，参考 RxNorm 药物编码与常见给药途径。",
+      "description": "Medication record using RxNorm drug codes and common administration routes.",
       "type": "object",
       "required": [
         "id",
@@ -980,7 +983,8 @@
             "display": {
               "type": "string"
             }
-          }
+          },
+          "description": "Medication code, preferably from RxNorm."
         },
         "form": {
           "type": "object",
@@ -999,7 +1003,8 @@
             "display": {
               "type": "string"
             }
-          }
+          },
+          "description": "Dose form, such as tablet or capsule."
         },
         "route": {
           "type": "object",
@@ -1025,7 +1030,7 @@
                     "SL",
                     "PR"
                   ],
-                  "description": "常用缩写。"
+                  "description": "Common route abbreviations."
                 },
                 {
                   "type": "string",
@@ -1038,7 +1043,7 @@
                     "37839007",
                     "37161004"
                   ],
-                  "description": "SNOMED CT 给药途径代码：口服/静脉/肌注/皮下/吸入/舌下/直肠。"
+                  "description": "SNOMED CT route codes for oral, intravenous, intramuscular, subcutaneous, inhaled, sublingual, and rectal administration."
                 },
                 {
                   "type": "string",
@@ -1049,7 +1054,8 @@
             "display": {
               "type": "string"
             }
-          }
+          },
+          "description": "Administration route, such as oral (PO) or intravenous (IV)."
         },
         "dosage": {
           "type": "object",
@@ -1063,13 +1069,13 @@
             },
             "unit": {
               "type": "string",
-              "description": "UCUM 单位，例如 mg、mL。"
+              "description": "UCUM unit, such as mg or mL."
             }
           }
         },
         "frequency": {
           "type": "string",
-          "description": "给药频次，如 QD、BID、TID。"
+          "description": "Administration frequency, such as QD, BID, or TID."
         },
         "durationDays": {
           "type": "integer",
@@ -1115,7 +1121,8 @@
             "text": {
               "type": "string"
             }
-          }
+          },
+          "description": "Clinical indication for the medication."
         },
         "instructions": {
           "type": "string"
@@ -1130,7 +1137,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "$id": "urn:vokoo:clinical:schema:family-health:v0.1.0",
       "title": "VoKoo Family Health Tree",
-      "description": "家庭健康树 Schema，记录家庭成员关系与遗传相关疾病。",
+      "description": "Family health tree recording relationships and potentially inherited conditions.",
       "type": "object",
       "required": [
         "probandId",
@@ -1139,7 +1146,7 @@
       "properties": {
         "probandId": {
           "type": "string",
-          "description": "家系中被调查/就诊的核心个体 ID。"
+          "description": "Identifier of the proband, the person at the centre of the family history."
         },
         "members": {
           "type": "array",
@@ -1169,7 +1176,7 @@
                   "cousin",
                   "other"
                 ],
-                "description": "与 proband 的关系。可映射 HL7 v3 RoleCode。"
+                "description": "Relationship to the proband, mappable to an HL7 v3 RoleCode."
               },
               "sex": {
                 "type": "string",
@@ -1224,7 +1231,7 @@
                     }
                   }
                 },
-                "description": "主要遗传/慢性疾病，建议使用 SNOMED CT 或 ICD-10。"
+                "description": "Significant inherited or chronic conditions, preferably coded with SNOMED CT or ICD-10."
               }
             }
           }
