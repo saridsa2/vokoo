@@ -15,7 +15,7 @@ Every defect is also a GitHub issue; the number is on the entry.
 ## D1 — The sign-in dialog has no accessible name
 
 **Issue:** [#7](https://github.com/saridsa2/vokoo/issues/7)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — `auth-2.tsx` passes `title`, `standard-dialog.tsx:144` renders `<Heading slot="title">`, and line 178 adds an `aria-label` fallback.
 **Found:** 6 September 2026, driving `localhost:3000` in Chrome
 **Severity:** accessibility. A screen reader announces an unnamed dialog on the
 one screen every user meets first.
@@ -139,7 +139,7 @@ names it, and the console works unchanged.
 ## D3 — The schema editor misrepresents every nested schema, and says it is not doing so
 
 **Issue:** [#9](https://github.com/saridsa2/vokoo/issues/9)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — The editor renders a tree and the right pane prints the stored contract. `VoKoo Lab Report` shows `panel (object)` → `coding (array)` → `items (object)`.
 **Found:** 7 September 2026, opening `WellAll Lab Report` on `/structured-outputs`
 **Severity:** the right-hand pane makes a claim about what the model receives
 that is false for these schemas.
@@ -218,7 +218,7 @@ its five fields, and the right pane matches
 ## D4 — 44 of 45 clinical field descriptions are in Chinese
 
 **Issue:** [#10](https://github.com/saridsa2/vokoo/issues/10)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — 0 of 52 descriptions carry Chinese. `0119`'s `translate_vokoo_clinical_schema` walks the stored jsonb and translates every `description`.
 **Found:** 7 September 2026, reading `patientId` on `WellAll Lab Report`
 **Severity:** these descriptions are the instruction a model follows. They are
 in a language nobody on this line speaks.
@@ -268,7 +268,7 @@ descriptions matching `[\u4e00-\u9fff]`.
 ## D5 — The seeded schema descriptions cite a namespace the repo has retired
 
 **Issue:** [#11](https://github.com/saridsa2/vokoo/issues/11)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — Rows read `urn:vokoo:clinical:schema:…`. `0119` rewrites name, description and stored schema under `vokoo.pushing`.
 **Found:** 7 September 2026, on the same screen
 **Severity:** cosmetic, but it is provenance, which is the one thing that has to
 be right.
@@ -306,7 +306,7 @@ migrations are history and are not edited in place.
 ## D6 — A cohort names a call flow as its care path
 
 **Issue:** [#12](https://github.com/saridsa2/vokoo/issues/12)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — `/cohorts` is empty — `0119` deletes any cohort whose flow is not a `care_path`, which a trigger could not do for an existing row.
 **Found:** 7 September 2026, `/cohorts`
 **Severity:** the cohort cannot run, and the row now also violates a constraint
 that cannot see it.
@@ -347,7 +347,7 @@ create dialog offers care paths only.
 ## D7 — The agent list prints a separator around a value that is not there
 
 **Issue:** [#13](https://github.com/saridsa2/vokoo/issues/13)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — `none@gemini · kookoo`. Moved to `src/lib/agent-display.ts` with `||` and `filter(Boolean)`.
 **Found:** 7 September 2026, `/agents`
 **Severity:** cosmetic, and a one-line fix.
 
@@ -403,7 +403,7 @@ hears and speaks.
 ## D8 — A flow whose trigger reaches nothing can be published
 
 **Issue:** [#14](https://github.com/saridsa2/vokoo/issues/14)
-**Status:** open
+**Status:** fixed, verified 7 September 2026 — `Lead capture` is draft. `0119` walks `p_graph->'transitions'`; `0120` unpublishes flows that were already inert.
 **Found:** 7 September 2026, `/integrations`
 **Severity:** an `integration.invoke` can name it, the invocation succeeds, and
 nothing happens. A silent no-op is the failure shape this project keeps
