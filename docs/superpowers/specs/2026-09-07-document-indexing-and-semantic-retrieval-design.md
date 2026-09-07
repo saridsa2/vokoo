@@ -55,8 +55,8 @@ The initial embedding profile is:
 | Provider model | `gemini-embedding-2` |
 | Dimensions | `768` |
 | Distance | cosine |
-| Document task | `RETRIEVAL_DOCUMENT` |
-| Query task | `RETRIEVAL_QUERY` |
+| Document prefix | `title: none \| text: {content}` |
+| Query prefix | `task: search result \| query: {content}` |
 
 The operator portal already owns platform provider credentials. The worker resolves the `gemini` key through the existing service-role-only `resolve_vendor_secret` path. No new key column, environment variable, or tenant-facing credential control is introduced.
 
@@ -90,8 +90,8 @@ A global, operator-controlled catalogue of valid combinations:
 - `provider_model_id text`
 - `dimensions integer`
 - `distance_metric text`
-- `document_task_type text`
-- `query_task_type text`
+- `document_prefix text`
+- `query_prefix text`
 - `is_active boolean`
 - `created_at timestamptz`
 

@@ -10,8 +10,8 @@ create table public.embedding_profiles (
   provider_model_id text not null,
   dimensions integer not null check (dimensions = 768),
   distance_metric text not null check (distance_metric = 'cosine'),
-  document_task_type text not null,
-  query_task_type text not null,
+  document_prefix text not null,
+  query_prefix text not null,
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -23,10 +23,10 @@ grant select on public.embedding_profiles to authenticated;
 
 insert into public.embedding_profiles (
   id, provider_id, provider_model_id, dimensions, distance_metric,
-  document_task_type, query_task_type, is_active
+  document_prefix, query_prefix, is_active
 ) values (
   'gemini-embedding-2-768', 'gemini', 'gemini-embedding-2', 768, 'cosine',
-  'RETRIEVAL_DOCUMENT', 'RETRIEVAL_QUERY', true
+  'title: none | text: {content}', 'task: search result | query: {content}', true
 );
 
 alter table public.organizations

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Current-version chunks are searched by default; historical retrieval requires both document id and version.
-- Initial embedding profile is Gemini `gemini-embedding-2`, 768 dimensions, cosine distance, `RETRIEVAL_DOCUMENT`/`RETRIEVAL_QUERY` task types.
+- Initial embedding profile is Gemini `gemini-embedding-2`, 768 dimensions, cosine distance, and the documented asymmetric retrieval prefixes for documents and queries.
 - Gemini credentials come only from the operator-managed `resolve_vendor_secret` path.
 - Workspace Intelligence recommends registered compilers but never executes one.
 - Document source, extracted text, chunks, and vectors stay tenant-scoped; browser clients never receive vectors or provider keys.
@@ -185,10 +185,11 @@ create extension if not exists vector with schema extensions;
 
 insert into public.embedding_profiles
   (id, provider_id, provider_model_id, dimensions, distance_metric,
-   document_task_type, query_task_type, is_active)
+   document_prefix, query_prefix, is_active)
 values
   ('gemini-embedding-2-768', 'gemini', 'gemini-embedding-2', 768,
-   'cosine', 'RETRIEVAL_DOCUMENT', 'RETRIEVAL_QUERY', true);
+   'cosine', 'title: none | text: {content}',
+   'task: search result | query: {content}', true);
 ```
 
 Use `extensions.vector(768)`, `vector_cosine_ops`, `to_tsvector('simple', content)`, composite tenant foreign keys, and member RLS. Make job claim/completion/failure RPCs service-role-only. Replace `create_document` so version 1 is enqueued in the same transaction. `create_document_version` must lock the `files` row before allocating `current_version + 1`, and enqueue both active and pending organization profiles when a profile migration is in progress.
@@ -322,7 +323,7 @@ cargo test --manifest-path bridge/Cargo.toml vokoo::intelligence
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit extraction and chunking**
+- [x] **Step 6: Commit extraction and chunking**
 
 ```bash
 git add bridge/src/vokoo/documents bridge/src/vokoo/mod.rs bridge/src/vokoo/intelligence.rs bridge/tests/fixtures/documents
@@ -341,9 +342,9 @@ git commit -m "feat: extract and chunk document versions"
 
 **Interfaces:**
 - Produces: async trait `Embedder`, `GeminiEmbedder::new(api_key, profile, base_url)`, `embed_documents(&[String])`, and `embed_query(&str)`.
-- Consumes: `EmbeddingProfile { id, provider_model_id, dimensions, document_task_type, query_task_type }` and operator-resolved Gemini secret.
+- Consumes: `EmbeddingProfile { id, provider_model_id, dimensions, document_prefix, query_prefix }` and operator-resolved Gemini secret.
 
-- [ ] **Step 1: Write failing payload and response tests**
+- [x] **Step 1: Write failing payload and response tests**
 
 Use a local Axum fake server. Assert document batches call:
 
@@ -352,9 +353,9 @@ POST /v1beta/models/gemini-embedding-2:batchEmbedContents
 x-goog-api-key: <resolved secret>
 ```
 
-Every request carries `RETRIEVAL_DOCUMENT` and `outputDimensionality: 768`; query calls carry `RETRIEVAL_QUERY`. Tests also cover result ordering, a non-768 vector, missing embeddings, `429` with `Retry-After`, `401`, and `5xx`.
+Every request carries `outputDimensionality: 768`. Document and query content use the current `gemini-embedding-2` asymmetric retrieval prefixes; `taskType` is intentionally absent because that model does not support it. Tests also cover result ordering, a non-768 vector, missing embeddings, `429` with `Retry-After`, `401`, and `5xx`.
 
-- [ ] **Step 2: Run the tests to prove the client is missing**
+- [x] **Step 2: Run the tests to prove the client is missing**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml documents::embedding
@@ -362,7 +363,7 @@ cargo test --manifest-path bridge/Cargo.toml documents::embedding
 
 Expected: failure on unresolved embedding types/functions.
 
-- [ ] **Step 3: Implement the provider interface and Gemini client**
+- [x] **Step 3: Implement the provider interface and Gemini client**
 
 Define:
 
@@ -376,16 +377,16 @@ pub trait Embedder: Send + Sync {
 
 Cap a synchronous API batch to 100 chunks and validate count, order, finite values, and exactly 768 dimensions before returning. Classify `429`, timeouts, and `5xx` as retryable; classify authentication, schema, and dimension failures as permanent.
 
-- [ ] **Step 4: Run focused tests and formatting**
+- [x] **Step 4: Run focused tests and formatting**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml documents::embedding
-cargo fmt --manifest-path bridge/Cargo.toml -- --check
+rustfmt --edition 2021 --check bridge/src/vokoo/documents/embedding.rs bridge/tests/document_embedding.rs
 ```
 
-Expected: all embedding tests pass and formatting is clean.
+Expected: all embedding tests pass and the changed files are formatted. The whole imported bridge tree is not yet rustfmt-clean, so the focused check avoids conflating that existing debt with this boundary.
 
-- [ ] **Step 5: Commit the embedding boundary**
+- [x] **Step 5: Commit the embedding boundary**
 
 ```bash
 git add bridge/src/vokoo/documents/embedding.rs bridge/src/vokoo/documents/mod.rs bridge/Cargo.toml bridge/Cargo.lock
