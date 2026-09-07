@@ -22,6 +22,7 @@ pub mod compare;
 pub mod clinical;
 pub mod control;
 pub mod discovery;
+pub mod documents;
 pub mod engine;
 pub mod escalate;
 pub mod expression;

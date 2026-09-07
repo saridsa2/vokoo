@@ -128,53 +128,9 @@ pub fn bound_document_inspection(mut inspection: DocumentInspection) -> Document
 }
 
 pub fn extract_document_text(mime_type: &str, bytes: &[u8]) -> Result<String, String> {
-    match mime_type {
-        "text/plain" | "text/markdown" => String::from_utf8(bytes.to_vec())
-            .map_err(|_| "the text document is not UTF-8".to_string()),
-        "application/pdf" => extract_with_command("pdf", bytes, "pdftotext", &["-layout"]),
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
-            let xml = extract_with_command("docx", bytes, "unzip", &["-p", "{file}", "word/document.xml"])?;
-            Ok(xml
-                .replace("</w:p>", "\n")
-                .replace("</w:tab>", "\t")
-                .split('<')
-                .filter_map(|part| part.split_once('>').map(|(_, text)| text))
-                .collect::<String>())
-        }
-        _ => Err("the document type is not supported".into()),
-    }
-}
-
-fn extract_with_command(
-    extension: &str,
-    bytes: &[u8],
-    program: &str,
-    arguments: &[&str],
-) -> Result<String, String> {
-    let path = std::env::temp_dir().join(format!(
-        "vokoo-document-{}.{}",
-        uuid::Uuid::new_v4(),
-        extension
-    ));
-    std::fs::write(&path, bytes).map_err(|error| format!("could not stage the document: {error}"))?;
-    let path_text = path.to_string_lossy().to_string();
-    let mut command = std::process::Command::new(program);
-    for argument in arguments {
-        command.arg(if *argument == "{file}" { path_text.as_str() } else { *argument });
-    }
-    if program == "pdftotext" {
-        command.arg(&path).arg("-");
-    }
-    let output = command.output();
-    let _ = std::fs::remove_file(&path);
-    let output = output.map_err(|error| format!("could not run {program}: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "{program} could not read the document: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    String::from_utf8(output.stdout).map_err(|_| format!("{program} returned non-UTF-8 text"))
+    super::documents::extract_document(mime_type, bytes)
+        .map(|document| document.text)
+        .map_err(|problem| problem.to_string())
 }
 
 /// Inspect one immutable document version and recommend registered compilers.

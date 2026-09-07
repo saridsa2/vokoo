@@ -216,10 +216,9 @@ git commit -m "feat: add durable document indexing schema"
 - Create: `bridge/src/vokoo/documents/mod.rs`
 - Create: `bridge/src/vokoo/documents/extract.rs`
 - Create: `bridge/src/vokoo/documents/chunk.rs`
-- Create: `bridge/tests/fixtures/documents/guideline.txt`
-- Create: `bridge/tests/fixtures/documents/guideline.md`
 - Create: `bridge/tests/fixtures/documents/guideline.docx`
 - Create: `bridge/tests/fixtures/documents/guideline.pdf`
+- Create: `bridge/tests/document_pipeline.rs`
 - Modify: `bridge/src/vokoo/mod.rs`
 - Modify: `bridge/src/vokoo/intelligence.rs`
 
@@ -228,7 +227,7 @@ git commit -m "feat: add durable document indexing schema"
 - `ExtractedDocument` contains `text`, `pages`, and structural `blocks`; `DocumentChunk` contains ordinal, page range, section path, content, token count, and SHA-256.
 - Consumes: `pdftotext`, `unzip`, and existing MIME validation.
 
-- [ ] **Step 1: Write failing extraction tests**
+- [x] **Step 1: Write failing extraction tests**
 
 Start with these concrete tests, then apply the same assertions to the PDF and DOCX fixtures:
 
@@ -258,7 +257,7 @@ cargo test --manifest-path bridge/Cargo.toml documents::extract
 
 Expected: compilation fails because the module and types do not exist.
 
-- [ ] **Step 2: Move extraction behind the focused interface**
+- [x] **Step 2: Move extraction behind the focused interface**
 
 Move the document extraction logic out of `intelligence.rs`. Define:
 
@@ -275,7 +274,7 @@ pub fn extract_document(mime_type: &str, bytes: &[u8])
 
 Keep process arguments fixed by MIME type; never accept a caller-provided executable or flag.
 
-- [ ] **Step 3: Write failing chunker tests**
+- [x] **Step 3: Write failing chunker tests**
 
 Use a repeated structural fixture and assert the public contract directly:
 
@@ -296,7 +295,7 @@ fn clinical_chunks_are_bounded_deterministic_and_keep_recommendations_together()
 
 The long fixture also asserts non-final chunks fall within 600–900 tokens, adjacent chunks share approximately 100 boundary tokens, ordinals are sequential, and hashes change when content changes.
 
-- [ ] **Step 4: Implement structure-aware chunking**
+- [x] **Step 4: Implement structure-aware chunking**
 
 Define:
 
@@ -313,7 +312,7 @@ pub struct ChunkConfig {
 
 Default to `600`, `900`, `100`, and `1200`. Use deterministic conservative token counting and block-aware splitting. Never discard headings or page provenance.
 
-- [ ] **Step 5: Run focused and regression tests**
+- [x] **Step 5: Run focused and regression tests**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml documents::extract
