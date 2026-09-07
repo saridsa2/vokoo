@@ -43,7 +43,7 @@ This design adds a durable indexing pipeline and tenant-scoped retrieval without
 
 PostgreSQL is already the authoritative tenant store. `pgvector` adds similarity search without creating a second authorization or consistency boundary. Exact-term search remains in PostgreSQL as a generated full-text vector, enabling hybrid retrieval for medicine names, measurements, abbreviations, and clinical codes.
 
-The VPS PostgreSQL image does not currently expose the `vector` extension. Deployment must first produce a version-pinned Supabase PostgreSQL image containing a compatible `pgvector`, then run `create extension vector with schema extensions`. Migration preflight must fail before schema changes if the extension is unavailable.
+The pinned VPS image `supabase/postgres:17.6.1.136` already exposes pgvector 0.8.2 through `pg_available_extensions`; it is not yet installed in the database. Deployment runs `create extension vector with schema extensions` before creating vector columns. Migration preflight must fail before schema changes if a future database image does not expose the extension.
 
 ### Gemini generates embeddings through the existing operator credential boundary
 
@@ -307,17 +307,16 @@ Health checks report database access, `pgvector` availability, worker lease acti
 
 ## Deployment and Migration
 
-1. Build and pin a Supabase PostgreSQL image with a compatible `pgvector` extension.
-2. Back up the database and verify the restore procedure.
-3. Deploy the database image without changing the data volume.
-4. Verify `pg_available_extensions`, then enable `vector` in the `extensions` schema.
-5. Apply additive schema, RLS, catalogue, RPC, and index migrations.
-6. Deploy the control plane and `vokoo-document-worker` with the worker disabled.
-7. Run schema and authenticated tenant-boundary tests.
-8. Enable one worker with concurrency one.
-9. Enqueue existing analyzed document versions for indexing.
-10. Verify retrieval and Workspace Intelligence on a synthetic non-patient document.
-11. Deploy the Documents and operator UI changes.
+1. Back up the database and verify the restore procedure.
+2. Verify the pinned image exposes pgvector 0.8.2 through `pg_available_extensions`.
+3. Enable `vector` in the `extensions` schema.
+4. Apply additive schema, RLS, catalogue, RPC, and index migrations.
+5. Deploy the control plane and `vokoo-document-worker` with the worker disabled.
+6. Run schema and authenticated tenant-boundary tests.
+7. Enable one worker with concurrency one.
+8. Enqueue existing analyzed document versions for indexing.
+9. Verify retrieval and Workspace Intelligence on a synthetic non-patient document.
+10. Deploy the Documents and operator UI changes.
 
 The migration is additive. Existing extracted text and intelligence remain valid while indexing catches up. Search returns only indexed documents and states how many current documents remain unavailable.
 

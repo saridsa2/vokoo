@@ -80,3 +80,33 @@ grep -rlo "api.sarvathra.ai" .next/static | head   # expect a chunk
 Worth doing after any build that is about to be rsynced, because nothing else
 fails: the bundle compiles, deploys and serves perfectly while pointing at a
 host the browser will refuse to call.
+
+## Document indexing and pgvector
+
+The pinned database image is `supabase/postgres:17.6.1.136`. It already ships
+pgvector 0.8.2 through its Nix PostgreSQL profile, so document indexing does
+not require replacing the database image or touching its data volume.
+
+Before applying migration `0123_document_indexing.sql`, verify the extension
+is still available:
+
+```bash
+ssh vokoo "docker exec -i -u postgres -e DATABASE_URL=postgresql:///postgres supabase-db sh" \
+  < deploy/postgres/verify-vector.sh
+```
+
+The command must print `vector-ready`. A missing extension is a deployment
+blocker; do not apply the vector-column migration against a different image
+and do not install an unpinned extension ad hoc into the running container.
+
+Take and verify a PostgreSQL backup before the migration. Then apply migrations
+with `ON_ERROR_STOP=1`. Migration 0123 runs:
+
+```sql
+create extension if not exists vector with schema extensions;
+```
+
+The extension is additive. Rolling application code back does not require
+dropping it, its tables, or its indexes. A database rollback uses the verified
+pre-migration backup; do not improvise a partial destructive rollback and never
+run `docker compose down -v`.

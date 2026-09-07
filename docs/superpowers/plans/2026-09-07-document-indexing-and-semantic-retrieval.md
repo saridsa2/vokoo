@@ -6,7 +6,7 @@
 
 **Architecture:** PostgreSQL stores immutable sources, versioned chunks, embeddings, and leased jobs. A dedicated Rust `vokoo-document-worker` processes jobs and serves an internal search endpoint; the control plane remains the authenticated tenant boundary, while the console and operator portal expose version status and embedding-profile controls.
 
-**Tech Stack:** PostgreSQL 17.6, Supabase/PostgREST RLS and RPCs, pgvector 0.8.6, Rust/Axum/reqwest, Gemini `gemini-embedding-2`, Next.js/React/TypeScript.
+**Tech Stack:** PostgreSQL 17.6, Supabase/PostgREST RLS and RPCs, bundled pgvector 0.8.2, Rust/Axum/reqwest, Gemini `gemini-embedding-2`, Next.js/React/TypeScript.
 
 **Spec:** `docs/superpowers/specs/2026-09-07-document-indexing-and-semantic-retrieval-design.md`
 
@@ -27,10 +27,9 @@
 
 ### Database and deployment
 
-- `deploy/postgres/Dockerfile` — pinned Supabase PostgreSQL image extended with pgvector 0.8.6.
 - `deploy/postgres/verify-vector.sh` — read-only extension preflight used before migrations.
 - `deploy/vokoo-document-worker.service` — isolated worker/search service.
-- `deploy/README.md` — build, database-image replacement, migration, worker, and rollback runbook.
+- `deploy/README.md` — extension preflight, migration, worker, and rollback runbook.
 - `supabase/migrations/0123_document_indexing.sql` — profiles, version metadata, chunks, embeddings, jobs, RLS, and indexing RPCs.
 - `supabase/migrations/0124_document_retrieval.sql` — current/historical hybrid retrieval and profile-switch RPCs.
 - `supabase/tests/0123_document_indexing.sql` — version, job lease, idempotency, and tenant tests.
@@ -87,7 +86,7 @@
 - Produces: immutable `file_versions`, `create_document(uuid,text,text,text)`, `POST /api/v1/documents`, the `/files` Documents pane, and the existing synchronous inspection compatibility path.
 - Consumes: existing `files`, organization membership RLS, operator-managed Workspace Intelligence provider/model, and `resolve_vendor_secret`.
 
-- [ ] **Step 1: Run the focused red/green tests already added for this foundation**
+- [x] **Step 1: Run the focused red/green tests already added for this foundation**
 
 Run:
 
@@ -99,7 +98,7 @@ cargo test --manifest-path bridge/Cargo.toml document_
 
 Expected: all focused tests pass; failures are repaired without changing the approved source/version boundary.
 
-- [ ] **Step 2: Verify TypeScript and production compilation**
+- [x] **Step 2: Verify TypeScript and production compilation**
 
 Run:
 
@@ -110,11 +109,11 @@ npm run build
 
 Expected: both commands exit zero. Existing deprecation or `metadataBase` warnings may remain, but no document-related warning or error is accepted.
 
-- [ ] **Step 3: Re-run the transaction-scoped SQL test on the VPS**
+- [x] **Step 3: Re-run the transaction-scoped SQL test on the VPS**
 
 Run the test file through `psql` against the Supabase database. Expected: `BEGIN`, all `DO` blocks complete, and `ROLLBACK`; no persistent test rows remain.
 
-- [ ] **Step 4: Commit only the Documents foundation**
+- [x] **Step 4: Commit only the Documents foundation**
 
 ```bash
 git add supabase/migrations/0121_document_workspace.sql supabase/migrations/0122_document_digest_search_path.sql supabase/tests/0121_document_workspace.sql server/src/main.rs server/Cargo.toml server/Cargo.lock bridge/src/vokoo/intelligence.rs bridge/src/bin/vokoo_bridge.rs bridge/Cargo.toml bridge/Cargo.lock src/lib/document-workspace.ts src/lib/document-workspace.test.ts src/utils/api-client.ts src/components/application/screens/documents-screen.tsx 'src/app/(console)/[...screen]/page.tsx' src/components/application/app-navigation/vokoo-nav.ts package.json
@@ -128,7 +127,6 @@ Expected: unrelated untracked bridge files and auth edits are absent from the co
 ### Task 2: Add pgvector Runtime and Indexing Schema
 
 **Files:**
-- Create: `deploy/postgres/Dockerfile`
 - Create: `deploy/postgres/verify-vector.sh`
 - Create: `supabase/migrations/0123_document_indexing.sql`
 - Test: `supabase/tests/0123_document_indexing.sql`
@@ -138,7 +136,7 @@ Expected: unrelated untracked bridge files and auth edits are absent from the co
 - Consumes: `files`, `file_versions`, `catalogue_providers`, organizations, and `is_org_member(uuid)`.
 - Produces: `embedding_profiles`, `document_chunks`, `document_chunk_embeddings`, `document_ingestion_jobs`, `create_document_version`, `enqueue_document_ingestion`, `claim_document_ingestion`, `complete_document_ingestion`, and `fail_document_ingestion`.
 
-- [ ] **Step 1: Write a failing pgvector preflight test**
+- [x] **Step 1: Verify the bundled pgvector preflight**
 
 Create `deploy/postgres/verify-vector.sh`:
 
@@ -151,39 +149,9 @@ test "$available" = "1"
 printf '%s\n' vector-ready
 ```
 
-Run it against the current VPS image. Expected: non-zero, because `vector` is not currently available.
+Run it against the current VPS image. Expected and observed: `vector-ready`. A diagnostic query reports available version `0.8.2` and installed version `NULL`, so no image replacement is required.
 
-- [ ] **Step 2: Add the pinned database image**
-
-Create `deploy/postgres/Dockerfile` from `supabase/postgres:17.6.1.136`:
-
-```dockerfile
-ARG SUPABASE_POSTGRES_IMAGE=supabase/postgres:17.6.1.136
-FROM ${SUPABASE_POSTGRES_IMAGE} AS pgvector-build
-USER root
-RUN apk add --no-cache build-base git postgresql17-dev
-RUN git clone --branch v0.8.6 --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector \
- && make -C /tmp/pgvector OPTFLAGS="" \
- && make -C /tmp/pgvector DESTDIR=/tmp/vector-root install
-
-FROM ${SUPABASE_POSTGRES_IMAGE}
-USER root
-COPY --from=pgvector-build /tmp/vector-root/ /
-USER postgres
-```
-
-The final image must retain the base image entrypoint and contain no compiler toolchain. If the base image and Alpine package expose different `pg_config` install prefixes, set `PG_CONFIG` to the PostgreSQL 17 binary explicitly and prove the copied paths with the next command; never copy a PostgreSQL 18 extension into PostgreSQL 17.
-
-Build and inspect locally or on the VPS:
-
-```bash
-docker build -t vokoo/supabase-postgres:17.6.1.136-pgvector0.8.6 deploy/postgres
-docker run --rm --entrypoint sh vokoo/supabase-postgres:17.6.1.136-pgvector0.8.6 -lc "test -f /usr/lib/postgresql/vector.so || find /usr -name vector.so"
-```
-
-Expected: the image builds and contains the extension library and `vector.control`.
-
-- [ ] **Step 3: Write the failing indexing SQL test**
+- [x] **Step 2: Write the failing indexing SQL test**
 
 Create `supabase/tests/0123_document_indexing.sql` as a transaction. Use the repository's existing `DO`-block assertion style so the test does not depend on pgTAP:
 
@@ -208,7 +176,7 @@ Add behavioral `DO` blocks that create two organizations and prove: cross-org ch
 
 Run before the migration. Expected: failure on the missing extension/tables/functions.
 
-- [ ] **Step 4: Implement the additive schema and RPCs**
+- [x] **Step 3: Implement the additive schema and RPCs**
 
 Create `0123_document_indexing.sql` with these enforced values:
 
@@ -225,18 +193,18 @@ values
 
 Use `extensions.vector(768)`, `vector_cosine_ops`, `to_tsvector('simple', content)`, composite tenant foreign keys, and member RLS. Make job claim/completion/failure RPCs service-role-only. Replace `create_document` so version 1 is enqueued in the same transaction. `create_document_version` must lock the `files` row before allocating `current_version + 1`, and enqueue both active and pending organization profiles when a profile migration is in progress.
 
-- [ ] **Step 5: Run schema and transactional tests**
+- [x] **Step 4: Run schema and transactional tests**
 
 Run migration `0123`, then the SQL test with `ON_ERROR_STOP=1`. Expected: every structural and behavioral assertion passes, ending in rollback.
 
-- [ ] **Step 6: Document image replacement and rollback**
+- [x] **Step 5: Document extension enablement and rollback**
 
-In `deploy/README.md`, record the exact old image `supabase/postgres:17.6.1.136`, new image tag, backup verification, compose edit, container recreation without deleting the volume, `pg_available_extensions` preflight, and rollback to the old image. Explicitly prohibit `docker compose down -v`.
+In `deploy/README.md`, record the pinned image `supabase/postgres:17.6.1.136`, backup verification, `pg_available_extensions` preflight, extension creation, and schema rollback boundaries. No database container or volume replacement is required.
 
-- [ ] **Step 7: Commit database runtime and schema**
+- [ ] **Step 6: Commit database runtime and schema**
 
 ```bash
-git add deploy/postgres/Dockerfile deploy/postgres/verify-vector.sh deploy/README.md supabase/migrations/0123_document_indexing.sql supabase/tests/0123_document_indexing.sql
+git add deploy/postgres/verify-vector.sh deploy/README.md supabase/migrations/0123_document_indexing.sql supabase/tests/0123_document_indexing.sql docs/superpowers/specs/2026-09-07-document-indexing-and-semantic-retrieval-design.md docs/superpowers/plans/2026-09-07-document-indexing-and-semantic-retrieval.md
 git commit -m "feat: add durable document indexing schema"
 ```
 
@@ -709,13 +677,13 @@ cargo build --release --manifest-path bridge/Cargo.toml --bin vokoo_document_wor
 
 Expected: every command exits zero. Record pre-existing warnings separately from failures.
 
-- [ ] **Step 2: Back up and replace the VPS database image**
+- [ ] **Step 2: Back up and preflight the VPS database**
 
-Follow `deploy/README.md`: verify a fresh backup, build the pinned image, update only the database image reference, recreate only `supabase-db`, and confirm the existing volume and health. Never remove volumes.
+Follow `deploy/README.md`: verify a fresh backup and run the pgvector preflight against the existing pinned database image. No database container or volume replacement is required.
 
 - [ ] **Step 3: Apply and test migrations**
 
-Apply `0123` and `0124` with `ON_ERROR_STOP=1`. Run both SQL tests in transactions. Verify `vector` version `0.8.6`, RLS enabled, HNSW/GIN indexes present, and PostgREST schema reload complete.
+Apply `0123` and `0124` with `ON_ERROR_STOP=1`. Run both SQL tests in transactions. Verify `vector` version `0.8.2`, RLS enabled, HNSW/GIN indexes present, and PostgREST schema reload complete.
 
 - [ ] **Step 4: Deploy backend services with the worker disabled**
 
