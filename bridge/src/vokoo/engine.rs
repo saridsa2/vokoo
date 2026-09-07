@@ -203,6 +203,30 @@ pub async fn thinking(
                     .to_string(),
                 temperature,
                 max_completion_tokens: max_tokens,
+                // **A cost budget, not the model's capacity.**
+                //
+                // `resolve_context_window_tokens` falls back to a table of what
+                // each model *can* take — 1,047,576 for gpt-4.1-mini — and
+                // trims at 80% of it. A phone call never gets near that, so the
+                // trimmer that exists and works had never once fired.
+                //
+                // It needed to. Every turn resends the whole conversation and
+                // all eight tool schemas, so input tokens grow with the square
+                // of the call length: measured at 7,100 for a 3-turn call and
+                // 22,585 for a 6-turn one, which projects to 315,000 for five
+                // minutes. We charge by the minute and were paying by the
+                // minute squared.
+                //
+                // 12,000 keeps roughly the last ten turns on a clinic call —
+                // well past what answering the current question needs, and it
+                // caps the worst case instead of letting it compound. The
+                // trimmer drops whole conversation groups, so a tool call and
+                // its result are never separated.
+                context_window_tokens: Some(
+                    number(stage, "context_window_tokens")
+                        .map(|v| v as usize)
+                        .unwrap_or(12_000),
+                ),
                 ..OpenAILLMConfig::default()
             },
             registry,
