@@ -243,6 +243,45 @@ constraint would also make the existing row visible rather than silent.
 **Verify.** `/cohorts` shows no cohort whose flow is a `call` flow, and the
 create dialog offers care paths only.
 
+---
+
+## D7 — The agent list prints a separator around a value that is not there
+
+**Status:** open
+**Found:** 7 September 2026, `/agents`
+**Severity:** cosmetic, and a one-line fix.
+
+Every agent's subtitle reads with an empty segment:
+
+```
+none@gemini · · kookoo
+no transcriber · · kookoo
+```
+
+`agents-screen.tsx`:
+
+```tsx
+[
+    (agent.transcriber_config?.provider as string) ?? "no transcriber",
+    agent.model,
+    "kookoo",
+].join(" · ")
+```
+
+`agent.model` is empty for every agent here — an agent takes its model from its
+engine, not from a column — and `join` prints the separator regardless. `??`
+only catches `null` and `undefined`, so an empty string passes through it.
+
+The first entry reads `none@gemini`, which is the transcriber provider for an
+agent whose engine is realtime: there is no separate transcriber, and "none" is
+being shown as if it were one.
+
+**Fix.** Filter before joining — `[a, b, c].filter(Boolean).join(" · ")` — and
+decide what `none@gemini` should say for a realtime agent, where the model both
+hears and speaks.
+
+**Verify.** No agent subtitle contains `· ·`.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.
@@ -269,8 +308,19 @@ the production control plane, so any create or delete lands on live data. So
 nothing that writes has been exercised — the create dialogs on Patients,
 Cohorts, Enrolments and Schemas, publishing a flow, or the composer canvas.
 
-`/patients`, `/agents`, `/skills`, `/knowledge`, `/calls`, `/runs`,
-`/phone-numbers` and `/team` were not opened.
+Opened and clean on 7 September: `/dashboard`, `/patients`, `/care-paths`,
+`/cohorts`, `/enrolments`, `/composer`, `/agents`, `/tools`,
+`/structured-outputs`, `/call-logs`, `/settings/organization`. No console
+errors on any of them.
+
+Still unopened: `/integrations`, `/skills`, `/files`, `/phone-numbers`,
+`/runs`, `/team`.
+
+**A note on route checking.** The first sweep tested invented paths — `/schemas`
+and `/calls` — and reported them 200 because a signed-out request redirects
+rather than 404ing. Signed in, both are 404s that do not exist. The real
+destinations come from `vokoo-nav.ts`: `/structured-outputs` and `/call-logs`.
+All seventeen nav hrefs return 200.
 
 `resize_window` reported success but the viewport stayed 1920x848, so the
 responsive layouts are **untested rather than passing** — including whether the
