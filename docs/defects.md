@@ -97,6 +97,152 @@ names it, and the console works unchanged.
 
 ---
 
+---
+
+## D3 — The schema editor misrepresents every nested schema, and says it is not doing so
+
+**Status:** open
+**Found:** 7 September 2026, opening `WellAll Lab Report` on `/structured-outputs`
+**Severity:** the right-hand pane makes a claim about what the model receives
+that is false for these schemas.
+
+`schema-detail-screen.tsx` reads a schema into a flat list of rows:
+
+```ts
+type: typeof property.type === "string" ? property.type : "string",
+```
+
+and its `TYPES` are `string | number | integer | boolean`. A property whose
+type is `object` or `array` has no option to select, so the row renders as
+**string**.
+
+What is actually stored for `lab-report`:
+
+```
+results   array of object — code, value, referenceRange, interpretation, method
+facility  object — id, name
+specimen  object
+```
+
+What the editor shows: `results`, `facility`, `specimen`, all **string**.
+
+The right-hand pane is worse, because it is confident. It is headed *"What the
+model is shown — compiled from the fields, and identical to what a push
+produces"*, and it renders `toSchema(fields)` — a recompilation of the
+flattened rows. So it prints:
+
+```json
+"results":  { "type": "array" }      // no items: "send a list", of nothing
+"facility": { "type": "object" }     // no properties
+```
+
+while the stored schema has all of it. The pane does not show what the model is
+shown. It shows what would be stored if somebody saved this screen.
+
+**Nothing is lost today**, because these rows are `origin = 'vendor'` and the
+database trigger refuses the write. That is luck rather than design: any nested
+schema arriving with `origin = 'console'` would be flattened on the first save.
+
+**Fix.** The screen must render a nested schema as a tree, read-only where it
+cannot be edited, and the right pane must print the **stored** schema rather
+than a recompilation. This was flagged before the schemas were seeded and not
+done.
+
+**Verify.** Open `WellAll Lab Report`. `results` reads as a list of objects with
+its five fields, and the right pane matches
+`src/lib/clinical-schemas.json` byte for byte.
+
+---
+
+## D4 — 44 of 45 clinical field descriptions are in Chinese
+
+**Status:** open
+**Found:** 7 September 2026, reading `patientId` on `WellAll Lab Report`
+**Severity:** these descriptions are the instruction a model follows. They are
+in a language nobody on this line speaks.
+
+On screen:
+
+```
+patientId    关联健康档案 Person.id
+```
+
+Across the five seeded schemas, **44 of 45 descriptions** contain Chinese:
+
+```
+个人健康数据核心 Schema，参考 HL7 FHIR Patient 资源的最小可用字段。
+全局唯一 ID（UUID/ULID）。
+资源类型，固定为 Person。
+```
+
+This repo already established what that costs. A Hindi call kept returning
+`patient_name: "सात्या"` because the field said *"exactly as they said it"* —
+the model was obeying the description precisely. The conclusion recorded then:
+**the descriptions are the semantics, and they are read by a model, so they
+should be written the way you would brief one.**
+
+They came from upstream `wellally-schemas`, which is written in Chinese, and
+were inlined verbatim.
+
+**Fix.** Translate the descriptions in the vendored source and regenerate with
+`npm run schemas:inline`, or override them in the inliner. The first is better —
+the second puts a second copy of the semantics in a build script.
+
+**Verify.** `node -e` over `src/lib/clinical-schemas.json` finds zero
+descriptions matching `[\u4e00-\u9fff]`.
+
+---
+
+## D5 — The seeded schema descriptions cite a namespace the repo has retired
+
+**Status:** open
+**Found:** 7 September 2026, on the same screen
+**Severity:** cosmetic, but it is provenance, which is the one thing that has to
+be right.
+
+The rows read *"Clinical contract from
+`https://wellall.health/schemas/lab-report/v0.1.0`"*. The vendored source now
+says `urn:vokoo:clinical:schema:lab-report:v0.1.0` — renamed in `d8c1fe7`,
+after migration `0116` had already been generated.
+
+So a seeded row cites a URI that appears nowhere else in the repository. This
+was predicted before the migration landed and shipped anyway.
+
+**Fix.** Regenerate `0116` from the current artifact as a new migration —
+migrations are history and are not edited in place.
+
+**Verify.** No row in `structured_outputs` mentions `wellall.health`.
+
+---
+
+## D6 — A cohort names a call flow as its care path
+
+**Status:** open
+**Found:** 7 September 2026, `/cohorts`
+**Severity:** the cohort cannot run, and the row now also violates a constraint
+that cannot see it.
+
+`Chemotherapy — day care` lists its care path as **`Vayuveda main line`** — the
+flow that answers the phone. A `call` flow, reachable only by
+`trigger.call_answered`, selected into a column meant for a care path.
+
+The cause was `cohorts.flow_id` referencing `flows` with no family constraint,
+so the picker offered every flow in the workspace.
+
+`0118` fixes it going forward — `cohort_uses_care_path_flow()` raises `23514`
+unless `flows.family = 'care_path'`. But **a trigger only fires on insert and
+update**, so this row survives. Worse, the next update to it fails: correcting
+the cohort through the UI now depends on what the console sends.
+
+Meanwhile `/care-paths` is empty, so there is nothing valid to point it at.
+
+**Fix.** Either repoint or delete the row, and have the console's picker filter
+on `family = 'care_path'` so it cannot be chosen again. A `not valid` check
+constraint would also make the existing row visible rather than silent.
+
+**Verify.** `/cohorts` shows no cohort whose flow is a `call` flow, and the
+create dialog offers care paths only.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.
@@ -118,8 +264,13 @@ nowhere to be dismissed to until somebody signs in.
 
 ## Not yet tested
 
-Everything behind authentication. The 6 September run could reach the sign-in
-screen and nothing past it.
+The 7 September run was **read-only**, because of D2: the local console talks to
+the production control plane, so any create or delete lands on live data. So
+nothing that writes has been exercised — the create dialogs on Patients,
+Cohorts, Enrolments and Schemas, publishing a flow, or the composer canvas.
+
+`/patients`, `/agents`, `/skills`, `/knowledge`, `/calls`, `/runs`,
+`/phone-numbers` and `/team` were not opened.
 
 `resize_window` reported success but the viewport stayed 1920x848, so the
 responsive layouts are **untested rather than passing** — including whether the
