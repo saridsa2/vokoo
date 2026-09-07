@@ -500,11 +500,11 @@ git commit -m "feat: process document indexes durably"
 - Produces: `search_document_chunks` RPC; `embedding_profile_choices` RPC; `begin_embedding_profile_migration` RPC; internal `POST /documents/search`; `DocumentSearchRequest`, `DocumentSearchResult`, and `unavailable_current_documents` response metadata.
 - Consumes: 768-value query embedding, authenticated org id from the control plane, current document filters or explicit `(document_id, version)` pairs.
 
-- [ ] **Step 1: Write failing retrieval SQL tests**
+- [x] **Step 1: Write failing retrieval SQL tests**
 
 Seed two organizations, two versions with contradictory passages, exact clinical identifiers, and deterministic test vectors. Assert current search returns only `files.current_version`; explicit history returns only the named version; another tenant returns nothing; incomplete embeddings return nothing; exact identifiers survive lexical rank; and reciprocal-rank fusion produces deterministic order.
 
-- [ ] **Step 2: Implement current and historical retrieval RPCs**
+- [x] **Step 2: Implement current and historical retrieval RPCs**
 
 Use cosine candidates (`embedding <=> p_query_embedding`) and `ts_rank_cd` lexical candidates, each capped before fusion. Combine with reciprocal rank:
 
@@ -515,23 +515,23 @@ coalesce(1.0 / (60 + lexical_rank), 0) as fused_score
 
 Reject mixed conflicting filters, limit results to 1–50, and return all provenance and component scores. Explicit historical mode requires a nonempty list of document/version pairs. Return `unavailable_current_documents` as a separate count rather than silently falling back to old versions.
 
-- [ ] **Step 3: Implement safe profile migration**
+- [x] **Step 3: Implement safe profile migration**
 
 `embedding_profile_choices` returns active profiles without credentials. `begin_embedding_profile_migration` validates operator status and an active profile, sets `pending_embedding_profile_id`, and enqueues every current version. Completion locks the organization and flips profiles only when every current version has complete pending-profile embeddings.
 
-- [ ] **Step 4: Run SQL tests**
+- [x] **Step 4: Run SQL tests**
 
 Run `0124` and its transaction-scoped test with `ON_ERROR_STOP=1`. Expected: current, historical, tenant, hybrid, and profile-switch assertions all pass.
 
-- [ ] **Step 5: Write failing Rust search tests**
+- [x] **Step 5: Write failing Rust search tests**
 
 Cover current filters, explicit historical filters, conflicting inputs, 768-dimension validation, Gemini query task type, internal-token rejection, RPC failures, and provenance decoding.
 
-- [ ] **Step 6: Implement the internal search endpoint**
+- [x] **Step 6: Implement the internal search endpoint**
 
 The worker resolves the active profile and Gemini key, embeds the query once, invokes `search_document_chunks`, and returns cited results. Require `x-vokoo-internal-token`; never accept caller-supplied org identity from a public socket.
 
-- [ ] **Step 7: Run and commit retrieval**
+- [x] **Step 7: Run and commit retrieval**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml documents::search

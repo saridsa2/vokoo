@@ -298,13 +298,19 @@ begin
    returning * into v_job;
   update public.file_versions
      set status = 'extracting'
-   where id = v_job.file_version_id;
+   where id = v_job.file_version_id
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   update public.files f
      set status = 'extracting', updated_at = now()
     from public.file_versions v
    where v.id = v_job.file_version_id
      and f.id = v.file_id and f.org_id = v.org_id
-     and f.current_version = v.version;
+     and f.current_version = v.version
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   return to_jsonb(v_job);
 end;
 $$;
@@ -363,13 +369,20 @@ begin
   if v_job.id is null then
     raise exception 'job is not leased by this worker' using errcode = 'P0004';
   end if;
-  update public.file_versions set status = p_stage where id = v_job.file_version_id;
+  update public.file_versions set status = p_stage
+   where id = v_job.file_version_id
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   update public.files f
      set status = p_stage, updated_at = now()
     from public.file_versions v
    where v.id = v_job.file_version_id
      and f.id = v.file_id and f.org_id = v.org_id
-     and f.current_version = v.version;
+     and f.current_version = v.version
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   return to_jsonb(v_job);
 end;
 $$;
@@ -423,14 +436,20 @@ begin
          active_embedding_profile = v_job.embedding_profile_id,
          indexed_at = now(), processing_error = null,
          intelligence = coalesce(p_intelligence, intelligence)
-   where id = v_job.file_version_id;
+   where id = v_job.file_version_id
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
 
   update public.files f
      set status = 'indexed', intelligence = coalesce(p_intelligence, f.intelligence), updated_at = now()
     from public.file_versions v
    where v.id = v_job.file_version_id
      and f.id = v.file_id and f.org_id = v.org_id
-     and f.current_version = v.version;
+     and f.current_version = v.version
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   return to_jsonb(v_job);
 end;
 $$;
@@ -476,14 +495,20 @@ begin
            'detail', v_job.last_error_detail,
            'retryable', v_job.stage = 'retryable_failed'
          )
-   where id = v_job.file_version_id;
+   where id = v_job.file_version_id
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   update public.files f
      set status = case when v_job.stage = 'permanent_failed' then 'failed' else 'queued' end,
          updated_at = now()
     from public.file_versions v
    where v.id = v_job.file_version_id
      and f.id = v.file_id and f.org_id = v.org_id
-     and f.current_version = v.version;
+     and f.current_version = v.version
+     and v_job.embedding_profile_id = (
+       select embedding_profile_id from public.organizations where id = v_job.org_id
+     );
   return to_jsonb(v_job);
 end;
 $$;

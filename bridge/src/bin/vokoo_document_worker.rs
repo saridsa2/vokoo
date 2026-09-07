@@ -2,20 +2,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Json, Router};
 use rustvani::vokoo::documents::{
-    DocumentMetrics, DocumentWorker, GeminiEmbeddingFactory, PostgrestJobRepository, RunOutcome,
-    WorkspaceIntelligenceClassifier,
+    document_search_router, DocumentMetrics, DocumentSearchService, DocumentWorker,
+    GeminiEmbeddingFactory, PostgrestJobRepository, RunOutcome, WorkspaceIntelligenceClassifier,
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 struct HttpState {
-    internal_token: Arc<String>,
     metrics: Arc<DocumentMetrics>,
 }
 
@@ -44,6 +42,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &service_key,
     ));
     let metrics = Arc::new(DocumentMetrics::default());
+    let search = Arc::new(DocumentSearchService::new(
+        &supabase_url,
+        &service_key,
+        embeddings.clone(),
+    )?);
     let worker = Arc::new(
         DocumentWorker::new(jobs, embeddings, classifier, worker_id).with_metrics(metrics.clone()),
     );
@@ -52,11 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/metrics", get(render_metrics))
-        .route("/documents/search", post(search_reserved))
-        .with_state(HttpState {
-            internal_token: Arc::new(internal_token),
-            metrics,
-        });
+        .with_state(HttpState { metrics })
+        .merge(document_search_router(search, internal_token));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8082").await?;
     let server_cancel = cancellation.clone();
     let server = tokio::spawn(async move {
@@ -109,20 +109,6 @@ async fn health() -> impl IntoResponse {
 
 async fn render_metrics(State(state): State<HttpState>) -> impl IntoResponse {
     state.metrics.render()
-}
-
-async fn search_reserved(State(state): State<HttpState>, headers: HeaderMap) -> impl IntoResponse {
-    let presented = headers
-        .get("x-vokoo-internal-token")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if presented != state.internal_token.as_str() {
-        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"})));
-    }
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({"error": "document search is not enabled yet"})),
-    )
 }
 
 async fn shutdown_signal() {

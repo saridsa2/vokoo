@@ -9,6 +9,7 @@ mod embedding;
 mod extract;
 mod jobs;
 mod metrics;
+mod search;
 mod worker;
 
 pub use chunk::{chunk_document, ChunkConfig, DocumentChunk, CHUNKER_VERSION};
@@ -25,6 +26,10 @@ pub use jobs::{
     PersistedChunk, PostgrestJobRepository, RepositoryError,
 };
 pub use metrics::DocumentMetrics;
+pub use search::{
+    document_search_router, DocumentSearchRequest, DocumentSearchResponse, DocumentSearchResult,
+    DocumentSearchService, DocumentSearcher, HistoricalDocumentVersion, SearchError,
+};
 pub use worker::{
     DocumentClassifier, DocumentEvidence, DocumentWorker, EmbeddingFactory, EvidenceChunk,
     GeminiEmbeddingFactory, RunOutcome, WorkerError, WorkspaceIntelligenceClassifier,
