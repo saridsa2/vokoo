@@ -1,234 +1,417 @@
-# The care path compiler
+# The document care-path compiler
 
-**Status:** Design. Nothing built.
+**Status:** Approved design. Not implemented.
 
-Second draft. The first one restated the brief and added three inventions
-without marking them. This one leads with the constraint that kills most
-designs of this thing, and marks every judgement that is mine rather than the
-owner's.
+This document defines the first production compiler: take one immutable,
+indexed document version and create reviewable draft care-path flows and draft
+agents from it. The uploaded NICE NG28 Version 1 is the first acceptance
+document.
 
-## The constraint everything else follows from
+The compiler does not publish anything. It produces ordinary workspace drafts,
+which remain subject to the existing agent and flow review and publish paths.
 
-**The compiler can only emit what the platform can already raise and run.**
+## Grounded platform boundary
 
-A trigger is not a name. It is a name *and something that raises it*.
-`trigger.call_answered` works because the carrier's webhook raises it. A trigger
-the compiler invents has no producer, so the flow gets an entry point that can
-never fire — a graph that looks complete and is dead.
+The compiler may emit only registered, active catalogue components that support
+the target flow family. The current care-path vocabulary includes:
 
-The same holds for every node type. So the compiler's vocabulary is fixed
-**before it reads a word of any guideline**, and the interesting work is not
-generating structure. It is faithfully mapping a large messy document onto a
-small fixed vocabulary, and **naming everything that would not fit**.
+- `trigger.recurring`, `trigger.due`, `trigger.document`, and
+  `trigger.reported`;
+- `outreach.request`, `outreach.call`, and `outreach.message`;
+- `intelligence`, `care_path.record`, and `care_path.complete`;
+- `escalate.notify`.
 
-That is the moat, and it is a translation problem, not a generation problem.
+`outreach.request` already requires `what`, `instructions`, and `expires_days`,
+and exposes `fulfilled`, `declined`, `expired`, and `failed`. The compiler can
+therefore validate expiry and failure routes against real catalogue outcomes.
 
-### What the vocabulary actually contains today
+`escalate.notify` is a real component. Its handler creates a durable
+`care_path_escalations` row through `notify_care_path_escalation`. That proves
+trackable escalation work was created; it does not prove that a clinician
+received a notification.
 
-Three triggers: `trigger.call_answered`, `trigger.call_ended`,
-`trigger.call_failed`. All in the `call` family. There is no `care_path` family
-and no clock trigger of any kind.
+Document coordinates are also real. Chunks map to layout items carrying page
+and bounding-box coordinates, and `get_document_layout` exposes them to the
+console. A generated artifact can therefore highlight its source passage.
 
-So today the compiler could emit nothing runnable. Every trigger a care path
-needs is a thing to be built first, and the list below is that build order, not
-a compiler feature list.
+What does not exist yet is the compiler ledger, artifact provenance, evidence
+links, gap storage, transactional materialization, or the stronger graph and
+clinical-path validation described below. Those are requirements of this
+design, not descriptions of the current system.
 
-## The two kinds of trigger, and why the split matters
+## Inputs
 
-*(This cut is mine, not the brief's — the brief listed six trigger kinds as one
-category.)*
+Every run freezes these inputs before model work begins:
 
-**Clock.** A date, a window, a recurrence. We know when it fires. A sweeper
-raises it. We control the timing, and it is reliable.
+1. `org_id`, requested by an authenticated workspace member.
+2. The file and immutable `file_version` selected in Documents.
+3. The version's active completed extraction and layout.
+4. Version-scoped indexed chunks and embeddings.
+5. The Workspace Intelligence recommendation for compiler `care_path`.
+6. A snapshot and digest of active catalogue components.
+7. Published workspace agents, schemas, tools, integrations, and templates that
+   the compiler may reference.
+8. Workspace intelligence provider and model, with its credential resolved by
+   the service-role worker from Vault.
+9. Compiler version, prompt version, and retrieval profile.
 
-**World.** A patient makes contact. A document is uploaded. A state changes.
-It arrives from outside, it must be matched to an enrolment before it means
-anything, and **it may never arrive at all**.
+The run never silently follows `current_version` or `active_extraction_id` after
+it starts. A later upload or re-extraction creates a different input and must be
+compiled by a different run.
 
-On a care path a non-arrival is itself clinically significant — a patient who
-does not answer a chemotherapy check-in is not the same as one with nothing to
-report. So **every world event needs a clock event as its shadow**: the expiry.
-That is what turns an absence into an event.
+For NG28 the worker consumes the stored 131-page Version 1, its Docling layout,
+and its indexed chunks. It does not download or parse the source again.
 
-Which means the owner's rule — *any outreach request has an expiry, after which
-we escalate and stop* — is not a safety detail bolted on. It is the mechanism
-that makes world triggers usable at all, and it collapses "waiting for a
-response" and "no response" into one shape: a request, a window, two exits.
+## Outputs
 
-## What is not a trigger
+A successful run creates:
 
-**"Patient reports a symptom" is not a trigger.** Nothing knows a symptom was
-reported until something has listened. What arrives is a call or a message. The
-trigger is *an enrolled patient made contact*; the symptom is a branch found by
-the first step.
+- one or more `care_path` flows with `status = 'draft'`;
+- every supporting agent with `status = 'draft'`;
+- durable links from those drafts to the compiler run;
+- evidence links from individual flow nodes and agent prompt sections to source
+  chunks and layout coordinates;
+- structured gaps for recommendations that could not be represented;
+- an append-only execution trace;
+- a run summary and source-coverage report.
 
-```
-trigger: enrolled patient made contact
-    → agent: what is this about?          ← classification happens here
-        → symptom  → assess against the guideline's thresholds
-        → question → answer, or escalate
-        → neither  → escalate
-```
+One guideline can yield several coherent care paths. Each care path is one flow
+with N registered trigger nodes. A single enormous NG28 canvas is not a success:
+the supervisor should separate pathways whose population, anchor, or clinical
+purpose is materially different. All artifacts still belong to one run and are
+reviewed together.
 
-Two consequences:
-
-- **The classifier can be wrong.** A model can miss a symptom or invent one. So
-  on a clinical path the `neither` branch cannot be "end" — it escalates. A
-  missed neutropenic sepsis symptom is not a recoverable error. *(Mine.)*
-- **The compiler supplies the list, not the judgement.** It extracts the
-  symptoms the guideline names, with their thresholds and citations, into the
-  schema the agent fills. What counts as a symptom is the guideline's decision
-  and the citation stays attached.
-
-## The output
-
-**One draft flow.** A row in `flows` with `status = 'draft'` and a `graph` jsonb
-holding nodes and edges, with N `trigger.*` entry points.
-
-That is the artifact. Everything else is packaging:
-
-- **Provenance rides in the nodes** — source, version, recommendation number,
-  quote — because `nodes[]` is jsonb and it survives into `flow_versions.snapshot`
-  on publish.
-- **A compilation report**, which is the only genuinely new object: the
-  recommendations that became nothing, the warnings, the assumptions, the gaps.
-  A draft reviewed without the list of what was dropped has not been reviewed.
-- **A `packs` row** ties it to the agents, schemas and tools it references.
-  `packs` already exists (`0095`) with a version bumped when contents change and
-  stamped onto every row the pack creates — its own comment says why: *"without
-  it there is no way to tell which of forty clinics got the old prompt."* That
-  is the versioning story, already built for another reason.
-
-It goes out as a draft and is published through `publish_flow` like anything
-else, so `can_release`, graph validation and the unpublished-agent refusal all
-apply without new machinery.
+`completed_with_gaps` may create valid drafts. A gap never permits an invalid or
+partly materialized graph.
 
 ## Architecture
 
-Agentic front end, deterministic back end.
+The agentic layer interprets the document. Deterministic code owns the platform
+boundary and database writes.
 
-```
-guideline
-   │  agent: separate actionable recommendations from background
-   │  agent: extract thresholds, units, operators, windows, citations
-   │  agent: propose triggers, anchors, and a decomposition into operations
-   ▼
-proposal — a forced tool call against a fixed schema, never prose
-   │  compiler: resolve each operation to a catalogue node type, or refuse
-   │  compiler: build the graph, wire outcomes, attach provenance
-   │  compiler: validate; refuse the pack on any invariant failure
-   ▼
-draft flow + report  →  human review  →  publish
-```
-
-The split is at the proposal because this project already learned that parsing
-model output loses. `intelligence.rs` went through `json_object` (a reasoning
-model replied with a `<think>` block), OpenAI's `json_schema` (rejected the
-schema), and Anthropic's `output_config.format` (accepted, ignored, answered in
-prose) before settling on a forced tool call, where the arguments come back as
-an object by construction because there is no text to parse.
-
-The agent never emits a graph. It emits a proposal; code builds the graph.
-
-### What it must not author
-
-**It must not generate agents.** Generating an agent means writing a system
-prompt, and a system prompt for a chemotherapy check-in is clinical policy —
-the one thing the brief says it must not invent. So it references agents, tools
-and schemas by id, and declares the ones it needs but cannot find:
-
-```
-needs: an agent that can ask about neutropenic symptoms in Hindi — none found
-needs: a tool returning the patient's next cycle date — none found
+```text
+immutable document version
+        |
+        v
+workspace intelligence routing
+        |
+        v
+supervisor: map and delegate cited sections
+        |
+        v
+evidence workers: typed recommendation IR
+        |
+        v
+reconciler: deduplicate and propose care-path units
+        |
+        v
+deterministic lowering against frozen catalogue
+        |
+        v
+validation + transactional materialization
+        |
+        v
+draft flows + draft agents + evidence + gaps
 ```
 
-A gap is reviewable. A generated prompt is an unreviewable claim.
+The model never inserts rows and never supplies arbitrary graph JSON to an
+unvalidated write endpoint. It must call typed tools. Code parses the tool
+arguments, checks them against the frozen inputs, lowers them into platform
+graphs, and persists only accepted output.
 
-*(This narrows the brief, which listed "generate or reference the supporting
-agents". It is my judgement that generate and the non-goal cannot both stand.)*
+## Compiler ledger
 
-## Anchors
+### `compiler_runs`
 
-`cohort_patients.started_on` is day 0 for that patient — its migration calls it
-the load-bearing column, because two patients enrolled a week apart are never at
-the same point.
+One row owns a compilation:
 
-So the compiler emits **offsets from a named anchor** and declares which anchor
-the path requires (`treatment_start`, `discharge`, `birth`,
-`transfer_of_care`). It never emits an absolute date. A guideline needing an
-anchor the enrolment cannot supply is a warning, not an assumption.
+- organization, file, file version, and extraction IDs;
+- compiler ID (`care_path` initially);
+- status;
+- provider and model;
+- compiler, prompt, and retrieval-profile versions;
+- catalogue digest and input snapshot;
+- requester and timestamps;
+- summary, coverage counters, and terminal error.
+
+Statuses are:
+
+```text
+queued -> planning -> compiling -> validating -> materializing
+                                                   |-> completed
+                                                   |-> completed_with_gaps
+any pre-terminal state ----------------------------|-> failed
+any pre-materialization state ---------------------|-> cancelled
+```
+
+Status transitions happen through narrow database functions, not arbitrary
+table updates. Only one active care-path compilation may exist for the same
+file version and compiler version.
+
+### `compiler_steps`
+
+An append-only structured trace. Each row contains:
+
+- run ID and monotonically increasing sequence;
+- optional parent step;
+- kind: `plan`, `retrieve`, `extract`, `reconcile`, `lower`, `validate`, or
+  `materialize`;
+- task key, objective, and physical page range where applicable;
+- status, timestamps, and duration;
+- typed input references and typed result;
+- provider request metadata, token usage, and retry count;
+- bounded, redacted error information.
+
+This is the compiler thought trace. Hidden chain-of-thought and free-form model
+reasoning are neither requested nor stored. The review surface shows decisions,
+evidence, tool calls, validations, and refusals.
+
+### `compiler_gaps`
+
+Each omission is independently reviewable:
+
+- run and originating step;
+- stable code and severity;
+- recommendation identifier;
+- explanation;
+- missing catalogue capability, resource, or evidence;
+- source evidence;
+- review status and optional resolution note.
+
+Warnings are not gaps. A warning explains a safe choice the compiler made. A
+gap means document intent was not represented.
+
+### `compiler_artifacts`
+
+This relation records generated workspace objects without adding
+compiler-specific columns to every artifact table. It has an `artifact_type`,
+the artifact's stable compiler key and role, and nullable foreign keys to
+`agents` and `flows`. The materialization function requires exactly the foreign
+key selected by `artifact_type`; deletion may set that key to null while
+retaining the origin record.
+
+Deleting a draft does not delete its run, steps, gaps, or evidence record. The
+artifact relation may retain a tombstone key after the target is deleted.
+
+### `compiler_evidence_links`
+
+Each row links one compiler artifact target to one stored document chunk:
+
+- compiler artifact ID;
+- target path, such as `flow.nodes.hba1c-request` or
+  `agent.system_prompt.monitoring-boundary`;
+- chunk ID and cited excerpt;
+- recommendation identifier;
+- evidence role, such as `requirement`, `threshold`, `timing`, or `exception`.
+
+The chunk's existing layout-item links provide the page and bounding boxes.
+Coordinates are not copied into compiler tables.
+
+## Agent harness
+
+### Supervisor
+
+The supervisor receives a compact physical-page map, headings, document
+classification, and a bounded retrieval tool. It identifies actionable sections
+and delegates non-overlapping, coherent tasks by recommendation structure, not
+equal page counts.
+
+It records excluded sections such as references, background, rationale, and
+research recommendations. Exclusion is visible in the coverage report.
+
+### Evidence workers
+
+Each worker receives only its assigned pages, nearby structural context, the
+relevant retrieved chunks, and the typed recommendation schema. It extracts:
+
+- population and exclusions;
+- anchor and timing window;
+- event or observation;
+- action and completion evidence;
+- thresholds with operator and unit;
+- failure, expiry, and escalation requirements;
+- exact citations.
+
+Workers emit an intermediate representation, not flows. Every clinical claim
+must carry at least one citation from the frozen version.
+
+### Reconciler
+
+The reconciler deduplicates overlapping recommendations, identifies conflicts,
+and proposes care-path units. It may connect requirements from separate
+sections only when both are cited. Ambiguity becomes a gap rather than an
+assumption.
+
+### Deterministic lowerer
+
+The lowerer resolves every intermediate operation to a registered component or
+emits a gap. It supplies catalogue defaults, validates required fields, wires
+real outcomes, resolves existing workspace resources, and assigns stable node
+keys.
+
+Generated agents are produced only where conversation is required. Their
+system prompt and first message translate cited policy into conversational
+behavior, with explicit scope and escalation boundaries. They may not add
+clinical policy absent from the source. All generated agents remain drafts.
+
+The first implementation uses the existing `intelligence` flow node for
+structured extraction after a call or document. It does not add one
+`structured_output_id` column to `agents`; a future direct agent-output contract
+would need a many-to-many design.
 
 ## Validation
 
-Refusals, not judgement — each is a check on the graph.
+Validation has three layers.
 
-1. Every trigger reaches a terminal.
-2. Every world trigger has an expiry with its own branch.
-3. Every care path has a reachable escalation. *(Mine — the brief listed
-   escalation as an operation. `organizations.escalation_number` exists because
-   inventing a destination is worse than admitting there is none.)*
-4. Failure and non-response have branches.
-5. Thresholds keep unit and operator. Units go through the UCUM vocabulary in
-   the clinical schemas; `normalise_unit` refuses an analyte it has no molar
-   mass for rather than converting with a guess.
-6. Node types and config valid against the **pinned catalogue version**.
-   *(Mine. `catalogue_node_types` moves — `0113` renamed a family, `0115` added
-   two node types — so a pack compiled yesterday is not obviously valid today
-   unless it says which catalogue it was compiled against.)*
-7. Every referenced agent, tool and schema exists and is published.
-8. Every anchor is one an enrolment supplies.
+### Catalogue validation
 
-## When the guideline is revised
+- Every component is active and belongs to `care_path`.
+- Every required configuration value exists and matches its catalogue field.
+- Every transition names real nodes and a real source outcome.
+- Every generated agent reference resolves to an agent created in the run or an
+  allowed published workspace agent.
+- Every referenced schema, tool, integration, and template is allowed by the
+  frozen input snapshot.
 
-*(Mine. Not in the brief, and it may be wrong for a clinical product — see the
-open question.)*
+### Graph validation
 
-NG28 v2.2 lands while patients are mid-path on v2.1.
+The existing release validator proves only that a trigger has an outgoing
+transition. The compiler must additionally reject:
 
-- A pack pins its guideline version as it pins the catalogue version.
-- Recompiling produces a **diff against the previous pack**, node by node, with
-  the recommendations that changed. A human reviews the diff, not the whole path.
-- Enrolled patients finish on the version they started, unless migrated
-  deliberately — the same shape as pinning a call to the flow version chosen at
-  call start.
+- unreachable non-trigger nodes;
+- transitions from nonexistent or incompatible outcomes;
+- reachable closed cycles with no terminal exit;
+- trigger branches that cannot reach work or a terminal outcome;
+- duplicate stable node or transition identities.
 
-## The review surface
+Bounded catalogue loop components remain legal because their limits are
+explicit configuration.
 
-A canvas of boxes is not a review. Reviewable by a clinician means the
-recommendation on one side and the nodes it became on the other, with the
-citation and the extracted threshold visible **at the point of approval**, plus
-the recommendations that became nothing. Warnings that are not visible where the
-decision is made have nowhere to land.
+### Compiled clinical-path validation
 
-## Build order
+For compiler-generated flows:
 
-The compiler is last, not first. Nothing above it can be emitted until these
-exist:
+- every `outreach.request` `declined`, `expired`, and `failed` branch must reach
+  `escalate.notify`;
+- `intelligence.empty`, `intelligence.failed`, `care_path.record.failed`,
+  `care_path.complete.not_found`, and `care_path.complete.failed` may not
+  silently terminate in a generated clinical path;
+- every extracted requirement marked `escalation_required` must lower to a path
+  that reaches `escalate.notify`;
+- every `escalate.notify` supplies a catalogue-valid recipient, urgency, and
+  note;
+- timing uses a supported anchor and explicit interval or window;
+- thresholds retain operator and unit;
+- an unsupported recommendation becomes a gap, never an approximate node.
 
-1. The `care_path` family.
-2. Clock triggers — `trigger.due`, `trigger.recurring` — and the sweeper that
-   raises them. This also raises expiries, so it is one mechanism.
-3. Contact matching: an inbound call or message → patient → enrolment → care
-   path → entry point. Today the bridge resolves a *dialled* number to a flow,
-   not a *calling* number to a patient.
-4. A document-request node and the upload path that raises its event.
-5. A catalogue version to pin.
-6. A care-path-invokes-care-path node, or reuse forces a split and the one-flow
-   model breaks.
+These checks apply before materialization and again on publish. Rechecking at
+publish prevents a human edit from bypassing compiler safety.
 
-## Open questions
+## Transactional materialization
 
-1. **Should a guideline revision propagate to enrolled patients?** I assumed
-   not, by analogy with call version pinning. For a *safety* update the opposite
-   may be required, and that is a clinical decision, not an engineering one.
-2. **Which care path answers** when a patient enrolled on three makes contact?
-   The agent asks, most-recent wins, or a triage flow dispatches.
-3. **Partial expression.** A recommendation the compiler can express only in
-   part — emit the partial nodes with a warning, or emit nothing and name it?
-   Partial is more useful and more dangerous.
-4. **Where does the compiler run?** It reads a document with a model, so it
-   needs a provider key, which means the bridge — the only process allowed one.
-   But it is not on the call path and nobody is waiting.
-5. **Who may compile?** `can_release` gates publishing. Compiling produces a
-   draft, so it may be a lower bar — but it costs model time and reads clinical
-   material.
+A service-role database function accepts only a validated, run-bound compiler
+program. In one transaction it:
+
+1. locks the run and confirms it is in `materializing`;
+2. confirms the frozen version, extraction, and catalogue digest;
+3. validates artifact keys and tenant ownership;
+4. inserts all draft agents;
+5. resolves compiler agent keys to database IDs;
+6. inserts all draft flows;
+7. inserts artifact and evidence links;
+8. inserts final gaps and coverage counts;
+9. marks the run `completed` or `completed_with_gaps`.
+
+Any error rolls back all workspace artifacts. The worker then marks the run
+`failed` in a separate transaction, retaining its trace and safe diagnostic.
+
+The browser cannot call the materialization function directly. It starts or
+cancels an authorized run through the control plane; the document worker owns
+provider access and service-role writes.
+
+## Review surface
+
+The Documents right pane remains the compiler control surface:
+
+1. Workspace Intelligence recommends the Care path compiler.
+2. The user chooses **Compile into workflow**.
+3. The pane shows structured progress from compiler steps.
+4. Completion shows generated flows, generated agents, source coverage, gaps,
+   warnings, and failures.
+5. Selecting a node or prompt section highlights its linked source passage.
+6. Selecting evidence in the document opens the generated artifact target.
+7. The user edits the ordinary drafts in their existing editors.
+8. Publishing uses the normal permission and validation paths.
+
+The UI never labels `escalate.notify` as a delivered notification. It says that
+trackable escalation work will be created.
+
+## Failure, retry, and cancellation
+
+- Model/provider failures are retryable without repeating completed immutable
+  steps.
+- Invalid model output is rejected at the tool boundary and may receive one
+  bounded correction attempt.
+- A changed active document version does not mutate a running job.
+- A changed catalogue digest before materialization fails the run and asks for
+  recompilation against the new catalogue.
+- Cancellation stops new model work. Materialization itself is short and
+  transactional, so it is not interrupted halfway.
+- Partial worker success remains in the trace but creates no artifact until the
+  complete linked program validates.
+
+## Tenant and data boundaries
+
+- Every compiler row carries `org_id` and uses organization-scoped RLS.
+- Authenticated users may read runs for their organizations and start a run if
+  they can edit workspace drafts.
+- Only the service role may claim jobs, resolve provider secrets, append worker
+  steps, or materialize artifacts.
+- Prompts contain only the minimum page ranges and chunks required by a task.
+- Logs contain identifiers and bounded diagnostics, not document text or model
+  prompts.
+- There are no live patients or calls in the NG28 acceptance test.
+
+## NG28 acceptance slice
+
+The first vertical slice runs the supervisor over the whole uploaded NG28
+version, but materializes only one clearly bounded pathway: HbA1c monitoring.
+This deliberately exercises the complete architecture without claiming that
+all 131 pages can be translated in the first iteration.
+
+Acceptance requires:
+
+1. The run freezes NG28 Version 1 and its active extraction.
+2. Supervisor selections and exclusions cite physical pages.
+3. Workers extract cited monitoring cadence and completion evidence.
+4. The lowerer uses only current catalogue components.
+5. At least one valid draft care-path flow and every required draft agent are
+   created transactionally.
+6. The flow contains real failure and expiry routes to `escalate.notify`.
+7. Every generated node and clinical prompt section links to a source chunk and
+   can highlight its PDF layout items.
+8. Unsupported NG28 actions are stored as gaps.
+9. No draft is published, enrolled, or executed.
+10. A retry is idempotent and does not duplicate artifacts.
+
+## Delivery order
+
+1. Compiler ledger, RLS, and state-transition tests.
+2. Artifact and evidence provenance plus transactional materialization tests.
+3. Stronger graph and compiled-care-path validation.
+4. Production harness using the existing AISDK/MiniMax provider boundary.
+5. NG28 supervisor, worker, reconciliation, and lowering acceptance tests.
+6. Control-plane start, status, cancel, and result endpoints.
+7. Documents-pane progress, review, gaps, artifact links, and source highlighting.
+8. VPS deployment followed by a signed-in NG28 browser test.
+
+## Non-goals for the first slice
+
+- Publishing generated agents or flows.
+- Enrolling patients or executing generated care paths.
+- Compiling all of NG28.
+- Generating new catalogue components, tools, integrations, or schemas.
+- Proving notification delivery beyond creating trackable escalation work.
+- Persisting model chain-of-thought.
+- Automatically propagating a revised guideline to existing care-path
+  enrolments.
