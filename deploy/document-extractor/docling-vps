@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+
+image="vokoo-docling-rs:1.37.0-5a4f78e"
+staging_root="${VOKOO_DOCUMENT_STAGING_DIR:-/opt/vokoo/document-extractor/tmp}"
+
+run_docling() {
+  docker run --rm \
+    --network none \
+    --cpus 2 \
+    --memory 4g \
+    --memory-swap 4g \
+    --pids-limit 256 \
+    --read-only \
+    --tmpfs /tmp:rw,noexec,nosuid,size=512m \
+    --security-opt no-new-privileges \
+    --user 65532:65532 \
+    "$@"
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+  run_docling "$image" --version
+  exit $?
+fi
+
+if [ "$#" -ne 5 ] \
+   || [ "$1" != "--to" ] \
+   || [ "$2" != "json" ] \
+   || [ "$3" != "--heading-hierarchy" ] \
+   || [ "$4" != "--skip-ocr" ]; then
+  echo "the Vokoo Docling wrapper accepts only the pinned extraction command" >&2
+  exit 64
+fi
+
+source_path=$(readlink -f "$5")
+staging_root=$(readlink -f "$staging_root")
+case "$source_path" in
+  "$staging_root"/*) ;;
+  *)
+    echo "the extraction source is outside the configured staging directory" >&2
+    exit 65
+    ;;
+esac
+
+run_docling \
+  --mount "type=bind,source=$source_path,target=/data/source.pdf,readonly" \
+  "$image" \
+  --to json --heading-hierarchy --skip-ocr /data/source.pdf

@@ -56,17 +56,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("docling-vps") => {
             let executable = required("VOKOO_DOCLING_PATH")?;
+            let staging_dir = required("VOKOO_DOCUMENT_STAGING_DIR")?;
             let expected_version =
                 optional("VOKOO_DOCLING_VERSION").unwrap_or_else(|| "1.37.0".into());
             let timeout = parsed_env("VOKOO_DOCLING_TIMEOUT_SECONDS", 300_u64)?;
             let max_output = parsed_env("VOKOO_DOCLING_MAX_OUTPUT_BYTES", 64_usize * 1024 * 1024)?;
             log::info!("[document-worker] using Docling VPS extraction version {expected_version}");
-            worker = worker.with_extraction_provider(Arc::new(DoclingCommandProvider::new(
-                executable,
-                expected_version,
-                Duration::from_secs(timeout),
-                max_output,
-            )));
+            worker = worker.with_extraction_provider(Arc::new(
+                DoclingCommandProvider::new(
+                    executable,
+                    expected_version,
+                    Duration::from_secs(timeout),
+                    max_output,
+                )
+                .with_staging_dir(staging_dir),
+            ));
         }
         Some(provider) => {
             return Err(format!(

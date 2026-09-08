@@ -194,6 +194,7 @@ pub struct DoclingCommandProvider {
     expected_version: String,
     timeout: Duration,
     max_output_bytes: usize,
+    staging_dir: Option<PathBuf>,
 }
 
 impl DoclingCommandProvider {
@@ -208,7 +209,13 @@ impl DoclingCommandProvider {
             expected_version: expected_version.into(),
             timeout,
             max_output_bytes,
+            staging_dir: None,
         }
+    }
+
+    pub fn with_staging_dir(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.staging_dir = Some(directory.into());
+        self
     }
 
     async fn output(&self, arguments: &[&str]) -> Result<std::process::Output, ProviderError> {
@@ -265,7 +272,8 @@ impl DocumentExtractionProvider for DoclingCommandProvider {
             )));
         }
 
-        let staged = StagedSource::write(request.bytes.as_ref(), "pdf").await?;
+        let staged =
+            StagedSource::write(request.bytes.as_ref(), "pdf", self.staging_dir.as_deref()).await?;
         let path = staged.path().to_string_lossy().into_owned();
         let output = self
             .output(&["--to", "json", "--heading-hierarchy", "--skip-ocr", &path])
@@ -287,9 +295,21 @@ static STAGED_SOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 struct StagedSource(PathBuf);
 
 impl StagedSource {
-    async fn write(bytes: &[u8], extension: &str) -> Result<Self, ProviderError> {
+    async fn write(
+        bytes: &[u8],
+        extension: &str,
+        directory: Option<&Path>,
+    ) -> Result<Self, ProviderError> {
         let sequence = STAGED_SOURCE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let directory = directory
+            .map(Path::to_path_buf)
+            .unwrap_or_else(std::env::temp_dir);
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .map_err(|error| {
+                ProviderError::retryable(format!("could not create the staging directory: {error}"))
+            })?;
+        let path = directory.join(format!(
             "vokoo-document-{}-{sequence}.{extension}",
             std::process::id()
         ));

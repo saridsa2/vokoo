@@ -121,7 +121,21 @@ file is `/opt/vokoo/rustvani/.env` and must already provide `SUPABASE_URL`,
 duplicated there: the worker resolves the operator-managed `gemini` platform
 credential through `resolve_vendor_secret`.
 
-Install or update the unit only after migration 0123 succeeds:
+PDF layout extraction is selected explicitly by the systemd unit. It invokes
+the pinned `vokoo-docling-rs:1.37.0-5a4f78e` CPU image through
+`deploy/document-extractor/docling-vps`; the container receives one staged PDF,
+has no network, and is limited to 2 CPUs, 4 GiB of memory, 256 processes, and a
+512 MiB temporary filesystem. Build the small pinning image and prepare its
+root-only staging directory before restarting the worker:
+
+```bash
+ssh vokoo 'cd /opt/vokoo/rustvani && sudo docker build -t vokoo-docling-rs:1.37.0-5a4f78e deploy/document-extractor'
+ssh vokoo 'sudo install -d -m 0700 /opt/vokoo/document-extractor/tmp && sudo chmod 0755 /opt/vokoo/rustvani/deploy/document-extractor/docling-vps'
+ssh vokoo '/opt/vokoo/rustvani/deploy/document-extractor/docling-vps --version'
+```
+
+Install or update the unit only after all document migrations through 0126
+succeed:
 
 ```bash
 ssh vokoo 'sudo cp /opt/vokoo/rustvani/deploy/vokoo-document-worker.service /etc/systemd/system/'

@@ -7,6 +7,12 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/vokoo/rustvani
 EnvironmentFile=/opt/vokoo/rustvani/.env
+Environment=VOKOO_DOCUMENT_EXTRACTION_PROVIDER=docling-vps
+Environment=VOKOO_DOCLING_PATH=/opt/vokoo/rustvani/deploy/document-extractor/docling-vps
+Environment=VOKOO_DOCLING_VERSION=1.37.0
+Environment=VOKOO_DOCLING_TIMEOUT_SECONDS=600
+Environment=VOKOO_DOCLING_MAX_OUTPUT_BYTES=67108864
+Environment=VOKOO_DOCUMENT_STAGING_DIR=/opt/vokoo/document-extractor/tmp
 ExecStart=/opt/vokoo/rustvani/target/release/vokoo_document_worker
 Restart=always
 RestartSec=5

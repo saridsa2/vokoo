@@ -207,6 +207,7 @@ async fn docling_command_provider_uses_the_pdf_layout_pipeline_and_cleans_up() {
     let directory = std::env::temp_dir().join(format!("vokoo-docling-provider-{unique}"));
     std::fs::create_dir_all(&directory).unwrap();
     let executable = directory.join("docling-rs");
+    let staging = directory.join("staging");
     let arguments = directory.join("arguments.txt");
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/documents/docling-layout.json");
@@ -221,7 +222,8 @@ async fn docling_command_provider_uses_the_pdf_layout_pipeline_and_cleans_up() {
     std::fs::set_permissions(&executable, permissions).unwrap();
 
     let provider =
-        DoclingCommandProvider::new(&executable, "1.37.0", Duration::from_secs(2), 1024 * 1024);
+        DoclingCommandProvider::new(&executable, "1.37.0", Duration::from_secs(2), 1024 * 1024)
+            .with_staging_dir(&staging);
     let extraction = provider
         .extract(ExtractionRequest {
             mime_type: "application/pdf".into(),
@@ -241,6 +243,7 @@ async fn docling_command_provider_uses_the_pdf_layout_pipeline_and_cleans_up() {
     );
     let staged = args.last().expect("staged PDF argument");
     assert!(staged.ends_with(".pdf"));
+    assert!(std::path::Path::new(staged).starts_with(&staging));
     assert!(!std::path::Path::new(staged).exists());
 
     std::fs::remove_dir_all(directory).unwrap();
