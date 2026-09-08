@@ -2137,6 +2137,10 @@ fn document_source_response(source: &Value) -> Result<Response, ApiError> {
         HeaderValue::from_str(&format!("\"{sha256}\""))
             .map_err(|_| ApiError::upstream("document source hash was invalid"))?,
     );
+    response.headers_mut().insert(
+        header::VARY,
+        HeaderValue::from_static("authorization, x-org-id"),
+    );
     Ok(response)
 }
 
@@ -4890,6 +4894,7 @@ mod tests {
             "private, max-age=31536000, immutable"
         );
         assert_eq!(response.headers()[header::ETAG], format!("\"{}\"", "a".repeat(64)));
+        assert_eq!(response.headers()[header::VARY], "authorization, x-org-id");
         let bytes = axum::body::to_bytes(response.into_body(), 16).await.unwrap();
         assert_eq!(&bytes[..], b"%PDF");
     }

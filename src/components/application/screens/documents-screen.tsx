@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useNotify } from "@/components/application/notifications/notification-provider";
+import { PdfDocumentViewer } from "@/components/application/documents/pdf-document-viewer";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
@@ -17,10 +18,13 @@ import {
     normalizeCompilerRecommendations,
     selectDocument,
     selectDocumentVersion,
+    selectEvidenceLayout,
     shouldPollDocumentJob,
     validateHistoricalSearch,
     type DocumentJob,
+    type CompilerEvidence,
     type DocumentIntelligence,
+    type DocumentLayout,
     type DocumentVersion,
     type WorkspaceDocument,
 } from "@/lib/document-workspace";
@@ -63,6 +67,11 @@ export function DocumentsScreen() {
     const [searchResults, setSearchResults] = useState<DocumentSearchResult[]>([]);
     const [unavailableDocuments, setUnavailableDocuments] = useState(0);
     const [isSearching, setIsSearching] = useState(false);
+    const [source, setSource] = useState<Blob | null>(null);
+    const [sourceText, setSourceText] = useState("");
+    const [layout, setLayout] = useState<DocumentLayout | null>(null);
+    const [sourceError, setSourceError] = useState<string | null>(null);
+    const [selectedEvidence, setSelectedEvidence] = useState<Pick<CompilerEvidence, "chunk_id" | "page"> | null>(null);
 
     useEffect(() => {
         setSelectedId((current) => selectDocument(records, current));
@@ -123,6 +132,39 @@ export function DocumentsScreen() {
     const stage = job && job.file_version_id === selectedVersion?.id
         ? job.stage
         : selectedVersion?.status ?? selected?.status ?? "queued";
+
+    useEffect(() => {
+        let cancelled = false;
+        setSource(null);
+        setSourceText("");
+        setLayout(null);
+        setSourceError(null);
+        setSelectedEvidence(null);
+        if (!context || !selected || !selectedVersion) return;
+        void Promise.all([
+            api.documentSource(selected.id, selectedVersion.version, context),
+            api.documentLayout(selected.id, selectedVersion.version, context),
+        ]).then(async ([blob, response]) => {
+            if (cancelled) return;
+            setSource(blob);
+            setLayout(response.data);
+            if (selectedVersion.mime_type !== "application/pdf") setSourceText(await blob.text());
+        }).catch((cause) => {
+            if (!cancelled) setSourceError(cause instanceof Error ? cause.message : "The source could not be loaded.");
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [context, selected?.id, selectedVersion?.id]);
+
+    const evidenceSelection = useMemo(
+        () => selectEvidenceLayout(
+            layout?.items ?? [],
+            selectedEvidence?.chunk_id,
+            selectedEvidence?.page ?? null,
+        ),
+        [layout?.items, selectedEvidence],
+    );
 
     useEffect(() => {
         if (
@@ -231,7 +273,7 @@ export function DocumentsScreen() {
     }
 
     return (
-        <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
+        <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className="flex min-h-0 flex-col border-secondary lg:border-r">
                 <div className="flex items-center justify-between px-5 py-4">
                     <h1 className="text-sm font-semibold text-primary">Documents</h1>
@@ -363,8 +405,30 @@ export function DocumentsScreen() {
                             </div>
                         </header>
 
-                        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-                            <div className="mx-auto flex max-w-3xl flex-col gap-5">
+                        <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px]">
+                            <div className="min-h-[50vh] min-w-0 overflow-hidden border-secondary xl:min-h-0 xl:border-r">
+                                {selectedVersion?.mime_type === "application/pdf" ? (
+                                    <PdfDocumentViewer
+                                        source={source}
+                                        pages={layout?.pages ?? []}
+                                        highlights={evidenceSelection.spans}
+                                        targetPage={evidenceSelection.page}
+                                        error={sourceError}
+                                    />
+                                ) : (
+                                    <div className="h-full overflow-auto bg-secondary p-5">
+                                        {sourceError ? (
+                                            <p className="text-sm text-error-primary">{sourceError}</p>
+                                        ) : (
+                                            <pre className="mx-auto min-h-full max-w-3xl whitespace-pre-wrap bg-primary p-6 text-sm leading-6 text-secondary shadow-xs ring-1 ring-secondary">
+                                                {sourceText || "Loading source…"}
+                                            </pre>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            <aside className="min-h-0 overflow-y-auto p-5">
+                              <div className="flex flex-col gap-5">
                                 <div className="flex items-start justify-between gap-4 border-b border-secondary pb-4">
                                     <div>
                                         <h3 className="text-md font-semibold text-primary">Workspace Intelligence</h3>
@@ -406,7 +470,11 @@ export function DocumentsScreen() {
                                     </div>
                                 ) : null}
 
-                                <IntelligenceResult intelligence={intelligence} version={selectedVersion?.version ?? selected.current_version} />
+                                <IntelligenceResult
+                                    intelligence={intelligence}
+                                    version={selectedVersion?.version ?? selected.current_version}
+                                    onEvidence={setSelectedEvidence}
+                                />
 
                                 <section className="border-t border-secondary pt-5" aria-labelledby="document-search-title">
                                     <h3 id="document-search-title" className="text-md font-semibold text-primary">Search this document</h3>
@@ -438,19 +506,29 @@ export function DocumentsScreen() {
                                     {searchResults.length > 0 ? (
                                         <ol className="mt-4 flex flex-col gap-3">
                                             {searchResults.map((result) => (
-                                                <li key={result.chunk_id} className="rounded-xl ring-1 ring-secondary px-4 py-3">
-                                                    <p className="text-sm leading-6 text-secondary">{result.text}</p>
-                                                    <p className="mt-2 text-xs text-quaternary">
-                                                        Version {result.version}
-                                                        {result.page_start ? ` · Page ${result.page_start}${result.page_end && result.page_end !== result.page_start ? `–${result.page_end}` : ""}` : ""}
-                                                        {result.section_path.length ? ` · ${result.section_path.join(" › ")}` : ""}
-                                                    </p>
+                                                <li key={result.chunk_id} className="overflow-hidden rounded-xl ring-1 ring-secondary">
+                                                    <button
+                                                        type="button"
+                                                        className="w-full px-4 py-3 text-left hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
+                                                        onClick={() => setSelectedEvidence({
+                                                            chunk_id: result.chunk_id,
+                                                            page: result.page_start,
+                                                        })}
+                                                    >
+                                                        <p className="text-sm leading-6 text-secondary">{result.text}</p>
+                                                        <p className="mt-2 text-xs text-quaternary">
+                                                            Version {result.version}
+                                                            {result.page_start ? ` · Page ${result.page_start}${result.page_end && result.page_end !== result.page_start ? `–${result.page_end}` : ""}` : ""}
+                                                            {result.section_path.length ? ` · ${result.section_path.join(" › ")}` : ""}
+                                                        </p>
+                                                    </button>
                                                 </li>
                                             ))}
                                         </ol>
                                     ) : null}
                                 </section>
-                            </div>
+                              </div>
+                            </aside>
                         </div>
                     </>
                 )}
@@ -459,7 +537,15 @@ export function DocumentsScreen() {
     );
 }
 
-function IntelligenceResult({ intelligence, version }: { intelligence: DocumentIntelligence | null; version: number }) {
+function IntelligenceResult({
+    intelligence,
+    version,
+    onEvidence,
+}: {
+    intelligence: DocumentIntelligence | null;
+    version: number;
+    onEvidence: (evidence: Pick<CompilerEvidence, "chunk_id" | "page">) => void;
+}) {
     if (!intelligence) {
         return (
             <div className="rounded-xl border border-dashed border-secondary px-6 py-10 text-center">
@@ -492,13 +578,18 @@ function IntelligenceResult({ intelligence, version }: { intelligence: DocumentI
                             <div className="mt-4 flex flex-col gap-3">
                         <p className="text-xs font-medium text-tertiary">Evidence in version {version}</p>
                                 {recommendation.evidence.map((evidence, index) => (
-                                    <blockquote key={`${evidence.page}-${index}`} className="border-l-2 border-brand pl-3 text-sm text-tertiary">
+                                    <button
+                                        key={`${evidence.page}-${index}`}
+                                        type="button"
+                                        className="border-l-2 border-brand py-1 pl-3 text-left text-sm text-tertiary hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-brand"
+                                        onClick={() => onEvidence(evidence)}
+                                    >
                                         “{evidence.text}”
                                         <span className="ml-2 text-xs text-quaternary">
                                             {evidence.page ? `Page ${evidence.page}${evidence.page_end && evidence.page_end !== evidence.page ? `–${evidence.page_end}` : ""}` : "Location unavailable"}
                                             {evidence.section_path?.length ? ` · ${evidence.section_path.join(" › ")}` : ""}
                                         </span>
-                                    </blockquote>
+                                    </button>
                                 ))}
                             </div>
                         )}
