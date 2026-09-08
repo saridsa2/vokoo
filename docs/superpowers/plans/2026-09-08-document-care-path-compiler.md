@@ -129,7 +129,7 @@ git commit -m "feat: add durable compiler run ledger"
 - Consumes: terminally validated `compiler_runs`, existing `agents`, `flows`, `document_chunks`, and chunk-to-layout links.
 - Produces: `compiler_artifacts`, `compiler_evidence_links`, and `materialize_care_path_compilation(uuid,text,jsonb,jsonb,jsonb,jsonb)`.
 
-- [ ] **Step 1: Write a failing atomic-materialization test**
+- [x] **Step 1: Write a failing atomic-materialization test**
 
 Seed one `materializing` run, one cited chunk, one generated agent payload, and one care-path flow payload that references the agent by stable key:
 
@@ -148,19 +148,19 @@ v_result := public.materialize_care_path_compilation(
 
 Expected before migration: function does not exist.
 
-- [ ] **Step 2: Add artifact and evidence tables**
+- [x] **Step 2: Add artifact and evidence tables**
 
 `compiler_artifacts` stores `artifact_type in ('agent','flow')`, stable key, role, nullable agent/flow FKs with `ON DELETE SET NULL`, and a check that no row points to both. The materializer, rather than a static check, requires the correct live FK at insertion. `compiler_evidence_links` references an artifact and a same-organization/version chunk, with unique `(artifact_id,target_path,chunk_id,role)`.
 
-- [ ] **Step 3: Implement transactional materialization**
+- [x] **Step 3: Implement transactional materialization**
 
 The security-definer service-role RPC locks the run, checks lease owner/status/digests, rejects duplicate keys, validates all evidence chunks belong to the frozen version, inserts agents first, resolves `agent_key` in flow graphs to new UUIDs, inserts flows second, links artifacts/evidence/gaps, and updates the run in the same transaction. Use `status='draft'`; do not invoke either publish RPC.
 
-- [ ] **Step 4: Prove rollback and idempotency**
+- [x] **Step 4: Prove rollback and idempotency**
 
 Add assertions that a foreign chunk, missing agent key, duplicate stable key, or malformed graph creates zero agents and zero flows. Repeating the completed call returns the same artifact IDs without duplicates. Deleting a generated draft nulls its FK but retains run origin and evidence.
 
-- [ ] **Step 5: Run SQL tests and commit**
+- [x] **Step 5: Run SQL tests and commit**
 
 Apply `0128`, reload PostgREST, and run the test with `ON_ERROR_STOP=1`. Expected: all assertions pass.
 
