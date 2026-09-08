@@ -369,23 +369,23 @@ git commit -m "feat: process compiler runs durably"
 - Produces: `POST /api/v1/documents/{id}/versions/{version}/compilations`, `GET /api/v1/compiler-runs/{id}`, and `POST /api/v1/compiler-runs/{id}/cancel`.
 - Consumes: authenticated `x-org-id`, Supabase user JWT, `enqueue_compiler_run`, RLS-visible compiler report rows, and `cancel_compiler_run`.
 
-- [ ] **Step 1: Write failing request-validation tests**
+- [x] **Step 1: Write failing request-validation tests**
 
 Add unit tests for compiler ID allowlist (`care_path` only), UUID/version bounds, missing Workspace Intelligence recommendation, non-indexed versions, wrong organization, and terminal-run cancellation.
 
-- [ ] **Step 2: Implement start endpoint**
+- [x] **Step 2: Implement start endpoint**
 
 Accept `{ "compiler_id": "care_path" }`, resolve the selected immutable version, call `enqueue_compiler_run`, and return HTTP 202 with the normalized run. Never accept provider, model, source text, catalogue, or credentials from the browser.
 
-- [ ] **Step 3: Implement report endpoint**
+- [x] **Step 3: Implement report endpoint**
 
 Return the run plus ordered steps, gaps, artifacts, and evidence targets through RLS-scoped queries. Do not return stored prompt bodies, source excerpts beyond cited bounded excerpts, service diagnostics, or provider request payloads.
 
-- [ ] **Step 4: Implement cancellation endpoint and routes**
+- [x] **Step 4: Implement cancellation endpoint and routes**
 
 Call `cancel_compiler_run` and return 409 when the run is materializing or terminal. Register exact routes before generic resource routes.
 
-- [ ] **Step 5: Run server tests and commit**
+- [x] **Step 5: Run server tests and commit**
 
 ```bash
 cargo test --manifest-path server/Cargo.toml

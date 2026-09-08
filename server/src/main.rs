@@ -244,6 +244,31 @@ struct CreateDocumentVersionRequest {
     content_base64: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct StartCompilationRequest {
+    compiler_id: String,
+}
+
+const CARE_PATH_COMPILER_VERSION: &str = "care-path-v1";
+const CARE_PATH_PROMPT_VERSION: &str = "care-path-prompt-v1";
+
+fn validate_compilation_request(id: &str, version: i32, request: &StartCompilationRequest) -> Result<(), ApiError> {
+    validated_uuid(id, "document id")?;
+    if version < 1 { return Err(ApiError::BadRequest("document version must be positive".into())); }
+    if request.compiler_id != "care_path" { return Err(ApiError::BadRequest("only the care_path compiler is registered".into())); }
+    Ok(())
+}
+
+fn version_supports_compilation(version: &Value) -> Result<(), ApiError> {
+    if version.get("status").and_then(Value::as_str) != Some("indexed") {
+        return Err(ApiError::Conflict("the selected document version is not indexed".into()));
+    }
+    let recommended = version.get("intelligence").and_then(|v| v.get("recommendations"))
+        .and_then(Value::as_array).is_some_and(|items| items.iter().any(|item| item.get("compiler_id").and_then(Value::as_str)==Some("care_path")));
+    if !recommended { return Err(ApiError::Conflict("Workspace Intelligence did not recommend the care_path compiler".into())); }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct HistoricalVersionFilter {
     document_id: String,
@@ -2234,7 +2259,7 @@ async fn selected_document_version(
     let versions = client
         .database()
         .from("file_versions")
-        .select("id,file_id,version,status")
+        .select("id,file_id,version,status,intelligence")
         .eq("org_id", organization)
         .eq("file_id", document_id)
         .eq("version", &selected.to_string())
@@ -2426,6 +2451,69 @@ async fn analyze_document(
             meta: json!({ "resource": "document-jobs" }),
         }),
     ))
+}
+
+async fn start_document_compilation(
+    State(state): State<AppState>, Path((id, version)): Path<(String, i32)>, headers: HeaderMap,
+    Json(request): Json<StartCompilationRequest>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    validate_compilation_request(&id, version, &request)?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let selected = selected_document_version(&client, &organization, &id, Some(version)).await?;
+    version_supports_compilation(&selected)?;
+    let version_id = selected.get("id").and_then(Value::as_str).ok_or_else(|| ApiError::upstream("document version id was missing"))?;
+    let data = client.database().rpc("enqueue_compiler_run", Some(json!({
+        "p_file_version_id":version_id,"p_compiler_id":"care_path",
+        "p_compiler_version":CARE_PATH_COMPILER_VERSION,"p_prompt_version":CARE_PATH_PROMPT_VERSION,
+    }))).await.map_err(|error| publish_error(error.to_string()))?;
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse { data, meta:json!({"resource":"compiler-runs"}) })))
+}
+
+fn sanitize_compiler_steps(mut steps: Vec<Value>) -> Vec<Value> {
+    for step in &mut steps {
+        if step.get("kind").and_then(Value::as_str)==Some("lower") {
+            if let Some(object)=step.as_object_mut() { object.insert("result".into(), json!({"output_stored":true})); }
+        }
+    }
+    steps
+}
+
+async fn get_compiler_run(
+    State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    validated_uuid(&id,"compiler run id")?;
+    let organization=org_id(&headers)?.to_owned();
+    let client=authed_client(&state,&headers).await?;
+    let mut runs=client.database().from("compiler_runs")
+        .select("id,file_id,file_version_id,compiler_id,status,provider,model,compiler_version,prompt_version,attempt_count,max_attempts,summary,coverage,last_error_code,created_at,started_at,completed_at,updated_at")
+        .eq("org_id",&organization).eq("id",&id).limit(1).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    let run=runs.pop().ok_or_else(||ApiError::NotFound(format!("compiler run '{id}' was not found")))?;
+    let steps=client.database().from("compiler_steps").select("id,sequence,kind,status,task_key,page_start,page_end,input_refs,result,input_tokens,output_tokens,duration_ms,retry_count,error_code,created_at")
+        .eq("org_id",&organization).eq("run_id",&id).order("sequence",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    let gaps=client.database().from("compiler_gaps").select("id,step_id,code,severity,recommendation_id,explanation,missing_capability,evidence,review_status,resolution_note,created_at,updated_at")
+        .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    let artifacts=client.database().from("compiler_artifacts").select("id,artifact_type,stable_key,role,agent_id,flow_id,created_at")
+        .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    let evidence=client.database().from("compiler_evidence_links").select("id,artifact_id,target_path,chunk_id,excerpt,recommendation_id,evidence_role,created_at")
+        .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse{data:json!({"run":run,"steps":sanitize_compiler_steps(steps),"gaps":gaps,"artifacts":artifacts,"evidence":evidence}),meta:json!({"resource":"compiler-runs"})}))
+}
+
+async fn cancel_compiler_run(
+    State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>,ApiError>{
+    validated_uuid(&id,"compiler run id")?;
+    let organization=org_id(&headers)?.to_owned();
+    let client=authed_client(&state,&headers).await?;
+    let visible=client.database().from("compiler_runs").select("id").eq("org_id",&organization)
+        .eq("id",&id).limit(1).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    if visible.is_empty() { return Err(ApiError::NotFound(format!("compiler run '{id}' was not found"))); }
+    let data=client.database().rpc("cancel_compiler_run",Some(json!({"p_run_id":id}))).await.map_err(|error|{
+        let text=error.to_string();
+        if text.contains("P0004") { ApiError::Conflict("the compiler run can no longer be cancelled".into()) } else { publish_error(text) }
+    })?;
+    Ok(Json(ApiResponse{data,meta:json!({"resource":"compiler-runs"})}))
 }
 
 async fn operator_embedding_profiles(
@@ -4712,6 +4800,12 @@ fn app(state: AppState) -> Router {
             "/api/v1/documents/{id}/versions/{version}/layout",
             get(get_document_layout),
         )
+        .route(
+            "/api/v1/documents/{id}/versions/{version}/compilations",
+            post(start_document_compilation),
+        )
+        .route("/api/v1/compiler-runs/{id}", get(get_compiler_run))
+        .route("/api/v1/compiler-runs/{id}/cancel", post(cancel_compiler_run))
         .route("/api/v1/document-jobs/{id}", get(get_document_job))
         .route("/api/v1/documents/search", post(search_documents))
         .route("/api/v1/documents/{id}/analyze", post(analyze_document))
@@ -4927,6 +5021,30 @@ mod tests {
             version: 1,
         }]);
         assert!(matches!(validate_document_search(&invalid), Err(ApiError::BadRequest(_))));
+    }
+
+    #[test]
+    fn compiler_requests_accept_only_a_positive_version_and_registered_compiler() {
+        let id="00000000-0000-0000-0000-000000000020";
+        validate_compilation_request(id,1,&StartCompilationRequest{compiler_id:"care_path".into()}).unwrap();
+        assert!(validate_compilation_request("bad",1,&StartCompilationRequest{compiler_id:"care_path".into()}).is_err());
+        assert!(validate_compilation_request(id,0,&StartCompilationRequest{compiler_id:"care_path".into()}).is_err());
+        assert!(validate_compilation_request(id,1,&StartCompilationRequest{compiler_id:"call_flow".into()}).is_err());
+    }
+
+    #[test]
+    fn compiler_requires_indexed_workspace_intelligence_recommendation() {
+        version_supports_compilation(&json!({"status":"indexed","intelligence":{"recommendations":[{"compiler_id":"care_path"}]}})).unwrap();
+        assert!(matches!(version_supports_compilation(&json!({"status":"embedding"})),Err(ApiError::Conflict(_))));
+        assert!(matches!(version_supports_compilation(&json!({"status":"indexed","intelligence":{"recommendations":[]}})),Err(ApiError::Conflict(_))));
+    }
+
+    #[test]
+    fn compiler_report_does_not_expose_materialization_payloads() {
+        let steps=sanitize_compiler_steps(vec![json!({"kind":"lower","result":{"output":{"agents":[{"system_prompt":"secret prompt"}]}}}),json!({"kind":"plan","result":{"task_count":2}})]);
+        let encoded=serde_json::to_string(&steps).unwrap();
+        assert!(!encoded.contains("secret prompt"));
+        assert_eq!(steps[1]["result"]["task_count"],2);
     }
 
     #[test]
