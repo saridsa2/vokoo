@@ -226,23 +226,23 @@ git commit -m "feat: validate compiled care paths"
 - Produces: `Recommendation`, `CarePathProgram`, `AgentDraft`, `FlowDraft`, `CompilerGap`, `CatalogueSnapshot`, `lower(program,catalogue,resources) -> CompilationOutput`, and `validate_output(output,catalogue,input) -> Result<(),Vec<ValidationError>>`.
 - Consumes: deserialized catalogue rows and frozen workspace-resource IDs.
 
-- [ ] **Step 1: Write failing lowering tests**
+- [x] **Step 1: Write failing lowering tests**
 
 Use a minimal real-catalogue fixture and assert a recurring HbA1c recommendation lowers to `trigger.recurring -> outreach.request`, with `fulfilled` continuing and `declined/expired/failed` reaching `escalate.notify`. Assert an unsupported laboratory-ordering action becomes `CompilerGap { code: "missing_capability", .. }` rather than a node.
 
-- [ ] **Step 2: Define source-bound intermediate types**
+- [x] **Step 2: Define source-bound intermediate types**
 
 Every `Recommendation` contains population, anchor/timing, event, actions, completion, failure policy, and nonempty `Vec<EvidenceRef>`. `EvidenceRef` contains only `chunk_id`, recommendation ID, excerpt, and role; pages are derived from stored layout.
 
-- [ ] **Step 3: Implement stable deterministic lowering**
+- [x] **Step 3: Implement stable deterministic lowering**
 
 Stable keys derive from recommendation IDs and operation roles, not model ordering. Resolve only exact operation-to-component mappings. Supply catalogue defaults; never synthesize missing required semantic values. Generate an agent only for a `Conversation` operation, and attach evidence target paths to each clinical prompt section.
 
-- [ ] **Step 4: Implement Rust-side validation**
+- [x] **Step 4: Implement Rust-side validation**
 
 Mirror the database boundary: active family, fields, outcomes, endpoints, reachability, closed cycles, clinical escalation paths, evidence version membership, unique keys, and referenced resources. Return all validation errors in deterministic key order.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml --test compiler_core

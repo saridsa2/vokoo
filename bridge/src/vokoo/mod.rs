@@ -20,6 +20,7 @@ pub mod asterisk;
 pub mod billing;
 pub mod compare;
 pub mod clinical;
+pub mod compiler;
 pub mod control;
 pub mod discovery;
 pub mod documents;
