@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceRole {
     Requirement,
@@ -14,7 +15,7 @@ pub enum EvidenceRole {
     Escalation,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct EvidenceRef {
     pub chunk_id: String,
     pub recommendation_id: String,
@@ -22,7 +23,7 @@ pub struct EvidenceRef {
     pub role: EvidenceRole,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct Population {
     pub description: String,
     #[serde(default)]
@@ -32,7 +33,7 @@ pub struct Population {
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TriggerOperation {
     Due {
@@ -52,7 +53,7 @@ pub enum TriggerOperation {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct TriggerSpec {
     pub key: String,
     #[serde(flatten)]
@@ -60,14 +61,14 @@ pub struct TriggerSpec {
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct AgentConversation {
     pub name: String,
     pub system_prompt: String,
     pub first_message: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActionOperation {
     Request {
@@ -91,7 +92,7 @@ pub enum ActionOperation {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq)]
 pub struct Action {
     pub key: String,
     #[serde(flatten)]
@@ -99,13 +100,13 @@ pub struct Action {
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct CompletionSpec {
     pub milestone_key: String,
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
 pub struct FailurePolicy {
     pub recipient: String,
     pub urgency: String,
@@ -113,7 +114,7 @@ pub struct FailurePolicy {
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq)]
 pub struct Threshold {
     pub observation: String,
     pub operator: String,
@@ -122,7 +123,7 @@ pub struct Threshold {
     pub evidence: Vec<EvidenceRef>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq)]
 pub struct Recommendation {
     pub id: String,
     pub title: String,

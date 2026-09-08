@@ -269,27 +269,27 @@ git commit -m "feat: add deterministic care path compiler"
 - Produces: `CompilerModel` trait, `AisdkCompilerModel`, `CompilerHarness::compile(input) -> Result<CompilationOutput,CompilerError>`, and `TraceSink`.
 - Consumes: `DocumentEvidence`, physical-page outline, chunk retrieval, workspace provider/model/secret, and Task 4 compiler types.
 
-- [ ] **Step 1: Write fake-model harness tests**
+- [x] **Step 1: Write fake-model harness tests**
 
 Implement a scripted `CompilerModel` test double. Assert the supervisor delegates bounded non-overlapping recommendation sections; workers cannot cite chunks outside their task/version; reconciliation cannot introduce uncited requirements; invalid tool output receives one correction attempt; and every decision emits a structured trace event.
 
-- [ ] **Step 2: Define forced-tool contracts**
+- [x] **Step 2: Define forced-tool contracts**
 
 Define separate typed tools for `delegate_section`, `emit_recommendations`, `emit_reconciliation`, and `finish_compilation`. Tool schemas constrain enums but deterministic code revalidates relationships. No free-form response is parsed as compiler output.
 
-- [ ] **Step 3: Implement provider construction**
+- [x] **Step 3: Implement provider construction**
 
 Support the same configured readers as Workspace Intelligence: Anthropic, MiniMax through `https://api.minimax.io/anthropic/v1/`, and OpenAI. Force the named tool using the provider-specific body shape already proven in `intelligence.rs`. Resolve credentials before constructing `AisdkCompilerModel`; never accept a browser-supplied key.
 
-- [ ] **Step 4: Implement bounded supervisor and workers**
+- [x] **Step 4: Implement bounded supervisor and workers**
 
 The supervisor receives the page map and retrieval tool, delegates by headings/recommendations, and records exclusions. Cap workers, page span, retrieval results, model steps, and one correction attempt through explicit constants. Workers emit recommendations only; `lower` runs after reconciliation.
 
-- [ ] **Step 5: Emit structured trace without source logs**
+- [x] **Step 5: Emit structured trace without source logs**
 
 Trace events contain identifiers, page ranges, chunk IDs, tool names, accepted typed summaries, token usage, duration, and redacted errors. Add a test that scans logs/metric labels and rejects excerpts, prompts, document names, and model prose.
 
-- [ ] **Step 6: Run focused tests and commit**
+- [x] **Step 6: Run focused tests and commit**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml --test compiler_harness

@@ -5,10 +5,14 @@
 //! validator rechecks catalogue, provenance, graph, and clinical invariants
 //! before anything reaches the database materializer.
 
+mod harness;
 mod lower;
+mod model;
 mod types;
 mod validate;
 
+pub use harness::*;
 pub use lower::lower;
+pub use model::*;
 pub use types::*;
 pub use validate::validate_output;
