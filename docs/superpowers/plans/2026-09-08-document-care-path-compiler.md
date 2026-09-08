@@ -181,27 +181,27 @@ git commit -m "feat: materialize compiler drafts with provenance"
 - Consumes: `catalogue_node_types`, `validate_care_path_release(jsonb)`, and `validate_flow_release(uuid,text,jsonb)`.
 - Produces: `validate_compiled_care_path(uuid,jsonb)` and stronger publish-time checks for compiler-linked care-path flows.
 
-- [ ] **Step 1: Write failing graph fixtures**
+- [x] **Step 1: Write failing graph fixtures**
 
 Create JSON fixtures for: a valid recurring HbA1c request with all non-success outcomes routed to `escalate.notify`; an invented component; an invalid source outcome; an unreachable node; a closed two-node cycle; and an outreach whose `expired` route ends silently. Before migration, the invalid fixtures must be accepted or the function must be missing.
 
-- [ ] **Step 2: Implement catalogue and transition validation**
+- [x] **Step 2: Implement catalogue and transition validation**
 
 Expand dynamic outcomes from `outcomes_from`, reject duplicate node IDs, reject missing transition endpoints, validate source outcomes, validate required fields and select options, and reject nodes outside `care_path`.
 
-- [ ] **Step 3: Implement reachability and terminal validation**
+- [x] **Step 3: Implement reachability and terminal validation**
 
 Use a recursive CTE bounded by node count to mark nodes reachable from every trigger. Reject unreachable nodes and strongly connected reachable regions whose exposed outcomes are all connected internally and have no terminal exit. Treat configured `loop` nodes as bounded only when `max_iterations` and `max_seconds` are valid positive integers.
 
-- [ ] **Step 4: Implement compiler clinical invariants**
+- [x] **Step 4: Implement compiler clinical invariants**
 
 For every `outreach.request`, recursively prove `declined`, `expired`, and `failed` lead to `escalate.notify`. Apply the same no-silent-terminal rule to `intelligence.empty`, `intelligence.failed`, `care_path.record.failed`, `care_path.complete.not_found`, and `care_path.complete.failed`. Validate `escalate.notify.to`, `urgency`, and nonblank `note` from catalogue options.
 
-- [ ] **Step 5: Recheck compiler safety at publish**
+- [x] **Step 5: Recheck compiler safety at publish**
 
 Update `validate_flow_release` so a flow linked through `compiler_artifacts` calls `validate_compiled_care_path` after the existing general and family validators. Hand-authored flows retain current behavior; compiler-origin safety cannot be removed by editing the draft.
 
-- [ ] **Step 6: Run SQL tests and commit**
+- [x] **Step 6: Run SQL tests and commit**
 
 Apply `0129`, reload PostgREST, and run all `0118`, `0119`, `0120`, and `0129` tests. Expected: existing valid flows still pass; every new invalid fixture fails with SQLSTATE `P0004`.
 
