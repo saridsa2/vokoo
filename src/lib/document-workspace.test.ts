@@ -6,13 +6,69 @@ import {
     documentUploadProblem,
     normalizeDocumentEvidence,
     normalizeCompilerRecommendations,
+    pdfPointBoxToViewport,
+    selectEvidenceLayout,
     selectDocument,
     selectDocumentVersion,
     shouldPollDocumentJob,
     validateHistoricalSearch,
     type DocumentVersion,
+    type DocumentLayoutItem,
     type WorkspaceDocument,
 } from "./document-workspace";
+
+const layoutItem = (overrides: Partial<DocumentLayoutItem> = {}): DocumentLayoutItem => ({
+    id: "layout-1",
+    provider_ref: "#/texts/0",
+    parent_ref: "#/body",
+    ordinal: 0,
+    label: "text",
+    content_layer: "body",
+    text: "Review HbA1c",
+    section_path: ["Monitoring"],
+    metadata: null,
+    chunk_ids: ["chunk-1"],
+    spans: [{
+        page_number: 3,
+        bbox: { left: 72, top: 700, right: 300, bottom: 680, origin: "BOTTOMLEFT" },
+        char_start: 0,
+        char_end: 12,
+    }],
+    ...overrides,
+});
+
+test("converts bottom-left PDF points into top-left viewport rectangles", () => {
+    assert.deepEqual(
+        pdfPointBoxToViewport(
+            { left: 72, top: 700, right: 300, bottom: 680, origin: "BOTTOMLEFT" },
+            { page_number: 3, width_points: 612, height_points: 792 },
+            2,
+        ),
+        { x: 144, y: 184, width: 456, height: 40 },
+    );
+});
+
+test("evidence selects every linked box and navigates to the first linked page", () => {
+    const selection = selectEvidenceLayout(
+        [
+            layoutItem({ id: "later", ordinal: 4, spans: [{
+                page_number: 5,
+                bbox: { left: 10, top: 40, right: 30, bottom: 20, origin: "BOTTOMLEFT" },
+                char_start: 0,
+                char_end: 4,
+            }] }),
+            layoutItem(),
+            layoutItem({ id: "unrelated", chunk_ids: ["chunk-2"] }),
+        ],
+        "chunk-1",
+        9,
+    );
+
+    assert.equal(selection.page, 3);
+    assert.equal(selection.spans.length, 2);
+    assert.deepEqual(selection.spans.map((span) => span.item_id), ["layout-1", "later"]);
+    assert.equal(selectEvidenceLayout([], "missing", 9).page, 9);
+});
 
 const document = (id: string): WorkspaceDocument => ({
     id,

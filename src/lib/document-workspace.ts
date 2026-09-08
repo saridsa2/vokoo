@@ -76,6 +76,89 @@ export type DocumentJob = {
     updated_at: string;
 };
 
+export type DocumentLayoutPage = {
+    page_number: number;
+    width_points: number;
+    height_points: number;
+};
+
+export type DocumentLayoutBox = {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    origin: "BOTTOMLEFT";
+};
+
+export type DocumentLayoutSpan = {
+    page_number: number;
+    bbox: DocumentLayoutBox;
+    char_start: number;
+    char_end: number;
+};
+
+export type DocumentLayoutItem = {
+    id: string;
+    provider_ref: string;
+    parent_ref: string | null;
+    ordinal: number;
+    label: string;
+    content_layer: "body" | "furniture";
+    text: string;
+    section_path: string[];
+    metadata: unknown;
+    chunk_ids: string[];
+    spans: DocumentLayoutSpan[];
+};
+
+export type DocumentLayout = {
+    status: "ready" | "processing";
+    schema_version: "layout-v1" | null;
+    extraction_id: string | null;
+    provider: string | null;
+    provider_version: string | null;
+    source_sha256: string;
+    warnings: unknown[];
+    pages: DocumentLayoutPage[];
+    items: DocumentLayoutItem[];
+};
+
+export type ViewportRectangle = { x: number; y: number; width: number; height: number };
+
+export type SelectedLayoutSpan = DocumentLayoutSpan & { item_id: string };
+
+export function pdfPointBoxToViewport(
+    box: DocumentLayoutBox,
+    page: DocumentLayoutPage,
+    scale: number,
+): ViewportRectangle {
+    if (box.origin !== "BOTTOMLEFT") throw new Error(`Unsupported PDF coordinate origin: ${box.origin}`);
+    return {
+        x: box.left * scale,
+        y: (page.height_points - box.top) * scale,
+        width: (box.right - box.left) * scale,
+        height: (box.top - box.bottom) * scale,
+    };
+}
+
+export function selectEvidenceLayout(
+    items: DocumentLayoutItem[],
+    chunkId: string | null | undefined,
+    fallbackPage: number | null = null,
+): { page: number | null; spans: SelectedLayoutSpan[] } {
+    const linked = chunkId
+        ? items.filter((item) => item.chunk_ids.includes(chunkId)).sort((left, right) => left.ordinal - right.ordinal)
+        : [];
+    const spans = linked.flatMap((item) =>
+        item.spans.map((span) => ({ ...span, item_id: item.id })),
+    );
+    const firstPage = spans.reduce<number | null>(
+        (page, span) => (page === null ? span.page_number : Math.min(page, span.page_number)),
+        null,
+    );
+    return { page: firstPage ?? fallbackPage, spans };
+}
+
 export type DocumentEvidence = CompilerEvidence & {
     page_end: number | null;
     chunk_id: string | null;

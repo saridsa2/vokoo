@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 
 use axum::{
+    body::Body,
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
@@ -2100,6 +2101,99 @@ async fn list_document_versions(
     Ok(Json(ApiResponse {
         data: versions,
         meta: json!({ "resource": "document-versions", "document_id": id }),
+    }))
+}
+
+fn document_source_response(source: &Value) -> Result<Response, ApiError> {
+    let mime_type = source
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| ApiError::upstream("document source content type was missing"))?;
+    let encoded = source
+        .get("content")
+        .and_then(Value::as_str)
+        .and_then(|value| value.strip_prefix("\\x"))
+        .ok_or_else(|| ApiError::upstream("document source was not bytea"))?;
+    let bytes = hex::decode(encoded)
+        .map_err(|error| ApiError::upstream(format!("document source was invalid: {error}")))?;
+    let sha256 = source
+        .get("sha256")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() == 64)
+        .ok_or_else(|| ApiError::upstream("document source hash was missing"))?;
+    let mut response = Response::new(Body::from(bytes));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(mime_type)
+            .map_err(|_| ApiError::upstream("document source content type was invalid"))?,
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    response.headers_mut().insert(
+        header::ETAG,
+        HeaderValue::from_str(&format!("\"{sha256}\""))
+            .map_err(|_| ApiError::upstream("document source hash was invalid"))?,
+    );
+    Ok(response)
+}
+
+async fn get_document_source(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i32)>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    validated_uuid(&id, "document id")?;
+    if version < 1 {
+        return Err(ApiError::BadRequest("document version must be positive".into()));
+    }
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let sources = client
+        .database()
+        .from("file_versions")
+        .select("mime_type,sha256,content")
+        .eq("org_id", &organization)
+        .eq("file_id", &id)
+        .eq("version", &version.to_string())
+        .limit(1)
+        .execute::<Value>()
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    let source = sources.first().ok_or_else(|| {
+        ApiError::NotFound(format!("version {version} of document '{id}' was not found"))
+    })?;
+    document_source_response(source)
+}
+
+async fn get_document_layout(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, i32)>,
+    headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    validated_uuid(&id, "document id")?;
+    if version < 1 {
+        return Err(ApiError::BadRequest("document version must be positive".into()));
+    }
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    let data = client
+        .database()
+        .rpc(
+            "get_document_layout",
+            Some(json!({
+                "p_org_id": organization,
+                "p_file_id": id,
+                "p_version": version,
+            })),
+        )
+        .await
+        .map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse {
+        data,
+        meta: json!({ "resource": "document-layout" }),
     }))
 }
 
@@ -4606,6 +4700,14 @@ fn app(state: AppState) -> Router {
             "/api/v1/documents/{id}/versions/{version}/process",
             post(process_document_version),
         )
+        .route(
+            "/api/v1/documents/{id}/versions/{version}/source",
+            get(get_document_source),
+        )
+        .route(
+            "/api/v1/documents/{id}/versions/{version}/layout",
+            get(get_document_layout),
+        )
         .route("/api/v1/document-jobs/{id}", get(get_document_job))
         .route("/api/v1/documents/search", post(search_documents))
         .route("/api/v1/documents/{id}/analyze", post(analyze_document))
@@ -4772,6 +4874,24 @@ mod tests {
             ..valid
         };
         assert!(matches!(validated_document_bytes(&malformed), Err(ApiError::BadRequest(_))));
+    }
+
+    #[tokio::test]
+    async fn immutable_document_source_response_preserves_bytes_type_and_hash() {
+        let response = document_source_response(&json!({
+            "mime_type": "application/pdf",
+            "sha256": "a".repeat(64),
+            "content": "\\x25504446",
+        }))
+        .unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/pdf");
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, max-age=31536000, immutable"
+        );
+        assert_eq!(response.headers()[header::ETAG], format!("\"{}\"", "a".repeat(64)));
+        let bytes = axum::body::to_bytes(response.into_body(), 16).await.unwrap();
+        assert_eq!(&bytes[..], b"%PDF");
     }
 
     #[test]

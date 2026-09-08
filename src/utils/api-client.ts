@@ -15,6 +15,8 @@
  * look for it.
  */
 
+import type { DocumentLayout } from "../lib/document-workspace";
+
 const API_URL = process.env.NEXT_PUBLIC_CONTROLPLANE_API_URL ?? "http://localhost:8081";
 
 export type ApiEnvelope<T> = {
@@ -157,6 +159,26 @@ async function request<T>(path: string, init: RequestInit = {}, context?: Access
     }
 
     return payload as ApiEnvelope<T>;
+}
+
+async function requestBlob(path: string, context: AccessContext): Promise<Blob> {
+    const headers = new Headers({ authorization: `Bearer ${context.accessToken}` });
+    if (context.organizationId) headers.set("x-org-id", context.organizationId);
+    let response: Response;
+    try {
+        response = await fetch(`${API_URL}${path}`, { headers });
+    } catch {
+        throw new ApiError(`Cannot reach the control plane at ${API_URL}`, 0, "network_error");
+    }
+    if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new ApiError(
+            payload?.error?.message ?? `Request failed with status ${response.status}`,
+            response.status,
+            payload?.error?.code,
+        );
+    }
+    return response.blob();
 }
 
 export const api = {
@@ -305,6 +327,19 @@ export const api = {
 
     listDocumentVersions: <T>(id: string, context: AccessContext) =>
         request<T[]>(`/api/v1/documents/${encodeURIComponent(id)}/versions`, {}, context),
+
+    documentSource: (id: string, version: number, context: AccessContext) =>
+        requestBlob(
+            `/api/v1/documents/${encodeURIComponent(id)}/versions/${version}/source`,
+            context,
+        ),
+
+    documentLayout: (id: string, version: number, context: AccessContext) =>
+        request<DocumentLayout>(
+            `/api/v1/documents/${encodeURIComponent(id)}/versions/${version}/layout`,
+            {},
+            context,
+        ),
 
     processDocumentVersion: (id: string, version: number, context: AccessContext) =>
         request<{ job: DocumentJob }>(
