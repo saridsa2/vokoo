@@ -121,3 +121,28 @@
 - [ ] **Step 5: Query `HbA1c 58 mmol/mol` in the UI** and record whether the correct child ranks first and whether its highlight aligns with the original PDF page.
 - [ ] **Step 6: Record pass/fail evidence in `docs/benchmarks/ng28-docling-vps.md`.** A failure leaves Docling configured but does not switch the active extraction.
 - [ ] **Step 7: Run the full Rust, SQL, TypeScript, and production-build gates, then commit with `test: record NG28 layout extraction benchmark`.**
+
+### Task 6: Move extraction compute to Modal
+
+**Files:**
+- Create: `deploy/document-extractor/modal_app.py`
+- Create: `deploy/document-extractor/modal_contract.py`
+- Create: `deploy/document-extractor/test_modal_contract.py`
+- Modify: `bridge/src/vokoo/documents/provider.rs`
+- Modify: `bridge/src/vokoo/documents/mod.rs`
+- Modify: `bridge/src/bin/vokoo_document_worker.rs`
+- Modify: `bridge/tests/document_pipeline.rs`
+- Modify: `deploy/vokoo-document-worker.service`
+- Modify: `deploy/README.md`
+
+**Interfaces:**
+- Produces: an authenticated `docling-modal` extraction provider and a compute-isolated Modal endpoint.
+- Consumes: the same immutable PDF request and raw Docling JSON normalization contract as the VPS provider.
+
+- [x] **Step 1: Benchmark NG28 by worker stage** and confirm whether extraction rather than persistence, embeddings, or Workspace Intelligence is the bottleneck.
+- [x] **Step 2: Add failing provider-contract tests** for authenticated source/hash transfer, retryable capacity errors, and mismatched response rejection.
+- [x] **Step 3: Implement the bounded HTTPS provider** with strict TLS, timeout, status, version, source-hash, content-type, and output-size validation.
+- [x] **Step 4: Add a failing source-validation test and implement the Modal contract helper.**
+- [x] **Step 5: Add the Modal app** using the immutable official Docling.rs CPU 1.37.0 digest, 16 reserved cores, bounded autoscaling, five-minute warm reuse, and bearer authentication. The VPS resolves that bearer token from the operator-level Supabase Vault credential rather than environment configuration. The CUDA 1.37.0 CLI and server images were rejected because both expose dangling ONNX provider-library links when imported by Modal.
+- [x] **Step 6: Deploy the Modal app and secret, configure the VPS worker, and re-run NG28.**
+- [x] **Step 7: Compare end-to-end stage metrics against the 168,052 ms VPS extraction baseline, then run all document tests and commit.** Modal extracted NG28 in 23,677 ms (7.1x faster); the full run completed in 40,336 ms.

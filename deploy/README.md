@@ -146,3 +146,32 @@ ssh vokoo 'curl --fail --silent http://127.0.0.1:8082/health'
 There must be only one enabled instance initially. The database lease remains
 the correctness boundary if the process restarts; systemd uses a five-second
 restart delay and the worker resumes from already-persisted chunks and vectors.
+
+### Modal document extraction
+
+For larger PDFs, the worker can keep its durable lease, persistence, embedding,
+and classification work on the VPS while sending only the immutable PDF to a
+Modal extractor with 16 reserved CPU cores. The endpoint returns Docling JSON;
+Vokoo still normalizes and validates it before persistence.
+
+The Modal image is pinned to the official Docling.rs CPU 1.37.0 image digest.
+The upstream CUDA 1.37.0 images currently contain dangling ONNX provider-library
+links under Modal's image import, so GPU execution is deliberately not selected
+until an immutable upstream artifact passes the same fixture and NG28 corpus.
+Create the endpoint bearer secret once, then deploy the app:
+
+```bash
+modal secret create vokoo-document-extractor-auth AUTH_TOKEN='<random-token>'
+modal deploy deploy/document-extractor/modal_app.py
+```
+
+Put the generated HTTPS endpoint (including `/extract`) in
+`/opt/vokoo/rustvani/.env` as `VOKOO_MODAL_DOCLING_URL`. Store the same bearer
+token as the `Modal` key in the operator portal; it is encrypted in Supabase
+Vault and resolved through the service-role-only `resolve_vendor_secret` RPC at
+worker startup. Never place the token in the VPS environment, systemd unit, or
+repository. Install the unit above only after the endpoint and operator key
+exist. To return to the local CPU provider, override
+`VOKOO_DOCUMENT_EXTRACTION_PROVIDER` with `docling-vps` and restore
+`VOKOO_DOCLING_PATH` and `VOKOO_DOCUMENT_STAGING_DIR` from the wrapper
+configuration above.

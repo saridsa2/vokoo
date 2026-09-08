@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::StreamExt;
+use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -288,6 +290,172 @@ impl DocumentExtractionProvider for DoclingCommandProvider {
             .map_err(|_| ProviderError::invalid("the Docling artifact is not UTF-8"))?;
         normalize_docling_json(&artifact, &request.source_sha256, &self.expected_version)
     }
+}
+
+pub struct ModalDoclingProvider {
+    client: reqwest::Client,
+    endpoint: reqwest::Url,
+    authorization: HeaderValue,
+    expected_version: String,
+    max_output_bytes: usize,
+}
+
+impl ModalDoclingProvider {
+    pub fn new(
+        endpoint: impl AsRef<str>,
+        bearer_token: impl AsRef<str>,
+        expected_version: impl Into<String>,
+        timeout: Duration,
+        max_output_bytes: usize,
+    ) -> Result<Self, ProviderError> {
+        let endpoint = reqwest::Url::parse(endpoint.as_ref()).map_err(|error| {
+            ProviderError::invalid(format!("the Modal URL is invalid: {error}"))
+        })?;
+        if endpoint.scheme() != "https" && !endpoint.host_str().is_some_and(is_loopback_host) {
+            return Err(ProviderError::invalid(
+                "the Modal URL must use HTTPS outside loopback tests",
+            ));
+        }
+        let mut authorization =
+            HeaderValue::from_str(&format!("Bearer {}", bearer_token.as_ref().trim()))
+                .map_err(|_| ProviderError::invalid("the Modal bearer token is invalid"))?;
+        if bearer_token.as_ref().trim().is_empty() {
+            return Err(ProviderError::invalid("the Modal bearer token is missing"));
+        }
+        authorization.set_sensitive(true);
+        let expected_version = expected_version.into();
+        if expected_version.trim().is_empty() {
+            return Err(ProviderError::invalid("the Docling version is missing"));
+        }
+        if max_output_bytes == 0 {
+            return Err(ProviderError::invalid(
+                "the Modal output limit must be greater than zero",
+            ));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|error| {
+                ProviderError::invalid(format!("could not configure the Modal client: {error}"))
+            })?;
+        Ok(Self {
+            client,
+            endpoint,
+            authorization,
+            expected_version,
+            max_output_bytes,
+        })
+    }
+}
+
+#[async_trait]
+impl DocumentExtractionProvider for ModalDoclingProvider {
+    async fn extract(
+        &self,
+        request: ExtractionRequest,
+    ) -> Result<NormalizedExtraction, ProviderError> {
+        if request.mime_type != "application/pdf" {
+            return Err(ProviderError::invalid(
+                "the Modal Docling provider currently accepts PDF documents only",
+            ));
+        }
+        let actual_hash = format!("{:x}", Sha256::digest(request.bytes.as_ref()));
+        if actual_hash != request.source_sha256 {
+            return Err(ProviderError::invalid(
+                "the extraction source does not match its SHA-256",
+            ));
+        }
+
+        let response = self
+            .client
+            .post(self.endpoint.clone())
+            .header(AUTHORIZATION, self.authorization.clone())
+            .header(CONTENT_TYPE, "application/pdf")
+            .header("x-vokoo-source-sha256", &request.source_sha256)
+            .body(request.bytes.as_ref().to_vec())
+            .send()
+            .await
+            .map_err(|error| {
+                ProviderError::retryable(format!("could not reach Modal extraction: {error}"))
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = format!("Modal extraction returned HTTP {}", status.as_u16());
+            return Err(
+                if status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                {
+                    ProviderError::retryable(message)
+                } else {
+                    ProviderError::invalid(message)
+                },
+            );
+        }
+        if response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_none_or(|value| !value.starts_with("application/json"))
+        {
+            return Err(ProviderError::invalid(
+                "Modal extraction returned a non-JSON artifact",
+            ));
+        }
+        let response_hash = response
+            .headers()
+            .get("x-vokoo-source-sha256")
+            .and_then(|value| value.to_str().ok());
+        if response_hash != Some(request.source_sha256.as_str()) {
+            return Err(ProviderError::invalid(
+                "Modal extraction returned a mismatched source hash",
+            ));
+        }
+        let response_version = response
+            .headers()
+            .get("x-vokoo-docling-version")
+            .and_then(|value| value.to_str().ok());
+        if response_version != Some(self.expected_version.as_str()) {
+            return Err(ProviderError::invalid(
+                "Modal extraction returned an unexpected Docling version",
+            ));
+        }
+        if response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|length| length > self.max_output_bytes as u64)
+        {
+            return Err(ProviderError::invalid(
+                "Modal extraction exceeded its output limit",
+            ));
+        }
+
+        let mut artifact = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| {
+                ProviderError::retryable(format!("Modal extraction response failed: {error}"))
+            })?;
+            if artifact.len().saturating_add(chunk.len()) > self.max_output_bytes {
+                return Err(ProviderError::invalid(
+                    "Modal extraction exceeded its output limit",
+                ));
+            }
+            artifact.extend_from_slice(&chunk);
+        }
+        let artifact = String::from_utf8(artifact)
+            .map_err(|_| ProviderError::invalid("the Modal artifact is not UTF-8"))?;
+        normalize_docling_json(&artifact, &request.source_sha256, &self.expected_version)
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 static STAGED_SOURCE_SEQUENCE: AtomicU64 = AtomicU64::new(1);

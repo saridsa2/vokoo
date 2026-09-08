@@ -7,9 +7,10 @@ use axum::routing::get;
 use axum::{Json, Router};
 use rustvani::vokoo::documents::{
     document_search_router, DoclingCommandProvider, DocumentMetrics, DocumentSearchService,
-    DocumentWorker, GeminiEmbeddingFactory, PostgrestJobRepository, RunOutcome,
-    WorkspaceIntelligenceClassifier,
+    DocumentWorker, GeminiEmbeddingFactory, ModalDoclingProvider, PostgrestJobRepository,
+    RunOutcome, WorkspaceIntelligenceClassifier,
 };
+use rustvani::vokoo::graph::vendor_secret;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -72,9 +73,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_staging_dir(staging_dir),
             ));
         }
+        Some("docling-modal") => {
+            let endpoint = required("VOKOO_MODAL_DOCLING_URL")?;
+            let bearer_token = vendor_secret(&supabase_url, &service_key, "", "modal")
+                .await
+                .ok_or("no Modal platform credential is configured")?;
+            let expected_version =
+                optional("VOKOO_DOCLING_VERSION").unwrap_or_else(|| "1.37.0".into());
+            let timeout = parsed_env("VOKOO_DOCLING_TIMEOUT_SECONDS", 600_u64)?;
+            let max_output = parsed_env("VOKOO_DOCLING_MAX_OUTPUT_BYTES", 64_usize * 1024 * 1024)?;
+            log::info!(
+                "[document-worker] using Modal Docling extraction version {expected_version}"
+            );
+            worker = worker.with_extraction_provider(Arc::new(ModalDoclingProvider::new(
+                endpoint,
+                bearer_token,
+                expected_version,
+                Duration::from_secs(timeout),
+                max_output,
+            )?));
+        }
         Some(provider) => {
             return Err(format!(
-                "VOKOO_DOCUMENT_EXTRACTION_PROVIDER must be builtin or docling-vps, got {provider}"
+                "VOKOO_DOCUMENT_EXTRACTION_PROVIDER must be builtin, docling-vps, or docling-modal, got {provider}"
             )
             .into());
         }

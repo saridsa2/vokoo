@@ -28,8 +28,8 @@ pub use jobs::{
 pub use metrics::DocumentMetrics;
 pub use provider::{
     normalize_docling_json, ContentLayer, DoclingCommandProvider, DocumentExtractionProvider,
-    ExtractionRequest, LayoutBox, LayoutItem, LayoutSpan, NormalizedExtraction, NormalizedPage,
-    ProviderError, ProviderErrorKind, LAYOUT_SCHEMA_VERSION,
+    ExtractionRequest, LayoutBox, LayoutItem, LayoutSpan, ModalDoclingProvider,
+    NormalizedExtraction, NormalizedPage, ProviderError, ProviderErrorKind, LAYOUT_SCHEMA_VERSION,
 };
 pub use search::{
     document_search_router, DocumentSearchRequest, DocumentSearchResponse, DocumentSearchResult,

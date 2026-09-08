@@ -238,7 +238,7 @@ const AddNumber = ({ onClose, onAdded }: { onClose: () => void; onAdded: () => v
 type PlatformKey = { vendor: string; label: string; hint: string; updated_at: string };
 
 /**
- * The provider accounts a tenant's calls run on.
+ * The provider accounts platform services use for tenant workloads.
  *
  * **No route returns a key.** The listing carries the last four characters and
  * a date — enough to tell two keys apart while checking which is installed, and
@@ -268,7 +268,7 @@ export const PlatformKeysScreen = () => {
     return (
         <Screen
             title="Provider Keys"
-            description="The accounts a workspace's calls run on when it brings none of its own. Keys are encrypted and never returned — replace one rather than reading it."
+            description="The accounts platform services use for tenant workloads. Keys are encrypted and never returned — replace one rather than reading it."
             loading={keys === null}
         >
             <Table head={["Provider", "What it does", "Key", "Updated", ""]}>
@@ -349,6 +349,7 @@ const VENDORS = [
     { id: "deepgram", label: "Deepgram", does: "Hears, in a relay." },
     { id: "elevenlabs", label: "ElevenLabs", does: "Speaks, in a relay." },
     { id: "minimax", label: "MiniMax", does: "Reads finished calls." },
+    { id: "modal", label: "Modal", does: "Runs document extraction compute." },
     { id: "kookoo", label: "KooKoo / Ozonetel", does: "The carrier. Answers the phone." },
 ];
 
@@ -373,7 +374,7 @@ const SetKey = ({
                     <div className="flex w-full flex-col rounded-xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <h2 className="text-lg font-semibold text-primary">{vendor.label}</h2>
                         <p className="mt-1 text-sm text-tertiary">
-                            Encrypted on save. Only the bridge decrypts one, per call.
+                            Encrypted on save. Only service-role workers can resolve it.
                         </p>
                         <div className="mt-5">
                             <Input

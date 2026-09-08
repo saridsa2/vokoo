@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use rustvani::vokoo::documents::{
     chunk_document, extract_document, normalize_docling_json, ChunkConfig, ContentLayer,
-    DoclingCommandProvider, DocumentExtractionProvider, ExtractionRequest, StructuralKind,
-    CHUNKER_VERSION, DOCX_MIME,
+    DoclingCommandProvider, DocumentExtractionProvider, ExtractionRequest, ModalDoclingProvider,
+    StructuralKind, CHUNKER_VERSION, DOCX_MIME,
 };
 
 #[test]
@@ -247,4 +247,165 @@ async fn docling_command_provider_uses_the_pdf_layout_pipeline_and_cleans_up() {
     assert!(!std::path::Path::new(staged).exists());
 
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn modal_provider_sends_an_authenticated_hash_bound_pdf_request() {
+    use axum::body::Bytes;
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+
+    const SOURCE_HASH: &str = "60c11e4424fe3971f1f4d49aff55bcf07633895cd557176048a623d46bc1193f";
+    async fn extract(headers: HeaderMap, body: Bytes) -> (StatusCode, HeaderMap, &'static str) {
+        if headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            != Some("Bearer worker-secret")
+            || headers
+                .get("x-vokoo-source-sha256")
+                .and_then(|value| value.to_str().ok())
+                != Some(SOURCE_HASH)
+            || headers
+                .get("content-type")
+                .and_then(|value| value.to_str().ok())
+                != Some("application/pdf")
+            || body.as_ref() != include_bytes!("fixtures/documents/guideline.pdf")
+        {
+            return (StatusCode::BAD_REQUEST, HeaderMap::new(), "invalid request");
+        }
+        let mut response_headers = HeaderMap::new();
+        response_headers.insert("content-type", "application/json".parse().unwrap());
+        response_headers.insert("x-vokoo-source-sha256", SOURCE_HASH.parse().unwrap());
+        response_headers.insert("x-vokoo-docling-version", "1.37.0".parse().unwrap());
+        (
+            StatusCode::OK,
+            response_headers,
+            include_str!("fixtures/documents/docling-layout.json"),
+        )
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/extract", post(extract)))
+            .await
+            .unwrap();
+    });
+    let provider = ModalDoclingProvider::new(
+        format!("http://{address}/extract"),
+        "worker-secret",
+        "1.37.0",
+        Duration::from_secs(2),
+        1024 * 1024,
+    )
+    .unwrap();
+
+    let extraction = provider
+        .extract(ExtractionRequest {
+            mime_type: "application/pdf".into(),
+            source_sha256: SOURCE_HASH.into(),
+            bytes: Arc::from(include_bytes!("fixtures/documents/guideline.pdf").as_slice()),
+        })
+        .await
+        .expect("the authenticated Modal response should normalize");
+
+    assert_eq!(extraction.provider, "docling-rs");
+    assert_eq!(extraction.provider_version, "1.37.0");
+    server.abort();
+}
+
+#[tokio::test]
+async fn modal_provider_classifies_capacity_failures_as_retryable() {
+    use axum::http::StatusCode;
+    use axum::routing::post;
+    use axum::Router;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/extract",
+                post(|| async { (StatusCode::SERVICE_UNAVAILABLE, "capacity exhausted") }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    let provider = ModalDoclingProvider::new(
+        format!("http://{address}/extract"),
+        "worker-secret",
+        "1.37.0",
+        Duration::from_secs(2),
+        1024 * 1024,
+    )
+    .unwrap();
+    let problem = provider
+        .extract(ExtractionRequest {
+            mime_type: "application/pdf".into(),
+            source_sha256: "60c11e4424fe3971f1f4d49aff55bcf07633895cd557176048a623d46bc1193f"
+                .into(),
+            bytes: Arc::from(include_bytes!("fixtures/documents/guideline.pdf").as_slice()),
+        })
+        .await
+        .expect_err("Modal capacity errors must not permanently fail a document");
+
+    assert!(problem.is_retryable());
+    assert!(problem.to_string().contains("503"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn modal_provider_rejects_a_response_for_another_source() {
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::routing::post;
+    use axum::Router;
+
+    async fn extract() -> (StatusCode, HeaderMap, &'static str) {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        headers.insert(
+            "x-vokoo-source-sha256",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .parse()
+                .unwrap(),
+        );
+        headers.insert("x-vokoo-docling-version", "1.37.0".parse().unwrap());
+        (
+            StatusCode::OK,
+            headers,
+            include_str!("fixtures/documents/docling-layout.json"),
+        )
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/extract", post(extract)))
+            .await
+            .unwrap();
+    });
+    let provider = ModalDoclingProvider::new(
+        format!("http://{address}/extract"),
+        "worker-secret",
+        "1.37.0",
+        Duration::from_secs(2),
+        1024 * 1024,
+    )
+    .unwrap();
+    let problem = provider
+        .extract(ExtractionRequest {
+            mime_type: "application/pdf".into(),
+            source_sha256: "60c11e4424fe3971f1f4d49aff55bcf07633895cd557176048a623d46bc1193f"
+                .into(),
+            bytes: Arc::from(include_bytes!("fixtures/documents/guideline.pdf").as_slice()),
+        })
+        .await
+        .expect_err("a response for another source must be rejected");
+
+    assert!(!problem.is_retryable());
+    assert!(problem.to_string().contains("source hash"));
+    server.abort();
 }
