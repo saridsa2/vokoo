@@ -1,0 +1,102 @@
+{
+  "schema_name": "DoclingDocument",
+  "version": "1.10.0",
+  "name": "ng28.pdf",
+  "body": {
+    "self_ref": "#/body",
+    "children": [
+      {"$ref": "#/texts/0"},
+      {"$ref": "#/groups/0"}
+    ],
+    "content_layer": "body",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "furniture": {
+    "self_ref": "#/furniture",
+    "children": [
+      {"$ref": "#/texts/3"},
+      {"$ref": "#/texts/4"}
+    ],
+    "content_layer": "furniture",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "groups": [
+    {
+      "self_ref": "#/groups/0",
+      "parent": {"$ref": "#/body"},
+      "children": [
+        {"$ref": "#/texts/1"},
+        {"$ref": "#/texts/2"}
+      ],
+      "content_layer": "body",
+      "name": "recommendations",
+      "label": "section"
+    }
+  ],
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {"$ref": "#/body"},
+      "label": "title",
+      "text": "Type 2 diabetes in adults",
+      "prov": [{
+        "page_no": 1,
+        "bbox": {"l": 72.0, "t": 720.0, "r": 420.0, "b": 690.0, "coord_origin": "BOTTOMLEFT"},
+        "charspan": [0, 25]
+      }]
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {"$ref": "#/groups/0"},
+      "label": "section_header",
+      "level": 1,
+      "text": "Blood glucose management",
+      "prov": [{
+        "page_no": 1,
+        "bbox": {"l": 72.0, "t": 640.0, "r": 390.0, "b": 615.0, "coord_origin": "BOTTOMLEFT"},
+        "charspan": [0, 24]
+      }]
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {"$ref": "#/groups/0"},
+      "label": "list_item",
+      "text": "Escalate treatment when HbA1c is 58 mmol/mol or higher.",
+      "prov": [{
+        "page_no": 2,
+        "bbox": {"l": 80.0, "t": 510.0, "r": 530.0, "b": 470.0, "coord_origin": "BOTTOMLEFT"},
+        "charspan": [0, 56]
+      }]
+    },
+    {
+      "self_ref": "#/texts/3",
+      "parent": {"$ref": "#/furniture"},
+      "label": "page_header",
+      "text": "NICE guideline NG28",
+      "prov": [{
+        "page_no": 1,
+        "bbox": {"l": 72.0, "t": 780.0, "r": 220.0, "b": 765.0, "coord_origin": "BOTTOMLEFT"},
+        "charspan": [0, 19]
+      }]
+    },
+    {
+      "self_ref": "#/texts/4",
+      "parent": {"$ref": "#/furniture"},
+      "label": "page_header",
+      "text": "NICE guideline NG28",
+      "prov": [{
+        "page_no": 2,
+        "bbox": {"l": 72.0, "t": 780.0, "r": 220.0, "b": 765.0, "coord_origin": "BOTTOMLEFT"},
+        "charspan": [0, 19]
+      }]
+    }
+  ],
+  "tables": [],
+  "pictures": [],
+  "pages": {
+    "1": {"page_no": 1, "size": {"width": 612.0, "height": 792.0}},
+    "2": {"page_no": 2, "size": {"width": 612.0, "height": 792.0}}
+  }
+}

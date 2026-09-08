@@ -1,5 +1,10 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use rustvani::vokoo::documents::{
-    chunk_document, extract_document, ChunkConfig, StructuralKind, CHUNKER_VERSION, DOCX_MIME,
+    chunk_document, extract_document, normalize_docling_json, ChunkConfig, ContentLayer,
+    DoclingCommandProvider, DocumentExtractionProvider, ExtractionRequest, StructuralKind,
+    CHUNKER_VERSION, DOCX_MIME,
 };
 
 #[test]
@@ -119,4 +124,124 @@ fn a_short_recommendation_keeps_its_condition_and_escalation() {
         .expect("recommendation chunk");
     assert!(escalation.content.contains("If symptoms persist"));
     assert!(escalation.content.contains("Record the reason"));
+}
+
+#[test]
+fn docling_layout_preserves_pages_reading_order_and_source_boxes() {
+    let artifact = include_str!("fixtures/documents/docling-layout.json");
+    let extraction = normalize_docling_json(
+        artifact,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "1.37.0",
+    )
+    .expect("the Docling fixture should normalize");
+
+    assert_eq!(extraction.schema_version, "layout-v1");
+    assert_eq!(extraction.provider, "docling-rs");
+    assert_eq!(extraction.pages.len(), 2);
+    assert_eq!(extraction.pages[1].page_number, 2);
+    assert_eq!(extraction.pages[1].width_points, 612.0);
+
+    let recommendation = extraction
+        .items
+        .iter()
+        .find(|item| item.text.contains("58 mmol/mol"))
+        .expect("recommendation item");
+    assert_eq!(recommendation.ordinal, 2);
+    assert_eq!(recommendation.label, "list_item");
+    assert_eq!(
+        recommendation.section_path,
+        vec!["Type 2 diabetes in adults", "Blood glucose management"]
+    );
+    assert_eq!(recommendation.spans[0].page_number, 2);
+    assert_eq!(recommendation.spans[0].bbox.left, 80.0);
+    assert_eq!(recommendation.spans[0].bbox.top, 510.0);
+    assert_eq!(recommendation.spans[0].bbox.origin, "BOTTOMLEFT");
+}
+
+#[test]
+fn docling_furniture_is_retained_but_never_indexed() {
+    let extraction = normalize_docling_json(
+        include_str!("fixtures/documents/docling-layout.json"),
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "1.37.0",
+    )
+    .unwrap();
+
+    assert_eq!(
+        extraction
+            .items
+            .iter()
+            .filter(|item| item.content_layer == ContentLayer::Furniture)
+            .count(),
+        2
+    );
+    let indexable = extraction.indexable_text();
+    assert!(indexable.contains("Escalate treatment"));
+    assert!(!indexable.contains("NICE guideline NG28"));
+}
+
+#[test]
+fn docling_layout_rejects_a_box_outside_its_page() {
+    let invalid = include_str!("fixtures/documents/docling-layout.json").replacen(
+        "\"r\": 530.0",
+        "\"r\": 900.0",
+        1,
+    );
+    let problem = normalize_docling_json(
+        &invalid,
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "1.37.0",
+    )
+    .expect_err("an impossible source box must be rejected");
+
+    assert!(problem.to_string().contains("outside page 2"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn docling_command_provider_uses_the_pdf_layout_pipeline_and_cleans_up() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = uuid::Uuid::new_v4();
+    let directory = std::env::temp_dir().join(format!("vokoo-docling-provider-{unique}"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let executable = directory.join("docling-rs");
+    let arguments = directory.join("arguments.txt");
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/documents/docling-layout.json");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'docling-rs 1.37.0'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > '{}'\nexec /bin/cat '{}'\n",
+        arguments.display(),
+        fixture.display(),
+    );
+    std::fs::write(&executable, script).unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+
+    let provider =
+        DoclingCommandProvider::new(&executable, "1.37.0", Duration::from_secs(2), 1024 * 1024);
+    let extraction = provider
+        .extract(ExtractionRequest {
+            mime_type: "application/pdf".into(),
+            source_sha256: "60c11e4424fe3971f1f4d49aff55bcf07633895cd557176048a623d46bc1193f"
+                .into(),
+            bytes: Arc::from(include_bytes!("fixtures/documents/guideline.pdf").as_slice()),
+        })
+        .await
+        .expect("the command provider should normalize its result");
+
+    assert_eq!(extraction.provider_version, "1.37.0");
+    let recorded = std::fs::read_to_string(&arguments).unwrap();
+    let args = recorded.lines().collect::<Vec<_>>();
+    assert_eq!(
+        &args[..4],
+        ["--to", "json", "--heading-hierarchy", "--skip-ocr"]
+    );
+    let staged = args.last().expect("staged PDF argument");
+    assert!(staged.ends_with(".pdf"));
+    assert!(!std::path::Path::new(staged).exists());
+
+    std::fs::remove_dir_all(directory).unwrap();
 }
