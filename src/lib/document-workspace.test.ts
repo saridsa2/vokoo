@@ -5,17 +5,21 @@ import {
     documentProcessingLabel,
     documentUploadProblem,
     normalizeDocumentEvidence,
+    normalizeCompilerRunReport,
     normalizeCompilerRecommendations,
     pdfPointBoxToViewport,
     selectEvidenceLayout,
     selectDocument,
     selectDocumentVersion,
     shouldPollDocumentJob,
+    shouldPollCompilerRun,
     validateHistoricalSearch,
     type DocumentVersion,
     type DocumentLayoutItem,
     type WorkspaceDocument,
 } from "./document-workspace";
+
+const uuid = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 
 const layoutItem = (overrides: Partial<DocumentLayoutItem> = {}): DocumentLayoutItem => ({
     id: "layout-1",
@@ -204,4 +208,94 @@ test("normalizes cited evidence and removes unknown compilers", () => {
     assert.equal(intelligence?.recommendations[0].evidence[0].page, 4);
     assert.equal(intelligence?.recommendations[0].evidence[1].page, null);
     assert.deepEqual(intelligence?.gaps, ["Confirm cadence"]);
+});
+
+test("normalizes compiler reports, sorts trace steps, and retains deleted artifacts", () => {
+    const report = normalizeCompilerRunReport({
+        run: {
+            id: uuid("1"),
+            file_id: uuid("2"),
+            file_version_id: uuid("3"),
+            compiler_id: "care_path",
+            status: "completed_with_gaps",
+            provider: "minimax",
+            model: "MiniMax-M2.1",
+            compiler_version: "care-path-v1",
+            prompt_version: "care-path-prompt-v1",
+            attempt_count: 1,
+            max_attempts: 3,
+            summary: "Compiled one monitoring path.",
+            coverage: { agent_count: 1, flow_count: 1, gap_count: 1 },
+            last_error_code: null,
+            created_at: "2026-09-08T00:00:00Z",
+            started_at: "2026-09-08T00:00:01Z",
+            completed_at: "2026-09-08T00:00:03Z",
+            updated_at: "2026-09-08T00:00:03Z",
+        },
+        steps: [
+            { id: uuid("5"), sequence: 2, kind: "validate", status: "completed", task_key: "validation", result: { agent_count: 1 }, created_at: "2026-09-08T00:00:02Z" },
+            { id: uuid("4"), sequence: 1, kind: "plan", status: "completed", task_key: "supervisor", result: { summary: "Found monitoring guidance." }, created_at: "2026-09-08T00:00:01Z" },
+        ],
+        gaps: [{
+            id: uuid("6"), step_id: null, code: "unsupported_action", severity: "warning",
+            recommendation_id: "NG28-1.6.1", explanation: "Medication prescribing is outside the catalogue.",
+            missing_capability: "prescribe.medication",
+            evidence: [{ chunk_id: uuid("10"), excerpt: "Consider treatment escalation.", role: "requirement" }],
+            review_status: "open", resolution_note: null,
+            created_at: "2026-09-08T00:00:02Z", updated_at: "2026-09-08T00:00:02Z",
+        }],
+        artifacts: [
+            { id: uuid("7"), artifact_type: "flow", stable_key: "hba1c-monitoring", role: "care_path", agent_id: null, flow_id: uuid("8"), created_at: "2026-09-08T00:00:03Z" },
+            { id: uuid("9"), artifact_type: "agent", stable_key: "deleted-agent", role: "conversation", agent_id: null, flow_id: null, created_at: "2026-09-08T00:00:03Z" },
+        ],
+        evidence: [{
+            id: uuid("11"), artifact_id: uuid("7"), target_path: "flow.nodes.request",
+            chunk_id: uuid("10"), excerpt: "Review HbA1c every three to six months.",
+            recommendation_id: "NG28-1.6.1", evidence_role: "timing", created_at: "2026-09-08T00:00:03Z",
+        }],
+    });
+
+    assert.ok(report);
+    assert.deepEqual(report.steps.map((step) => step.sequence), [1, 2]);
+    assert.equal(report.gaps[0].severity, "warning");
+    assert.equal(report.gaps[0].evidence[0].chunk_id, uuid("10"));
+    assert.equal(report.artifacts[1].agent_id, null);
+    assert.equal(report.evidence[0].target_path, "flow.nodes.request");
+});
+
+test("rejects unknown compiler states and discards malformed nested report rows", () => {
+    const base = {
+        id: uuid("1"), file_id: uuid("2"), file_version_id: uuid("3"), compiler_id: "care_path",
+        provider: "minimax", model: "MiniMax-M2.1", compiler_version: "care-path-v1",
+        prompt_version: "care-path-prompt-v1", attempt_count: 0, max_attempts: 3,
+        summary: null, coverage: {}, last_error_code: null,
+        created_at: "2026-09-08T00:00:00Z", started_at: null, completed_at: null,
+        updated_at: "2026-09-08T00:00:00Z",
+    };
+    assert.equal(normalizeCompilerRunReport({ run: { ...base, status: "invented" }, steps: [], gaps: [], artifacts: [], evidence: [] }), null);
+
+    const report = normalizeCompilerRunReport({
+        run: { ...base, status: "queued" },
+        steps: [{ id: "not-a-uuid", sequence: 1, kind: "plan", status: "completed", result: {}, created_at: "now" }],
+        gaps: [],
+        artifacts: [{ id: uuid("4"), artifact_type: "flow", stable_key: "bad", role: "care_path", flow_id: "javascript:alert(1)", agent_id: null, created_at: "now" }],
+        evidence: [
+            { id: uuid("5"), artifact_id: uuid("4"), target_path: "<script>", chunk_id: uuid("6"), excerpt: "unsafe", evidence_role: "timing", created_at: "now" },
+            { id: uuid("7"), artifact_id: uuid("4"), target_path: "flow.nodes.safe", chunk_id: "bad", excerpt: "unsafe", evidence_role: "timing", created_at: "now" },
+        ],
+    });
+    assert.ok(report);
+    assert.equal(report.steps.length, 0);
+    assert.equal(report.artifacts.length, 0);
+    assert.equal(report.evidence.length, 0);
+});
+
+test("polls only active compiler states", () => {
+    for (const status of ["queued", "planning", "compiling", "validating", "materializing"] as const) {
+        assert.equal(shouldPollCompilerRun({ status }), true);
+    }
+    for (const status of ["completed", "completed_with_gaps", "failed", "cancelled"] as const) {
+        assert.equal(shouldPollCompilerRun({ status }), false);
+    }
+    assert.equal(shouldPollCompilerRun(null), false);
 });

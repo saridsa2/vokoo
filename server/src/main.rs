@@ -2463,10 +2463,11 @@ async fn start_document_compilation(
     let selected = selected_document_version(&client, &organization, &id, Some(version)).await?;
     version_supports_compilation(&selected)?;
     let version_id = selected.get("id").and_then(Value::as_str).ok_or_else(|| ApiError::upstream("document version id was missing"))?;
-    let data = client.database().rpc("enqueue_compiler_run", Some(json!({
+    let raw = client.database().rpc("enqueue_compiler_run", Some(json!({
         "p_file_version_id":version_id,"p_compiler_id":"care_path",
         "p_compiler_version":CARE_PATH_COMPILER_VERSION,"p_prompt_version":CARE_PATH_PROMPT_VERSION,
     }))).await.map_err(|error| publish_error(error.to_string()))?;
+    let data = public_compiler_run(raw).ok_or_else(|| ApiError::upstream("compiler run response was invalid"))?;
     Ok((StatusCode::ACCEPTED, Json(ApiResponse { data, meta:json!({"resource":"compiler-runs"}) })))
 }
 
@@ -2477,6 +2478,18 @@ fn sanitize_compiler_steps(mut steps: Vec<Value>) -> Vec<Value> {
         }
     }
     steps
+}
+
+fn public_compiler_run(run: Value) -> Option<Value> {
+    let object = run.as_object()?;
+    const FIELDS: &[&str] = &[
+        "id", "file_id", "file_version_id", "compiler_id", "status", "provider", "model",
+        "compiler_version", "prompt_version", "attempt_count", "max_attempts", "summary",
+        "coverage", "last_error_code", "created_at", "started_at", "completed_at", "updated_at",
+    ];
+    Some(Value::Object(FIELDS.iter().filter_map(|key| {
+        object.get(*key).cloned().map(|value| ((*key).to_string(), value))
+    }).collect()))
 }
 
 async fn get_compiler_run(
@@ -2509,10 +2522,11 @@ async fn cancel_compiler_run(
     let visible=client.database().from("compiler_runs").select("id").eq("org_id",&organization)
         .eq("id",&id).limit(1).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
     if visible.is_empty() { return Err(ApiError::NotFound(format!("compiler run '{id}' was not found"))); }
-    let data=client.database().rpc("cancel_compiler_run",Some(json!({"p_run_id":id}))).await.map_err(|error|{
+    let raw=client.database().rpc("cancel_compiler_run",Some(json!({"p_run_id":id}))).await.map_err(|error|{
         let text=error.to_string();
         if text.contains("P0004") { ApiError::Conflict("the compiler run can no longer be cancelled".into()) } else { publish_error(text) }
     })?;
+    let data=public_compiler_run(raw).ok_or_else(||ApiError::upstream("compiler run response was invalid"))?;
     Ok(Json(ApiResponse{data,meta:json!({"resource":"compiler-runs"})}))
 }
 
@@ -5045,6 +5059,25 @@ mod tests {
         let encoded=serde_json::to_string(&steps).unwrap();
         assert!(!encoded.contains("secret prompt"));
         assert_eq!(steps[1]["result"]["task_count"],2);
+    }
+
+    #[test]
+    fn compiler_mutation_responses_expose_only_public_run_fields() {
+        let response = public_compiler_run(json!({
+            "id":"00000000-0000-4000-8000-000000000001",
+            "file_id":"00000000-0000-4000-8000-000000000002",
+            "file_version_id":"00000000-0000-4000-8000-000000000003",
+            "compiler_id":"care_path","status":"queued","provider":"minimax","model":"MiniMax-M2.1",
+            "compiler_version":"care-path-v1","prompt_version":"care-path-prompt-v1",
+            "attempt_count":0,"max_attempts":3,"summary":null,"coverage":{},"last_error_code":null,
+            "created_at":"now","started_at":null,"completed_at":null,"updated_at":"now",
+            "input_snapshot":{"source":"private"},"last_error_detail":"provider detail","catalogue_digest":"secret"
+        })).unwrap();
+        let encoded=serde_json::to_string(&response).unwrap();
+        assert!(!encoded.contains("input_snapshot"));
+        assert!(!encoded.contains("last_error_detail"));
+        assert!(!encoded.contains("catalogue_digest"));
+        assert_eq!(response["status"],"queued");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 import { useNotify } from "@/components/application/notifications/notification-provider";
 import { PdfDocumentViewer } from "@/components/application/documents/pdf-document-viewer";
@@ -11,18 +12,23 @@ import { IconDocument, SearchLg } from "@/components/icons";
 import { useResource } from "@/hooks/use-resource";
 import { useSession } from "@/hooks/use-session";
 import {
+    canCancelCompilerRun,
+    compilerStatusLabel,
     documentUploadProblem,
     documentProcessingLabel,
     formatDocumentSize,
+    normalizeCompilerRunReport,
     normalizeDocumentEvidence,
     normalizeCompilerRecommendations,
     selectDocument,
     selectDocumentVersion,
     selectEvidenceLayout,
     shouldPollDocumentJob,
+    shouldPollCompilerRun,
     validateHistoricalSearch,
     type DocumentJob,
     type CompilerEvidence,
+    type CompilerRunReport,
     type DocumentIntelligence,
     type DocumentLayout,
     type DocumentVersion,
@@ -72,6 +78,9 @@ export function DocumentsScreen() {
     const [layout, setLayout] = useState<DocumentLayout | null>(null);
     const [sourceError, setSourceError] = useState<string | null>(null);
     const [selectedEvidence, setSelectedEvidence] = useState<Pick<CompilerEvidence, "chunk_id" | "page"> | null>(null);
+    const [compilerReport, setCompilerReport] = useState<CompilerRunReport | null>(null);
+    const [isStartingCompiler, setIsStartingCompiler] = useState(false);
+    const [isCancellingCompiler, setIsCancellingCompiler] = useState(false);
 
     useEffect(() => {
         setSelectedId((current) => selectDocument(records, current));
@@ -95,6 +104,7 @@ export function DocumentsScreen() {
 
     useEffect(() => {
         setJob((current) => current?.file_id === selected?.id ? current : null);
+        setCompilerReport(null);
         setSearchResults([]);
         setUnavailableDocuments(0);
         if (!selected) {
@@ -129,6 +139,7 @@ export function DocumentsScreen() {
         selectedVersion?.intelligence ??
             (selectedVersion?.version === selected?.current_version ? selected?.intelligence : null),
     );
+    const carePathRecommended = intelligence?.recommendations.some((item) => item.compiler_id === "care_path") ?? false;
     const stage = job && job.file_version_id === selectedVersion?.id
         ? job.stage
         : selectedVersion?.status ?? selected?.status ?? "queued";
@@ -165,6 +176,24 @@ export function DocumentsScreen() {
         ),
         [layout?.items, selectedEvidence],
     );
+
+    const loadCompilerReport = useCallback(async (runId: string) => {
+        if (!context) return null;
+        const response = await api.getCompilerRun(runId, context);
+        const normalized = normalizeCompilerRunReport(response.data);
+        if (!normalized) throw new Error("The compiler returned an invalid report.");
+        setCompilerReport(normalized);
+        return normalized;
+    }, [context]);
+
+    useEffect(() => {
+        if (!compilerReport || !shouldPollCompilerRun(compilerReport.run)) return;
+        const timer = window.setTimeout(() => {
+            void loadCompilerReport(compilerReport.run.id)
+                .catch((cause) => notify.failure("Could not refresh compiler progress", cause));
+        }, 1_500);
+        return () => window.clearTimeout(timer);
+    }, [compilerReport, loadCompilerReport, notify]);
 
     useEffect(() => {
         if (
@@ -272,6 +301,34 @@ export function DocumentsScreen() {
         }
     }
 
+    async function startCompiler() {
+        if (!selected || !selectedVersion || !context || selectedVersion.status !== "indexed" || !carePathRecommended) return;
+        setIsStartingCompiler(true);
+        try {
+            const { data } = await api.startDocumentCompilation(selected.id, selectedVersion.version, "care_path", context);
+            await loadCompilerReport(data.id);
+            notify.success("Compilation started", "The compiler is creating cited workspace drafts in the background.");
+        } catch (cause) {
+            notify.failure("Could not start compilation", cause);
+        } finally {
+            setIsStartingCompiler(false);
+        }
+    }
+
+    async function cancelCompiler() {
+        if (!compilerReport || !context || !canCancelCompilerRun(compilerReport.run)) return;
+        setIsCancellingCompiler(true);
+        try {
+            await api.cancelCompilerRun(compilerReport.run.id, context);
+            await loadCompilerReport(compilerReport.run.id);
+            notify.success("Compilation cancelled", "No workspace drafts were created by this run.");
+        } catch (cause) {
+            notify.failure("Could not cancel compilation", cause);
+        } finally {
+            setIsCancellingCompiler(false);
+        }
+    }
+
     return (
         <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
             <aside className="flex min-h-0 flex-col border-secondary lg:border-r">
@@ -375,6 +432,7 @@ export function DocumentsScreen() {
                                             onChange={(event) => {
                                                 setSelectedVersionId(event.currentTarget.value);
                                                 setJob(null);
+                                                setCompilerReport(null);
                                                 setSearchResults([]);
                                             }}
                                         >
@@ -474,7 +532,19 @@ export function DocumentsScreen() {
                                     intelligence={intelligence}
                                     version={selectedVersion?.version ?? selected.current_version}
                                     onEvidence={setSelectedEvidence}
+                                    canCompile={selectedVersion?.status === "indexed" && carePathRecommended && !compilerReport}
+                                    isCompiling={isStartingCompiler}
+                                    onCompile={startCompiler}
                                 />
+
+                                {compilerReport ? (
+                                    <CompilerReview
+                                        report={compilerReport}
+                                        isCancelling={isCancellingCompiler}
+                                        onCancel={cancelCompiler}
+                                        onEvidence={(chunkId) => setSelectedEvidence({ chunk_id: chunkId, page: null })}
+                                    />
+                                ) : null}
 
                                 <section className="border-t border-secondary pt-5" aria-labelledby="document-search-title">
                                     <h3 id="document-search-title" className="text-md font-semibold text-primary">Search this document</h3>
@@ -541,10 +611,16 @@ function IntelligenceResult({
     intelligence,
     version,
     onEvidence,
+    canCompile,
+    isCompiling,
+    onCompile,
 }: {
     intelligence: DocumentIntelligence | null;
     version: number;
     onEvidence: (evidence: Pick<CompilerEvidence, "chunk_id" | "page">) => void;
+    canCompile: boolean;
+    isCompiling: boolean;
+    onCompile: () => void;
 }) {
     if (!intelligence) {
         return (
@@ -574,6 +650,11 @@ function IntelligenceResult({
                     </div>
                     <div className="px-5 py-4">
                         <p className="text-sm text-secondary">{recommendation.reason}</p>
+                        {canCompile ? (
+                            <Button size="sm" className="mt-4" isLoading={isCompiling} showTextWhileLoading onClick={onCompile}>
+                                Compile into workflow
+                            </Button>
+                        ) : null}
                         {recommendation.evidence.length > 0 && (
                             <div className="mt-4 flex flex-col gap-3">
                         <p className="text-xs font-medium text-tertiary">Evidence in version {version}</p>
@@ -603,5 +684,142 @@ function IntelligenceResult({
                 </div>
             )}
         </div>
+    );
+}
+
+function traceSummary(step: CompilerRunReport["steps"][number]): string {
+    if (typeof step.result.summary === "string" && step.result.summary.trim()) return step.result.summary;
+    const counts = ["agent_count", "flow_count", "gap_count", "task_count"].flatMap((key) =>
+        typeof step.result[key] === "number" ? [`${String(key).replace("_", " ")}: ${step.result[key]}`] : [],
+    );
+    if (counts.length) return counts.join(" · ");
+    if (step.result.output_stored === true) return "Compiler output stored for deterministic validation.";
+    return step.status === "completed" ? "Completed." : step.error_code ?? step.status;
+}
+
+function CompilerReview({
+    report,
+    isCancelling,
+    onCancel,
+    onEvidence,
+}: {
+    report: CompilerRunReport;
+    isCancelling: boolean;
+    onCancel: () => void;
+    onEvidence: (chunkId: string) => void;
+}) {
+    const active = shouldPollCompilerRun(report.run);
+    const artifactsById = new Map(report.artifacts.map((artifact) => [artifact.id, artifact]));
+    const coverage = report.run.coverage;
+    return (
+        <section className="border-t border-secondary pt-5" aria-labelledby="compiler-review-title">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <h3 id="compiler-review-title" className="text-md font-semibold text-primary">Compiler review</h3>
+                    <p className="mt-1 text-sm text-tertiary">{report.run.summary ?? "The compiler run is retained with its cited decisions and gaps."}</p>
+                </div>
+                {canCancelCompilerRun(report.run) ? (
+                    <Button size="sm" color="secondary-destructive" isLoading={isCancelling} showTextWhileLoading onClick={onCancel}>
+                        Cancel
+                    </Button>
+                ) : null}
+            </div>
+
+            <div className="mt-4 rounded-xl bg-secondary px-4 py-3 ring-1 ring-secondary" role="status" aria-live="polite" aria-label="Compiler progress">
+                <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-primary">{compilerStatusLabel(report.run.status)}</p>
+                    <span className="text-xs text-tertiary">Attempt {report.run.attempt_count}/{report.run.max_attempts}</span>
+                </div>
+                {active ? <p className="mt-1 text-xs text-tertiary">You can leave this page while the durable worker continues.</p> : null}
+                {report.run.status === "failed" ? <p className="mt-1 text-xs text-error-primary">Error: {report.run.last_error_code ?? "compiler_failed"}</p> : null}
+            </div>
+
+            {!active && report.run.status !== "cancelled" ? (
+                <div className="mt-4 grid grid-cols-3 gap-2" aria-label="Compilation coverage">
+                    {(["flow_count", "agent_count", "gap_count"] as const).map((key) => (
+                        <div key={key} className="rounded-lg border border-secondary px-3 py-2">
+                            <p className="text-lg font-semibold text-primary">{coverage[key] ?? 0}</p>
+                            <p className="text-xs text-tertiary">{key === "flow_count" ? "Flows" : key === "agent_count" ? "Agents" : "Gaps"}</p>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+
+            {report.artifacts.length > 0 ? (
+                <div className="mt-5">
+                    <p className="text-sm font-medium text-primary">Generated drafts</p>
+                    <ul className="mt-2 space-y-2">
+                        {report.artifacts.map((artifact) => {
+                            const resourceId = artifact.artifact_type === "flow" ? artifact.flow_id : artifact.agent_id;
+                            const href = resourceId ? (artifact.artifact_type === "flow" ? `/flows/${resourceId}` : `/team/${resourceId}`) : null;
+                            return (
+                                <li key={artifact.id} className="rounded-lg border border-secondary px-3 py-2 text-sm">
+                                    {href ? <Link className="font-medium text-brand-secondary hover:underline" href={href}>{artifact.stable_key}</Link> : <span className="font-medium text-tertiary">{artifact.stable_key}</span>}
+                                    <span className="ml-2 text-xs text-quaternary">{artifact.artifact_type}{href ? " · Draft" : " · Unavailable (deleted)"}</span>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                    <p className="mt-2 text-xs text-tertiary"><code>escalate.notify</code> creates trackable escalation work.</p>
+                </div>
+            ) : null}
+
+            {report.gaps.length > 0 ? (
+                <div className="mt-5">
+                    <p className="text-sm font-medium text-primary">Gaps requiring review</p>
+                    <ul className="mt-2 space-y-3">
+                        {report.gaps.map((gap) => (
+                            <li key={gap.id} className="rounded-lg border border-warning-primary px-3 py-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-sm font-medium text-primary">{gap.code}</span>
+                                    <Badge size="sm" type="pill-color" color={gap.severity === "blocking" ? "error" : gap.severity === "warning" ? "warning" : "gray"}>{gap.severity}</Badge>
+                                </div>
+                                <p className="mt-1 text-sm text-tertiary">{gap.explanation}</p>
+                                {gap.missing_capability ? <p className="mt-1 text-xs text-quaternary">Missing capability: {gap.missing_capability}</p> : null}
+                                {gap.evidence.map((evidence, index) => (
+                                    <button key={`${evidence.chunk_id}-${index}`} type="button" className="mt-2 block border-l-2 border-brand pl-2 text-left text-xs text-tertiary hover:bg-primary_hover" onClick={() => onEvidence(evidence.chunk_id)}>
+                                        “{evidence.excerpt}”
+                                    </button>
+                                ))}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
+
+            {report.evidence.length > 0 ? (
+                <div className="mt-5">
+                    <p className="text-sm font-medium text-primary">Artifact evidence</p>
+                    <ul className="mt-2 space-y-2">
+                        {report.evidence.map((evidence) => (
+                            <li key={evidence.id}>
+                                <button type="button" className="w-full rounded-lg border border-secondary px-3 py-2 text-left hover:bg-primary_hover" onClick={() => onEvidence(evidence.chunk_id)}>
+                                    <p className="text-xs font-medium text-primary">{artifactsById.get(evidence.artifact_id)?.stable_key ?? "Generated artifact"} · {evidence.target_path}</p>
+                                    <p className="mt-1 line-clamp-3 text-xs text-tertiary">“{evidence.excerpt}”</p>
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            ) : null}
+
+            {report.steps.length > 0 ? (
+                <details className="mt-5 rounded-lg border border-secondary px-3 py-3">
+                    <summary className="cursor-pointer text-sm font-medium text-primary">Structured trace ({report.steps.length})</summary>
+                    <ol className="mt-3 space-y-3">
+                        {report.steps.map((step) => (
+                            <li key={step.id} className="text-xs text-tertiary">
+                                <p className="font-medium text-primary">{step.sequence}. {step.kind}{step.task_key ? ` · ${step.task_key}` : ""}</p>
+                                <p className="mt-0.5">{traceSummary(step)}</p>
+                                <p className="mt-0.5 text-quaternary">
+                                    {step.page_start ? `Page ${step.page_start}${step.page_end && step.page_end !== step.page_start ? `–${step.page_end}` : ""} · ` : ""}
+                                    {step.duration_ms !== null ? `${step.duration_ms} ms` : step.status}
+                                </p>
+                            </li>
+                        ))}
+                    </ol>
+                </details>
+            ) : null}
+        </section>
     );
 }

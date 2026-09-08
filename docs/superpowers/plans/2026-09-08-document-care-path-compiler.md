@@ -411,27 +411,27 @@ git commit -m "feat: expose document compiler runs"
 - Produces: normalized `CompilerRun`, `CompilerStep`, `CompilerGap`, `CompilerArtifact`, polling helpers, compile/cancel actions, progress/report UI, artifact navigation, and evidence highlighting.
 - Consumes: Task 7 endpoints and existing `selectEvidenceLayout`/`PdfDocumentViewer`.
 
-- [ ] **Step 1: Write failing normalization and polling tests**
+- [x] **Step 1: Write failing normalization and polling tests**
 
 Assert unknown statuses are rejected, steps are sequence-sorted, gaps retain severity/code/evidence, deleted artifacts remain visible as unavailable, active states poll, terminal states stop, and evidence selection resolves chunk layout spans.
 
-- [ ] **Step 2: Add strict TypeScript contracts**
+- [x] **Step 2: Add strict TypeScript contracts**
 
 Define the five nonterminal states plus `completed`, `completed_with_gaps`, `failed`, and `cancelled`. Parse arrays defensively and discard malformed IDs, target paths, and evidence instead of rendering unsafe assumptions.
 
-- [ ] **Step 3: Add compile and progress controls**
+- [x] **Step 3: Add compile and progress controls**
 
 Show **Compile into workflow** only for an indexed version with a normalized `care_path` recommendation. Start the run, poll its report, expose cancellation only before materialization, and use an accessible live status region.
 
-- [ ] **Step 4: Add completion review**
+- [x] **Step 4: Add completion review**
 
 Render generated flow and agent links, coverage, ordered trace summaries, warnings, and first-class gaps. Label `escalate.notify` as “Creates trackable escalation work,” never “Notifies clinician.” Preserve the existing 400px pane and current compact spacing.
 
-- [ ] **Step 5: Wire evidence navigation**
+- [x] **Step 5: Wire evidence navigation**
 
 Clicking a node/prompt evidence target calls the existing evidence selection with its `chunk_id`, causing the PDF viewer to move to and highlight linked layout spans. Clicking a live artifact opens its normal flow or agent editor.
 
-- [ ] **Step 6: Run frontend tests and build**
+- [x] **Step 6: Run frontend tests and build**
 
 ```bash
 node --import tsx --test src/lib/document-workspace.test.ts

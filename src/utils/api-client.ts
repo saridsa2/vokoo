@@ -15,7 +15,7 @@
  * look for it.
  */
 
-import type { DocumentLayout } from "../lib/document-workspace";
+import type { CompilerRunReport, DocumentLayout } from "../lib/document-workspace";
 
 const API_URL = process.env.NEXT_PUBLIC_CONTROLPLANE_API_URL ?? "http://localhost:8081";
 
@@ -350,6 +350,23 @@ export const api = {
 
     getDocumentJob: (id: string, context: AccessContext) =>
         request<DocumentJob>(`/api/v1/document-jobs/${encodeURIComponent(id)}`, {}, context),
+
+    startDocumentCompilation: (id: string, version: number, compilerId: "care_path", context: AccessContext) =>
+        request<{ id: string }>(
+            `/api/v1/documents/${encodeURIComponent(id)}/versions/${version}/compilations`,
+            { method: "POST", body: JSON.stringify({ compiler_id: compilerId }) },
+            context,
+        ),
+
+    getCompilerRun: (id: string, context: AccessContext) =>
+        request<CompilerRunReport>(`/api/v1/compiler-runs/${encodeURIComponent(id)}`, {}, context),
+
+    cancelCompilerRun: (id: string, context: AccessContext) =>
+        request<{ id: string; status: string }>(
+            `/api/v1/compiler-runs/${encodeURIComponent(id)}/cancel`,
+            { method: "POST" },
+            context,
+        ),
 
     searchDocuments: (body: DocumentSearchRequest, context: AccessContext) =>
         request<DocumentSearchResponse>(

@@ -76,6 +76,284 @@ export type DocumentJob = {
     updated_at: string;
 };
 
+export const COMPILER_RUN_STATUSES = [
+    "queued",
+    "planning",
+    "compiling",
+    "validating",
+    "materializing",
+    "completed",
+    "completed_with_gaps",
+    "failed",
+    "cancelled",
+] as const;
+
+export type CompilerRunStatus = (typeof COMPILER_RUN_STATUSES)[number];
+export type CompilerStepKind = "plan" | "retrieve" | "extract" | "reconcile" | "lower" | "validate" | "materialize";
+export type CompilerStepStatus = "started" | "completed" | "failed" | "skipped";
+export type CompilerGapSeverity = "info" | "warning" | "blocking";
+export type CompilerEvidenceRole = "requirement" | "threshold" | "timing" | "exception" | "population" | "escalation";
+
+export type CompilerRun = {
+    id: string;
+    file_id: string;
+    file_version_id: string;
+    compiler_id: "care_path";
+    status: CompilerRunStatus;
+    provider: string;
+    model: string;
+    compiler_version: string;
+    prompt_version: string;
+    attempt_count: number;
+    max_attempts: number;
+    summary: string | null;
+    coverage: Record<string, number>;
+    last_error_code: string | null;
+    created_at: string;
+    started_at: string | null;
+    completed_at: string | null;
+    updated_at: string;
+};
+
+export type CompilerStep = {
+    id: string;
+    sequence: number;
+    kind: CompilerStepKind;
+    status: CompilerStepStatus;
+    task_key: string | null;
+    page_start: number | null;
+    page_end: number | null;
+    input_refs: Record<string, unknown>;
+    result: Record<string, unknown>;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    duration_ms: number | null;
+    retry_count: number;
+    error_code: string | null;
+    created_at: string;
+};
+
+export type CompilerGapEvidence = {
+    chunk_id: string;
+    excerpt: string;
+    role: CompilerEvidenceRole;
+    recommendation_id: string | null;
+};
+
+export type CompilerGap = {
+    id: string;
+    step_id: string | null;
+    code: string;
+    severity: CompilerGapSeverity;
+    recommendation_id: string;
+    explanation: string;
+    missing_capability: string | null;
+    evidence: CompilerGapEvidence[];
+    review_status: "open" | "accepted" | "resolved";
+    resolution_note: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
+export type CompilerArtifact = {
+    id: string;
+    artifact_type: "agent" | "flow";
+    stable_key: string;
+    role: string;
+    agent_id: string | null;
+    flow_id: string | null;
+    created_at: string;
+};
+
+export type CompilerArtifactEvidence = {
+    id: string;
+    artifact_id: string;
+    target_path: string;
+    chunk_id: string;
+    excerpt: string;
+    recommendation_id: string;
+    evidence_role: CompilerEvidenceRole;
+    created_at: string;
+};
+
+export type CompilerRunReport = {
+    run: CompilerRun;
+    steps: CompilerStep[];
+    gaps: CompilerGap[];
+    artifacts: CompilerArtifact[];
+    evidence: CompilerArtifactEvidence[];
+};
+
+const ACTIVE_COMPILER_STATUSES = new Set<CompilerRunStatus>([
+    "queued", "planning", "compiling", "validating", "materializing",
+]);
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TARGET_PATH_PATTERN = /^(?:agent|flow)(?:\.[A-Za-z0-9_-]+)+$/;
+const STEP_KINDS = new Set<CompilerStepKind>(["plan", "retrieve", "extract", "reconcile", "lower", "validate", "materialize"]);
+const STEP_STATUSES = new Set<CompilerStepStatus>(["started", "completed", "failed", "skipped"]);
+const GAP_SEVERITIES = new Set<CompilerGapSeverity>(["info", "warning", "blocking"]);
+const REVIEW_STATUSES = new Set<CompilerGap["review_status"]>(["open", "accepted", "resolved"]);
+const EVIDENCE_ROLES = new Set<CompilerEvidenceRole>(["requirement", "threshold", "timing", "exception", "population", "escalation"]);
+
+function record(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+    return typeof value === "string" ? value : null;
+}
+
+function uuidOrNull(value: unknown): string | null {
+    return typeof value === "string" && UUID_PATTERN.test(value) ? value : null;
+}
+
+function nonnegativeNumberOrNull(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function shouldPollCompilerRun(run: Pick<CompilerRun, "status"> | null): boolean {
+    return !!run && ACTIVE_COMPILER_STATUSES.has(run.status);
+}
+
+export function canCancelCompilerRun(run: Pick<CompilerRun, "status"> | null): boolean {
+    return !!run && ["queued", "planning", "compiling", "validating"].includes(run.status);
+}
+
+export function compilerStatusLabel(status: CompilerRunStatus): string {
+    return ({
+        queued: "Queued",
+        planning: "Planning the care journey",
+        compiling: "Compiling cited recommendations",
+        validating: "Checking workflow safety",
+        materializing: "Creating workspace drafts",
+        completed: "Drafts ready",
+        completed_with_gaps: "Drafts ready with gaps",
+        failed: "Compilation failed",
+        cancelled: "Compilation cancelled",
+    } satisfies Record<CompilerRunStatus, string>)[status];
+}
+
+export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | null {
+    const root = record(input);
+    const rawRun = record(root?.run);
+    const status = rawRun?.status;
+    const runId = uuidOrNull(rawRun?.id);
+    const fileId = uuidOrNull(rawRun?.file_id);
+    const versionId = uuidOrNull(rawRun?.file_version_id);
+    if (!rawRun || !runId || !fileId || !versionId || typeof status !== "string" || !(COMPILER_RUN_STATUSES as readonly string[]).includes(status)) return null;
+    if (rawRun.compiler_id !== "care_path") return null;
+    const requiredStrings = [rawRun.provider, rawRun.model, rawRun.compiler_version, rawRun.prompt_version, rawRun.created_at, rawRun.updated_at];
+    if (requiredStrings.some((value) => typeof value !== "string" || !value)) return null;
+    if (!Number.isInteger(rawRun.attempt_count) || !Number.isInteger(rawRun.max_attempts)) return null;
+
+    const rawCoverage = record(rawRun.coverage) ?? {};
+    const coverage = Object.fromEntries(Object.entries(rawCoverage).filter((entry): entry is [string, number] =>
+        typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0,
+    ));
+    const run: CompilerRun = {
+        id: runId,
+        file_id: fileId,
+        file_version_id: versionId,
+        compiler_id: "care_path",
+        status: status as CompilerRunStatus,
+        provider: rawRun.provider as string,
+        model: rawRun.model as string,
+        compiler_version: rawRun.compiler_version as string,
+        prompt_version: rawRun.prompt_version as string,
+        attempt_count: rawRun.attempt_count as number,
+        max_attempts: rawRun.max_attempts as number,
+        summary: stringOrNull(rawRun.summary),
+        coverage,
+        last_error_code: stringOrNull(rawRun.last_error_code),
+        created_at: rawRun.created_at as string,
+        started_at: stringOrNull(rawRun.started_at),
+        completed_at: stringOrNull(rawRun.completed_at),
+        updated_at: rawRun.updated_at as string,
+    };
+
+    const steps = (Array.isArray(root?.steps) ? root.steps : []).flatMap((value): CompilerStep[] => {
+        const item = record(value);
+        const id = uuidOrNull(item?.id);
+        if (!item || !id || !Number.isInteger(item.sequence) || (item.sequence as number) < 1 ||
+            typeof item.kind !== "string" || !STEP_KINDS.has(item.kind as CompilerStepKind) ||
+            typeof item.status !== "string" || !STEP_STATUSES.has(item.status as CompilerStepStatus) ||
+            typeof item.created_at !== "string") return [];
+        const inputRefs = record(item.input_refs) ?? {};
+        const result = record(item.result) ?? {};
+        const pageStart = Number.isInteger(item.page_start) && (item.page_start as number) > 0 ? item.page_start as number : null;
+        const pageEnd = Number.isInteger(item.page_end) && (item.page_end as number) >= (pageStart ?? 1) ? item.page_end as number : pageStart;
+        return [{
+            id, sequence: item.sequence as number, kind: item.kind as CompilerStepKind,
+            status: item.status as CompilerStepStatus, task_key: stringOrNull(item.task_key),
+            page_start: pageStart, page_end: pageEnd, input_refs: inputRefs, result,
+            input_tokens: nonnegativeNumberOrNull(item.input_tokens), output_tokens: nonnegativeNumberOrNull(item.output_tokens),
+            duration_ms: nonnegativeNumberOrNull(item.duration_ms),
+            retry_count: Number.isInteger(item.retry_count) && (item.retry_count as number) >= 0 ? item.retry_count as number : 0,
+            error_code: stringOrNull(item.error_code), created_at: item.created_at,
+        }];
+    }).sort((left, right) => left.sequence - right.sequence);
+
+    const gaps = (Array.isArray(root?.gaps) ? root.gaps : []).flatMap((value): CompilerGap[] => {
+        const item = record(value);
+        const id = uuidOrNull(item?.id);
+        if (!item || !id || typeof item.code !== "string" || !item.code || typeof item.severity !== "string" ||
+            !GAP_SEVERITIES.has(item.severity as CompilerGapSeverity) || typeof item.explanation !== "string" || !item.explanation ||
+            typeof item.review_status !== "string" || !REVIEW_STATUSES.has(item.review_status as CompilerGap["review_status"]) ||
+            typeof item.created_at !== "string" || typeof item.updated_at !== "string") return [];
+        const stepId = item.step_id === null ? null : uuidOrNull(item.step_id);
+        if (item.step_id !== null && !stepId) return [];
+        const evidence = (Array.isArray(item.evidence) ? item.evidence : []).flatMap((candidate): CompilerGapEvidence[] => {
+            const cited = record(candidate);
+            const chunkId = uuidOrNull(cited?.chunk_id);
+            if (!cited || !chunkId || typeof cited.excerpt !== "string" || !cited.excerpt.trim() ||
+                typeof cited.role !== "string" || !EVIDENCE_ROLES.has(cited.role as CompilerEvidenceRole)) return [];
+            return [{ chunk_id: chunkId, excerpt: cited.excerpt.trim(), role: cited.role as CompilerEvidenceRole, recommendation_id: stringOrNull(cited.recommendation_id) }];
+        });
+        return [{
+            id, step_id: stepId, code: item.code, severity: item.severity as CompilerGapSeverity,
+            recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
+            explanation: item.explanation, missing_capability: stringOrNull(item.missing_capability), evidence,
+            review_status: item.review_status as CompilerGap["review_status"], resolution_note: stringOrNull(item.resolution_note),
+            created_at: item.created_at, updated_at: item.updated_at,
+        }];
+    });
+
+    const artifacts = (Array.isArray(root?.artifacts) ? root.artifacts : []).flatMap((value): CompilerArtifact[] => {
+        const item = record(value);
+        const id = uuidOrNull(item?.id);
+        if (!item || !id || (item.artifact_type !== "agent" && item.artifact_type !== "flow") ||
+            typeof item.stable_key !== "string" || !item.stable_key || typeof item.role !== "string" ||
+            typeof item.created_at !== "string") return [];
+        const agentId = item.agent_id === null ? null : uuidOrNull(item.agent_id);
+        const flowId = item.flow_id === null ? null : uuidOrNull(item.flow_id);
+        if ((item.agent_id !== null && !agentId) || (item.flow_id !== null && !flowId)) return [];
+        if (item.artifact_type === "agent" && flowId || item.artifact_type === "flow" && agentId) return [];
+        return [{ id, artifact_type: item.artifact_type, stable_key: item.stable_key, role: item.role, agent_id: agentId, flow_id: flowId, created_at: item.created_at }];
+    });
+
+    const artifactIds = new Set(artifacts.map((artifact) => artifact.id));
+    const evidence = (Array.isArray(root?.evidence) ? root.evidence : []).flatMap((value): CompilerArtifactEvidence[] => {
+        const item = record(value);
+        const id = uuidOrNull(item?.id);
+        const artifactId = uuidOrNull(item?.artifact_id);
+        const chunkId = uuidOrNull(item?.chunk_id);
+        if (!item || !id || !artifactId || !artifactIds.has(artifactId) || !chunkId || typeof item.target_path !== "string" ||
+            !TARGET_PATH_PATTERN.test(item.target_path) || typeof item.excerpt !== "string" || !item.excerpt.trim() ||
+            typeof item.evidence_role !== "string" || !EVIDENCE_ROLES.has(item.evidence_role as CompilerEvidenceRole) ||
+            typeof item.created_at !== "string") return [];
+        return [{
+            id, artifact_id: artifactId, target_path: item.target_path, chunk_id: chunkId,
+            excerpt: item.excerpt.trim(), recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
+            evidence_role: item.evidence_role as CompilerEvidenceRole, created_at: item.created_at,
+        }];
+    });
+
+    return { run, steps, gaps, artifacts, evidence };
+}
+
 export type DocumentLayoutPage = {
     page_number: number;
     width_points: number;
