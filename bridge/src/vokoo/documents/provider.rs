@@ -35,6 +35,59 @@ impl NormalizedExtraction {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    pub fn as_extracted_document(&self) -> super::ExtractedDocument {
+        let body = self
+            .items
+            .iter()
+            .filter(|item| item.content_layer == ContentLayer::Body && !item.text.trim().is_empty())
+            .collect::<Vec<_>>();
+        let pages = self
+            .pages
+            .iter()
+            .map(|page| {
+                let text = body
+                    .iter()
+                    .filter(|item| {
+                        item.spans
+                            .first()
+                            .is_some_and(|span| span.page_number == page.page_number)
+                    })
+                    .map(|item| item.text.trim())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                super::ExtractedPage {
+                    physical_page: Some(page.page_number),
+                    text,
+                }
+            })
+            .collect();
+        let blocks = body
+            .into_iter()
+            .map(|item| {
+                let page_start = item.spans.iter().map(|span| span.page_number).min();
+                let page_end = item.spans.iter().map(|span| span.page_number).max();
+                let kind = match item.label.as_str() {
+                    "list_item" => super::StructuralKind::ListItem,
+                    "table" => super::StructuralKind::TableRow,
+                    _ => super::StructuralKind::Paragraph,
+                };
+                super::StructuralBlock {
+                    kind,
+                    text: item.text.clone(),
+                    page_start,
+                    page_end,
+                    section_path: item.section_path.clone(),
+                    source_refs: vec![item.provider_ref.clone()],
+                }
+            })
+            .collect();
+        super::ExtractedDocument {
+            text: self.indexable_text(),
+            pages,
+            blocks,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    chunk_document, extract_document, ChunkConfig, ChunkEmbedding, ClaimedJob, DocumentMetrics,
-    EmbedError, Embedder, EmbeddingProfile, GeminiEmbedder, JobFailure, JobRepository, JobStage,
-    PersistedChunk, RepositoryError, MAX_EMBEDDING_BATCH,
+    chunk_document, extract_document, ChunkConfig, ChunkEmbedding, ClaimedJob,
+    DocumentExtractionProvider, DocumentMetrics, EmbedError, Embedder, EmbeddingProfile,
+    ExtractionRequest, GeminiEmbedder, JobFailure, JobRepository, JobStage, PersistedChunk,
+    RepositoryError, MAX_EMBEDDING_BATCH,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -199,6 +200,7 @@ pub struct DocumentWorker {
     worker_id: String,
     chunk_config: ChunkConfig,
     metrics: Arc<DocumentMetrics>,
+    extraction_provider: Option<Arc<dyn DocumentExtractionProvider>>,
 }
 
 impl DocumentWorker {
@@ -215,11 +217,20 @@ impl DocumentWorker {
             worker_id: worker_id.into(),
             chunk_config: ChunkConfig::default(),
             metrics: Arc::new(DocumentMetrics::default()),
+            extraction_provider: None,
         }
     }
 
     pub fn with_metrics(mut self, metrics: Arc<DocumentMetrics>) -> Self {
         self.metrics = metrics;
+        self
+    }
+
+    pub fn with_extraction_provider(
+        mut self,
+        provider: Arc<dyn DocumentExtractionProvider>,
+    ) -> Self {
+        self.extraction_provider = Some(provider);
         self
     }
 
@@ -261,8 +272,35 @@ impl DocumentWorker {
     async fn process(&self, job: &ClaimedJob) -> Result<(), WorkerError> {
         let source = self.jobs.load_source(job).await?;
         let started = Instant::now();
-        let extracted = extract_document(&source.mime_type, &source.bytes)
-            .map_err(|error| WorkerError::Permanent(error.to_string()))?;
+        let normalized = if source.mime_type == "application/pdf" {
+            if let Some(provider) = &self.extraction_provider {
+                Some(
+                    provider
+                        .extract(ExtractionRequest {
+                            mime_type: source.mime_type.clone(),
+                            source_sha256: source.sha256.clone(),
+                            bytes: Arc::from(source.bytes.clone()),
+                        })
+                        .await
+                        .map_err(|error| {
+                            if error.is_retryable() {
+                                WorkerError::Retryable(error.to_string())
+                            } else {
+                                WorkerError::Permanent(error.to_string())
+                            }
+                        })?,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let extracted = match &normalized {
+            Some(extraction) => extraction.as_extracted_document(),
+            None => extract_document(&source.mime_type, &source.bytes)
+                .map_err(|error| WorkerError::Permanent(error.to_string()))?,
+        };
         self.metrics
             .stage_millis("extracting", started.elapsed().as_millis());
         self.metrics
@@ -274,6 +312,15 @@ impl DocumentWorker {
         if source.extracted_text.as_deref() != Some(extracted.text.as_str()) {
             self.jobs.store_extraction(job, &extracted.text).await?;
         }
+        let active_extraction = if let Some(extraction) = &normalized {
+            Some(
+                self.jobs
+                    .store_layout(job, &self.worker_id, extraction)
+                    .await?,
+            )
+        } else {
+            None
+        };
 
         self.renew_and_advance(job, JobStage::Chunking).await?;
         let started = Instant::now();
@@ -286,6 +333,11 @@ impl DocumentWorker {
             ));
         }
         let persisted = self.jobs.upsert_chunks(job, &chunks).await?;
+        if let Some(extraction_id) = active_extraction.as_deref() {
+            self.jobs
+                .link_chunk_layout(job, &self.worker_id, extraction_id, &chunks, &persisted)
+                .await?;
+        }
         self.metrics
             .add("document_chunks_persisted_total", persisted.len());
 

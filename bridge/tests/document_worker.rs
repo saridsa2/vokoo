@@ -7,12 +7,14 @@ use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
 use rustvani::vokoo::documents::{
-    ChunkEmbedding, ClaimedJob, DocumentChunk, DocumentClassifier, DocumentEvidence,
-    DocumentSource, DocumentWorker, EmbedError, Embedder, EmbeddingFactory, EmbeddingProfile,
-    JobFailure, JobRepository, JobStage, PersistedChunk, PostgrestJobRepository, RepositoryError,
-    RunOutcome, WorkerError,
+    normalize_docling_json, ChunkEmbedding, ClaimedJob, DocumentChunk, DocumentClassifier,
+    DocumentEvidence, DocumentExtractionProvider, DocumentSource, DocumentWorker, EmbedError,
+    Embedder, EmbeddingFactory, EmbeddingProfile, ExtractionRequest, JobFailure, JobRepository,
+    JobStage, NormalizedExtraction, PersistedChunk, PostgrestJobRepository, ProviderError,
+    RepositoryError, RunOutcome, WorkerError,
 };
 use serde_json::{json, Value};
+use sha2::Digest;
 
 #[derive(Default)]
 struct RepoState {
@@ -24,6 +26,7 @@ struct RepoState {
     failures: Vec<JobFailure>,
     completions: Vec<Value>,
     extraction_writes: usize,
+    layout_writes: usize,
 }
 
 #[derive(Default)]
@@ -70,6 +73,36 @@ impl JobRepository for FakeRepo {
         if let Some(source) = state.source.as_mut() {
             source.extracted_text = Some(text.to_string());
         }
+        Ok(())
+    }
+
+    async fn store_layout(
+        &self,
+        _job: &ClaimedJob,
+        _worker_id: &str,
+        extraction: &NormalizedExtraction,
+    ) -> Result<String, RepositoryError> {
+        let mut state = self.0.lock().unwrap();
+        state.layout_writes += 1;
+        state.events.push("layout".into());
+        assert_eq!(extraction.schema_version, "layout-v1");
+        Ok("extraction-1".into())
+    }
+
+    async fn link_chunk_layout(
+        &self,
+        _job: &ClaimedJob,
+        _worker_id: &str,
+        extraction_id: &str,
+        chunks: &[DocumentChunk],
+        persisted: &[PersistedChunk],
+    ) -> Result<(), RepositoryError> {
+        assert_eq!(extraction_id, "extraction-1");
+        assert_eq!(chunks.len(), persisted.len());
+        assert!(chunks
+            .iter()
+            .any(|chunk| !chunk.layout_item_refs.is_empty()));
+        self.0.lock().unwrap().events.push("chunk-layout".into());
         Ok(())
     }
 
@@ -203,6 +236,22 @@ impl DocumentClassifier for FakeClassifier {
     }
 }
 
+struct FakeExtractionProvider {
+    extraction: NormalizedExtraction,
+    calls: Mutex<usize>,
+}
+
+#[async_trait]
+impl DocumentExtractionProvider for FakeExtractionProvider {
+    async fn extract(
+        &self,
+        _request: ExtractionRequest,
+    ) -> Result<NormalizedExtraction, ProviderError> {
+        *self.calls.lock().unwrap() += 1;
+        Ok(self.extraction.clone())
+    }
+}
+
 fn job() -> ClaimedJob {
     ClaimedJob {
         id: "job-1".into(),
@@ -220,6 +269,7 @@ fn job() -> ClaimedJob {
 fn source(bytes: Vec<u8>) -> DocumentSource {
     DocumentSource {
         mime_type: "text/markdown".into(),
+        sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
         bytes,
         extracted_text: None,
         profile: EmbeddingProfile {
@@ -230,6 +280,47 @@ fn source(bytes: Vec<u8>) -> DocumentSource {
             query_prefix: "task: search result | query: {content}".into(),
         },
     }
+}
+
+#[tokio::test]
+async fn pdf_provider_layout_is_stored_before_its_linked_chunks() {
+    let bytes = include_bytes!("fixtures/documents/guideline.pdf").to_vec();
+    let mut document = source(bytes);
+    document.mime_type = "application/pdf".into();
+    let extraction = normalize_docling_json(
+        include_str!("fixtures/documents/docling-layout.json"),
+        &document.sha256,
+        "1.37.0",
+    )
+    .unwrap();
+    let provider = Arc::new(FakeExtractionProvider {
+        extraction,
+        calls: Mutex::new(0),
+    });
+    let (repo, _, _, _, worker) = harness(vec![job()], Some(document));
+    let worker = worker.with_extraction_provider(provider.clone());
+
+    worker.run_once().await.unwrap();
+
+    assert_eq!(*provider.calls.lock().unwrap(), 1);
+    let state = repo.0.lock().unwrap();
+    assert_eq!(state.layout_writes, 1);
+    let layout = state
+        .events
+        .iter()
+        .position(|event| event == "layout")
+        .unwrap();
+    let chunks = state
+        .events
+        .iter()
+        .position(|event| event == "chunks")
+        .unwrap();
+    let links = state
+        .events
+        .iter()
+        .position(|event| event == "chunk-layout")
+        .unwrap();
+    assert!(layout < chunks && chunks < links);
 }
 
 fn harness(

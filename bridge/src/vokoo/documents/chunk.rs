@@ -32,6 +32,7 @@ pub struct DocumentChunk {
     pub content: String,
     pub token_count: usize,
     pub content_sha256: String,
+    pub layout_item_refs: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +40,7 @@ struct ChunkProvenance {
     page_start: Option<usize>,
     page_end: Option<usize>,
     section_path: Vec<String>,
+    layout_item_refs: Vec<String>,
 }
 
 impl From<&StructuralBlock> for ChunkProvenance {
@@ -47,6 +49,7 @@ impl From<&StructuralBlock> for ChunkProvenance {
             page_start: block.page_start,
             page_end: block.page_end,
             section_path: block.section_path.clone(),
+            layout_item_refs: block.source_refs.clone(),
         }
     }
 }
@@ -99,6 +102,11 @@ pub fn chunk_document(document: &ExtractedDocument, config: &ChunkConfig) -> Vec
             pending_meta = Some(ChunkProvenance::from(block));
         } else if let Some(meta) = pending_meta.as_mut() {
             meta.page_end = block.page_end.or(meta.page_end);
+            for reference in &block.source_refs {
+                if !meta.layout_item_refs.contains(reference) {
+                    meta.layout_item_refs.push(reference.clone());
+                }
+            }
         }
         pending.extend(words);
     }
@@ -134,5 +142,6 @@ fn push_chunk(chunks: &mut Vec<DocumentChunk>, words: &[String], meta: &ChunkPro
         token_count: words.len(),
         content,
         content_sha256,
+        layout_item_refs: meta.layout_item_refs.clone(),
     });
 }

@@ -6,8 +6,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use rustvani::vokoo::documents::{
-    document_search_router, DocumentMetrics, DocumentSearchService, DocumentWorker,
-    GeminiEmbeddingFactory, PostgrestJobRepository, RunOutcome, WorkspaceIntelligenceClassifier,
+    document_search_router, DoclingCommandProvider, DocumentMetrics, DocumentSearchService,
+    DocumentWorker, GeminiEmbeddingFactory, PostgrestJobRepository, RunOutcome,
+    WorkspaceIntelligenceClassifier,
 };
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -47,9 +48,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &service_key,
         embeddings.clone(),
     )?);
-    let worker = Arc::new(
-        DocumentWorker::new(jobs, embeddings, classifier, worker_id).with_metrics(metrics.clone()),
-    );
+    let mut worker =
+        DocumentWorker::new(jobs, embeddings, classifier, worker_id).with_metrics(metrics.clone());
+    match optional("VOKOO_DOCUMENT_EXTRACTION_PROVIDER").as_deref() {
+        None | Some("builtin") => {
+            log::info!("[document-worker] using built-in document extraction");
+        }
+        Some("docling-vps") => {
+            let executable = required("VOKOO_DOCLING_PATH")?;
+            let expected_version =
+                optional("VOKOO_DOCLING_VERSION").unwrap_or_else(|| "1.37.0".into());
+            let timeout = parsed_env("VOKOO_DOCLING_TIMEOUT_SECONDS", 300_u64)?;
+            let max_output = parsed_env("VOKOO_DOCLING_MAX_OUTPUT_BYTES", 64_usize * 1024 * 1024)?;
+            log::info!("[document-worker] using Docling VPS extraction version {expected_version}");
+            worker = worker.with_extraction_provider(Arc::new(DoclingCommandProvider::new(
+                executable,
+                expected_version,
+                Duration::from_secs(timeout),
+                max_output,
+            )));
+        }
+        Some(provider) => {
+            return Err(format!(
+                "VOKOO_DOCUMENT_EXTRACTION_PROVIDER must be builtin or docling-vps, got {provider}"
+            )
+            .into());
+        }
+    }
+    let worker = Arc::new(worker);
     let cancellation = CancellationToken::new();
 
     let app = Router::new()
@@ -97,10 +123,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn required(name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    optional(name).ok_or_else(|| format!("{name} is required").into())
+}
+
+fn optional(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("{name} is required").into())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parsed_env<T>(name: &str, default: T) -> Result<T, Box<dyn std::error::Error>>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    optional(name)
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|error| format!("{name} is invalid: {error}").into())
+        })
+        .unwrap_or(Ok(default))
 }
 
 async fn health() -> impl IntoResponse {

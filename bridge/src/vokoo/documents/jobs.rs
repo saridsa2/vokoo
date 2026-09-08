@@ -6,7 +6,7 @@ use reqwest::{Client, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{DocumentChunk, EmbeddingProfile};
+use super::{DocumentChunk, EmbeddingProfile, NormalizedExtraction};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -52,6 +52,7 @@ pub struct ClaimedJob {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentSource {
     pub mime_type: String,
+    pub sha256: String,
     pub bytes: Vec<u8>,
     pub extracted_text: Option<String>,
     pub profile: EmbeddingProfile,
@@ -128,6 +129,20 @@ pub trait JobRepository: Send + Sync {
         stage: JobStage,
     ) -> Result<(), RepositoryError>;
     async fn store_extraction(&self, job: &ClaimedJob, text: &str) -> Result<(), RepositoryError>;
+    async fn store_layout(
+        &self,
+        job: &ClaimedJob,
+        worker_id: &str,
+        extraction: &NormalizedExtraction,
+    ) -> Result<String, RepositoryError>;
+    async fn link_chunk_layout(
+        &self,
+        job: &ClaimedJob,
+        worker_id: &str,
+        extraction_id: &str,
+        chunks: &[DocumentChunk],
+        persisted: &[PersistedChunk],
+    ) -> Result<(), RepositoryError>;
     async fn upsert_chunks(
         &self,
         job: &ClaimedJob,
@@ -261,7 +276,7 @@ impl JobRepository for PostgrestJobRepository {
     async fn load_source(&self, job: &ClaimedJob) -> Result<DocumentSource, RepositoryError> {
         let versions: Vec<Value> =
             checked(self.request(reqwest::Method::GET, "file_versions").query(&[
-                ("select", "mime_type,content,extracted_text"),
+                ("select", "mime_type,sha256,content,extracted_text"),
                 ("id", &format!("eq.{}", job.file_version_id)),
                 ("org_id", &format!("eq.{}", job.org_id)),
             ]))
@@ -307,6 +322,7 @@ impl JobRepository for PostgrestJobRepository {
             .ok_or_else(|| RepositoryError::permanent("the embedding profile was not found"))?;
         Ok(DocumentSource {
             mime_type: source["mime_type"].as_str().unwrap_or_default().to_string(),
+            sha256: source["sha256"].as_str().unwrap_or_default().to_string(),
             bytes,
             extracted_text: source["extracted_text"].as_str().map(str::to_string),
             profile: profile.into(),
@@ -357,6 +373,73 @@ impl JobRepository for PostgrestJobRepository {
                 "the extraction write did not match one document version",
             ))
         }
+    }
+
+    async fn store_layout(
+        &self,
+        job: &ClaimedJob,
+        worker_id: &str,
+        extraction: &NormalizedExtraction,
+    ) -> Result<String, RepositoryError> {
+        let extraction_id: String = self
+            .rpc(
+                "store_document_extraction",
+                json!({
+                    "p_job_id": job.id,
+                    "p_worker": worker_id,
+                    "p_extraction": extraction,
+                }),
+            )
+            .await?
+            .json()
+            .await
+            .map_err(|error| {
+                RepositoryError::permanent(format!("invalid stored extraction: {error}"))
+            })?;
+        Ok(extraction_id)
+    }
+
+    async fn link_chunk_layout(
+        &self,
+        job: &ClaimedJob,
+        worker_id: &str,
+        extraction_id: &str,
+        chunks: &[DocumentChunk],
+        persisted: &[PersistedChunk],
+    ) -> Result<(), RepositoryError> {
+        let persisted_ordinals = persisted
+            .iter()
+            .map(|chunk| chunk.ordinal)
+            .collect::<HashSet<_>>();
+        let links = chunks
+            .iter()
+            .filter(|chunk| {
+                persisted_ordinals.contains(&chunk.ordinal) && !chunk.layout_item_refs.is_empty()
+            })
+            .map(|chunk| {
+                json!({
+                    "chunk_ordinal": chunk.ordinal,
+                    "provider_refs": chunk.layout_item_refs,
+                })
+            })
+            .collect::<Vec<_>>();
+        let _: usize = self
+            .rpc(
+                "link_document_chunk_layout",
+                json!({
+                    "p_job_id": job.id,
+                    "p_worker": worker_id,
+                    "p_extraction_id": extraction_id,
+                    "p_links": links,
+                }),
+            )
+            .await?
+            .json()
+            .await
+            .map_err(|error| {
+                RepositoryError::permanent(format!("invalid chunk layout links: {error}"))
+            })?;
+        Ok(())
     }
 
     async fn upsert_chunks(

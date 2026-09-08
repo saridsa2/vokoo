@@ -25,6 +25,7 @@ pub struct StructuralBlock {
     pub page_start: Option<usize>,
     pub page_end: Option<usize>,
     pub section_path: Vec<String>,
+    pub source_refs: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +148,7 @@ fn block(text: &str, page: Option<usize>, sections: &[String]) -> StructuralBloc
         page_start: page,
         page_end: page,
         section_path: sections.to_vec(),
+        source_refs: Vec::new(),
     }
 }
 
