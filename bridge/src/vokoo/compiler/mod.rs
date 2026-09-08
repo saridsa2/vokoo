@@ -8,11 +8,15 @@
 mod harness;
 mod lower;
 mod model;
+mod repository;
 mod types;
 mod validate;
+mod worker;
 
 pub use harness::*;
 pub use lower::lower;
 pub use model::*;
+pub use repository::*;
 pub use types::*;
 pub use validate::validate_output;
+pub use worker::*;

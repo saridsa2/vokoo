@@ -5,6 +5,10 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use rustvani::vokoo::compiler::{
+    CompilerRunOutcome, CompilerWorker, HarnessCompilerExecutor, OperatorCompilerModelFactory,
+    PostgrestCompilerRepository,
+};
 use rustvani::vokoo::documents::{
     document_search_router, DoclingCommandProvider, DocumentMetrics, DocumentSearchService,
     DocumentWorker, GeminiEmbeddingFactory, ModalDoclingProvider, PostgrestJobRepository,
@@ -17,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 struct HttpState {
     metrics: Arc<DocumentMetrics>,
+    compiler_enabled: bool,
 }
 
 #[tokio::main]
@@ -44,13 +49,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &service_key,
     ));
     let metrics = Arc::new(DocumentMetrics::default());
+    let compiler_enabled = optional("VOKOO_COMPILER_ENABLED").as_deref() == Some("true");
     let search = Arc::new(DocumentSearchService::new(
         &supabase_url,
         &service_key,
         embeddings.clone(),
     )?);
-    let mut worker =
-        DocumentWorker::new(jobs, embeddings, classifier, worker_id).with_metrics(metrics.clone());
+    let mut worker = DocumentWorker::new(jobs, embeddings, classifier, worker_id.clone())
+        .with_metrics(metrics.clone());
     match optional("VOKOO_DOCUMENT_EXTRACTION_PROVIDER").as_deref() {
         None | Some("builtin") => {
             log::info!("[document-worker] using built-in document extraction");
@@ -101,12 +107,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let worker = Arc::new(worker);
+    let compiler_worker = if compiler_enabled {
+        let repository = Arc::new(PostgrestCompilerRepository::new(
+            &supabase_url,
+            &service_key,
+        )?);
+        let factory = Arc::new(OperatorCompilerModelFactory::new(
+            &supabase_url,
+            &service_key,
+        ));
+        let executor = Arc::new(HarnessCompilerExecutor::new(
+            repository.clone(),
+            factory,
+            worker_id.clone(),
+        ));
+        Some(
+            CompilerWorker::new(repository, executor, worker_id.clone())
+                .with_metrics(metrics.clone()),
+        )
+    } else {
+        None
+    };
     let cancellation = CancellationToken::new();
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/metrics", get(render_metrics))
-        .with_state(HttpState { metrics })
+        .with_state(HttpState {
+            metrics,
+            compiler_enabled,
+        })
         .merge(document_search_router(search, internal_token));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8082").await?;
     let server_cancel = cancellation.clone();
@@ -123,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     while !cancellation.is_cancelled() {
-        let delay = match worker.run_once().await {
+        let mut delay = match worker.run_once().await {
             Ok(RunOutcome::Idle) => Duration::from_secs(2),
             Ok(RunOutcome::Processed { job_id }) => {
                 log::info!("[document-worker] completed job {job_id}");
@@ -134,6 +164,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Duration::from_secs(2)
             }
         };
+        if let Some(compiler) = &compiler_worker {
+            match compiler.run_once().await {
+                Ok(CompilerRunOutcome::Idle) => {}
+                Ok(CompilerRunOutcome::Processed { run_id }) => {
+                    log::info!("[document-worker] completed compiler run {run_id}");
+                    delay = Duration::ZERO;
+                }
+                Ok(CompilerRunOutcome::Cancelled { run_id }) => {
+                    log::info!("[document-worker] stopped cancelled compiler run {run_id}")
+                }
+                Err(problem) => log::warn!("[document-worker] compiler run failed: {problem}"),
+            }
+        }
         if !delay.is_zero() {
             tokio::select! {
                 _ = cancellation.cancelled() => break,
@@ -172,8 +215,8 @@ where
         .unwrap_or(Ok(default))
 }
 
-async fn health() -> impl IntoResponse {
-    Json(json!({"status": "ok", "worker_processes": 1}))
+async fn health(State(state): State<HttpState>) -> impl IntoResponse {
+    Json(json!({"status": "ok", "worker_processes": 1, "compiler_enabled": state.compiler_enabled}))
 }
 
 async fn render_metrics(State(state): State<HttpState>) -> impl IntoResponse {

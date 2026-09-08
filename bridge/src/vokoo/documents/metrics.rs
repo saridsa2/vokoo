@@ -36,6 +36,43 @@ impl DocumentMetrics {
             .or_default() += elapsed_millis.min(u64::MAX as u128) as u64;
     }
 
+    pub fn compiler_run(&self, status: &'static str) {
+        let key = format!("compiler_runs_total{{status=\"{status}\"}}");
+        *self
+            .counters
+            .lock()
+            .expect("document metrics lock poisoned")
+            .entry(key)
+            .or_default() += 1;
+    }
+
+    pub fn compiler_model_step(
+        &self,
+        phase: &'static str,
+        duration_ms: u64,
+        input: Option<usize>,
+        output: Option<usize>,
+    ) {
+        let mut counters = self
+            .counters
+            .lock()
+            .expect("document metrics lock poisoned");
+        *counters
+            .entry(format!("compiler_model_calls_total{{phase=\"{phase}\"}}"))
+            .or_default() += 1;
+        *counters
+            .entry(format!(
+                "compiler_phase_milliseconds_total{{phase=\"{phase}\"}}"
+            ))
+            .or_default() += duration_ms;
+        *counters
+            .entry("compiler_input_tokens_total".into())
+            .or_default() += input.unwrap_or(0) as u64;
+        *counters
+            .entry("compiler_output_tokens_total".into())
+            .or_default() += output.unwrap_or(0) as u64;
+    }
+
     pub fn render(&self) -> String {
         let mut lines = vec![format!(
             "document_jobs_leased {}",

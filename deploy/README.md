@@ -134,7 +134,7 @@ ssh vokoo 'sudo install -d -m 0700 /opt/vokoo/document-extractor/tmp && sudo chm
 ssh vokoo '/opt/vokoo/rustvani/deploy/document-extractor/docling-vps --version'
 ```
 
-Install or update the unit only after all document migrations through 0126
+Install or update the unit only after all document and compiler migrations through 0129
 succeed:
 
 ```bash
@@ -175,3 +175,18 @@ exist. To return to the local CPU provider, override
 `VOKOO_DOCUMENT_EXTRACTION_PROVIDER` with `docling-vps` and restore
 `VOKOO_DOCLING_PATH` and `VOKOO_DOCUMENT_STAGING_DIR` from the wrapper
 configuration above.
+
+### Care-path compiler worker
+
+The compiler shares the single off-call document worker process, but uses its
+own durable queue and lease. Keep `VOKOO_COMPILER_ENABLED=false` while deploying
+or rolling back binaries. After migrations 0127-0129 and the worker health check
+pass, set it to `true` in the systemd override and restart the unit. The health
+response reports `compiler_enabled`; only one worker process is supported for
+the initial acceptance run.
+
+The provider and model are frozen when a run is enqueued. Credentials are not
+environment variables or browser inputs: the worker resolves the organization's
+operator-managed Vault secret before constructing Anthropic, MiniMax, or OpenAI
+through AISDK. Structured trace rows contain IDs, page ranges, chunk IDs, counts,
+tokens, durations, and stable error codes only—never source text or model prose.

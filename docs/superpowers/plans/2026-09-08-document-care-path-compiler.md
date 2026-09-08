@@ -320,27 +320,27 @@ git commit -m "feat: add document compiler agent harness"
 - Produces: `CompilerRepository`, `PostgrestCompilerRepository`, `CompilerWorker::run_once() -> Result<CompilerRunOutcome,CompilerWorkerError>`, and compiler metrics.
 - Consumes: Task 1 RPCs, Task 2 materializer, Task 5 harness, service-role Supabase settings, and existing worker cancellation.
 
-- [ ] **Step 1: Write fake-repository lifecycle tests**
+- [x] **Step 1: Write fake-repository lifecycle tests**
 
 Assert idle work makes no model call; successful work records ordered states and materializes once; retry resumes after completed immutable steps; permanent invalid evidence fails without drafts; lost lease prevents writes; cancellation stops before the next model call; and materialization retry returns existing artifacts.
 
-- [ ] **Step 2: Implement typed PostgREST repository methods**
+- [x] **Step 2: Implement typed PostgREST repository methods**
 
 Add `claim`, `renew_lease`, `load_input`, `load_steps`, `append_step`, `advance`, `materialize`, and `fail`. Check every state-changing RPC response. Load only chunks from the frozen version and resources from the run snapshot.
 
-- [ ] **Step 3: Implement resumable orchestration**
+- [x] **Step 3: Implement resumable orchestration**
 
 `run_once` claims one job, reconstructs completed phases from accepted step results, renews the lease around provider work, runs the harness, validates, advances to `materializing`, and calls the atomic RPC. Classify 408/429/5xx/network failures as retryable; malformed evidence, catalogue drift, and deterministic validation failures are permanent.
 
-- [ ] **Step 4: Add compiler polling to the existing binary**
+- [x] **Step 4: Add compiler polling to the existing binary**
 
 Alternate one ingestion claim and one compiler claim so a long compiler queue cannot starve indexing. Reuse the process cancellation token and workspace intelligence provider configuration. Keep `worker_processes: 1` and add `compiler_enabled` to health.
 
-- [ ] **Step 5: Add source-safe metrics and configuration**
+- [x] **Step 5: Add source-safe metrics and configuration**
 
 Record run totals, status, phase durations, model calls/retries/tokens, recommendations, gaps, and artifact counts. Labels may contain compiler/provider/model/phase/error code only. Add `VOKOO_COMPILER_ENABLED=true`; add no provider secret environment variable.
 
-- [ ] **Step 6: Run worker tests and release build**
+- [x] **Step 6: Run worker tests and release build**
 
 ```bash
 cargo test --manifest-path bridge/Cargo.toml --test compiler_worker
@@ -350,7 +350,7 @@ cargo build --release --manifest-path bridge/Cargo.toml --bin vokoo_document_wor
 
 Expected: compiler and existing indexing tests pass; release worker builds.
 
-- [ ] **Step 7: Commit the durable compiler worker**
+- [x] **Step 7: Commit the durable compiler worker**
 
 ```bash
 git add bridge/src/vokoo/compiler bridge/tests/compiler_worker.rs bridge/src/bin/vokoo_document_worker.rs bridge/src/vokoo/documents/metrics.rs deploy/vokoo-document-worker.service deploy/README.md
