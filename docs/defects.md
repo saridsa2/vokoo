@@ -456,6 +456,98 @@ should then be unpublishable until it does something.
 **Verify.** Publishing a one-node flow raises `P0004`, and `Lead capture` is
 either completed or no longer published.
 
+---
+
+## D9 — Retrieval returns the right chunk second, behind a wrong-topic one
+
+**Issue:** [#15](https://github.com/saridsa2/vokoo/issues/15)
+**Status:** open
+**Severity:** acceptable for a compiler reading several chunks; a real limit for
+anyone asking a direct question.
+
+**Found:** 8 September 2026, NG28 uploaded to `/files` (131 pages, 555 KB,
+indexed in under 40 seconds). The probe was chosen from the source **before**
+upload, and worded so none of the answer's own vocabulary appeared in it:
+
+```
+query: what HbA1c target should someone on a medicine that can cause
+       hypoglycaemia aim for
+```
+
+Ten results. The chunk carrying `48 mmol/mol` and `53 mmol/mol` came back at
+**rank 2** (pages 10–14). Rank 1 (pages 14–18) is the continuous-glucose-
+monitoring section, which mentions hypoglycaemia repeatedly and answers nothing
+that was asked.
+
+**Root cause.**
+
+Chunk size. Measured across the ten results, each is **5,359 to 13,226
+characters**, spanning four to six pages:
+
+```
+rank 1  pages 14–18    5,879 chars
+rank 2  pages 10–14    5,784 chars   <- carries both thresholds
+rank 4  pages  1–6    13,226 chars
+```
+
+That size is deliberate and it is the reason the *answer* is trustworthy: both
+numbers sit in the same chunk as the condition that separates them — whether the
+person is on a medicine associated with hypoglycaemia. A chunker that split them
+apart would return something that looks right and means the wrong thing, which
+is worse than ranking second.
+
+So this is a trade already made on purpose, not an oversight. What it costs is
+precision: a chunk spanning five pages carries a dozen unrelated
+recommendations, and any one of them can carry the chunk above a better match.
+
+**Fix.** Not "smaller chunks" — that would reintroduce the severing this design
+avoids. Either retrieve at two granularities (a small chunk to rank, its parent
+to answer), or re-rank the top handful against the query once they are back.
+Both keep the large chunk as the unit of meaning.
+
+**Verify.** The same probe returns the chunk containing `48 mmol/mol` at rank 1,
+with the hypoglycaemia condition still in it.
+
+---
+
+## D10 — A copyright block is cited as clinical evidence
+
+**Issue:** [#16](https://github.com/saridsa2/vokoo/issues/16)
+**Status:** open
+**Severity:** cosmetic, and it occupies a citation slot that should carry a
+recommendation.
+
+**Found:** 8 September 2026, in Workspace Intelligence's evidence for NG28. Four
+of the five citations are real recommendations — 1.5.10, 1.10.1, 1.14.1 and the
+title block. The fourth is:
+
+```
+"© NICE 2026. All rights reserved. Subject to Notice of rights
+ (https://www.nice.org.uk/terms-and- Page 31 of conditions#notice-of-rights).
+ 131 Type 2 diabetes in adults: management (NG28) Initial medicines See the
+ visual summary for..."          Page 31–36
+```
+
+**Root cause.**
+
+NICE repeats its rights notice and a running header on **every page**, so the
+extracted text carries that boilerplate throughout — it appears inside several
+other chunks too, mid-sentence, which is visible in the search results. Nothing
+strips repeated page furniture before chunking, so a chunk that happens to begin
+on a page boundary opens with the notice, and the citation shows what the chunk
+starts with.
+
+It is not only cosmetic: boilerplate repeated on 131 pages is text the embedder
+sees in nearly every chunk, which pushes chunks slightly closer together in
+vector space and makes them marginally harder to tell apart.
+
+**Fix.** Detect lines that repeat on most pages and drop them during extraction —
+a running header and a rights notice are identifiable by recurrence, without
+needing a rule about NICE specifically.
+
+**Verify.** No citation begins with a rights notice, and `© NICE` appears in no
+chunk body.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.
@@ -489,7 +581,15 @@ errors on any of them.
 
 Also opened and clean: `/integrations`, `/phone-numbers`, `/team`.
 
-Still unopened: `/skills`, `/files`, `/runs`.
+Still unopened: `/skills`, `/runs`.
+
+**8 September — document indexing.** NG28 (131 pages, 555 KB) uploaded to
+`/files` and left in the workspace. Indexed in under 40 seconds; Workspace
+Intelligence identified it as NICE NG28 including its February 2026 amendment
+date and recommended the care path compiler at 95% with five page-ranged
+citations. A natural-language probe chosen before upload returned the correct
+HbA1c thresholds with their condition intact. Nothing was compiled, which is the
+documented non-goal — the compiler is recommended, never invoked.
 
 **A note on route checking.** The first sweep tested invented paths — `/schemas`
 and `/calls` — and reported them 200 because a signed-out request redirects
