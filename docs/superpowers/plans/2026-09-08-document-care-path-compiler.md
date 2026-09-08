@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Compile one immutable `file_version` and its frozen active extraction; never follow a later current version.
-- Emit only active registered catalogue components in the `care_path` family.
+- Emit only active registered catalogue components in the `care_path` family; do not expose the operator-only provisioning template table to tenant runs.
 - Create only draft flows and draft agents; never publish, enrol, or execute them.
 - Store structured decisions and tool results, never hidden chain-of-thought.
 - Resolve workspace intelligence credentials through the existing service-role Vault boundary.
@@ -61,9 +61,9 @@
 
 **Interfaces:**
 - Consumes: `organizations`, `files`, `file_versions`, `document_extractions`, `is_org_member(uuid)`, and the existing authenticated/service-role roles.
-- Produces: `compiler_runs`, `compiler_steps`, `compiler_gaps`, `enqueue_compiler_run(p_file_version_id uuid,p_compiler_id text,p_compiler_version text,p_prompt_version text)`, `claim_compiler_run(p_worker text,p_lease_seconds integer)`, `append_compiler_step(p_run_id uuid,p_worker text,p_step jsonb)`, `advance_compiler_run(p_run_id uuid,p_worker text,p_status text)`, `fail_compiler_run(p_run_id uuid,p_worker text,p_code text,p_detail text,p_retryable boolean)`, and `cancel_compiler_run(p_run_id uuid)`.
+- Produces: `compiler_runs`, `compiler_steps`, `compiler_gaps`, `enqueue_compiler_run(p_file_version_id uuid,p_compiler_id text,p_compiler_version text,p_prompt_version text)`, `claim_compiler_run(p_worker text,p_lease_seconds integer)`, `renew_compiler_run_lease(p_run_id uuid,p_worker text,p_lease_seconds integer)`, `append_compiler_step(p_run_id uuid,p_worker text,p_step jsonb)`, `advance_compiler_run(p_run_id uuid,p_worker text,p_status text)`, `fail_compiler_run(p_run_id uuid,p_worker text,p_code text,p_detail text,p_retryable boolean)`, and `cancel_compiler_run(p_run_id uuid)`.
 
-- [ ] **Step 1: Recheck migration ordering and write the failing SQL test**
+- [x] **Step 1: Recheck migration ordering and write the failing SQL test**
 
 Run `ls supabase/migrations | tail -5`. Expected before creation: `0126_document_layout_read.sql` is highest. Create a transactional test that seeds two organizations, one indexed version with an active extraction, and asserts the new tables and functions exist:
 
@@ -82,11 +82,11 @@ $$;
 rollback;
 ```
 
-- [ ] **Step 2: Run the test before the migration**
+- [x] **Step 2: Run the test before the migration**
 
 Run the test with the same VPS `psql -v ON_ERROR_STOP=1` mechanism documented in `deploy/README.md`. Expected: failure `compiler ledger is missing`.
 
-- [ ] **Step 3: Implement tables, constraints, and RLS**
+- [x] **Step 3: Implement tables, constraints, and RLS**
 
 Create `compiler_runs` with frozen input IDs, provider/model/version fields, catalogue digest, `input_snapshot jsonb`, status check, lease fields, coverage counters, errors, timestamps, and composite organization foreign keys. Add the active-run uniqueness boundary:
 
@@ -98,19 +98,19 @@ where status in ('queued','planning','compiling','validating','materializing');
 
 Create append-only `compiler_steps` with `(run_id, sequence)` uniqueness and `compiler_gaps` with unique `(run_id, code, recommendation_id)`. Enable RLS on all three. Members may select their organization rows; direct authenticated insert/update/delete is denied.
 
-- [ ] **Step 4: Implement narrow state RPCs**
+- [x] **Step 4: Implement narrow state RPCs**
 
 `enqueue_compiler_run` verifies membership, indexed status, active extraction, `care_path` recommendation, and SHA-256 catalogue digest before inserting. `claim_compiler_run` uses `FOR UPDATE SKIP LOCKED`, increments attempts, and leases exactly one run. `append_compiler_step` allocates `max(sequence)+1` while holding the run lock. State functions reject an invalid predecessor and a wrong lease owner.
 
-- [ ] **Step 5: Complete behavioral SQL assertions**
+- [x] **Step 5: Complete behavioral SQL assertions**
 
 Assert: another tenant cannot enqueue/read the run; source/extraction IDs are frozen; duplicate active enqueue returns the existing run; two workers cannot claim one lease; expired leases are reclaimable; step sequence is monotonic; authenticated users cannot rewrite steps; cancellation works before `materializing` and is rejected during it; retryable failure requeues within `max_attempts`; permanent failure is terminal.
 
-- [ ] **Step 6: Apply migration and run the ledger test**
+- [x] **Step 6: Apply migration and run the ledger test**
 
 Run `0127_compiler_runs.sql`, reload PostgREST schema, then run `0127_compiler_runs.sql` test with `ON_ERROR_STOP=1`. Expected: all assertions pass and the test rolls back.
 
-- [ ] **Step 7: Commit the ledger**
+- [x] **Step 7: Commit the ledger**
 
 ```bash
 git add supabase/migrations/0127_compiler_runs.sql supabase/tests/0127_compiler_runs.sql

@@ -49,8 +49,10 @@ Every run freezes these inputs before model work begins:
 4. Version-scoped indexed chunks and embeddings.
 5. The Workspace Intelligence recommendation for compiler `care_path`.
 6. A snapshot and digest of active catalogue components.
-7. Published workspace agents, schemas, tools, integrations, and templates that
-   the compiler may reference.
+7. Published workspace agents, schemas, tools, and integrations that the
+   compiler may reference. Catalogue fields of type `template` accept inline
+   rendered strings; the operator-only provisioning template table is not a
+   tenant compiler input.
 8. Workspace intelligence provider and model, with its credential resolved by
    the service-role worker from Vault.
 9. Compiler version, prompt version, and retrieval profile.
