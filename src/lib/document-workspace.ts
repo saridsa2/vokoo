@@ -98,7 +98,7 @@ export const COMPILER_RUN_STATUSES = [
 ] as const;
 
 export type CompilerRunStatus = (typeof COMPILER_RUN_STATUSES)[number];
-export type CompilerStepKind = "plan" | "retrieve" | "extract" | "reconcile" | "lower" | "validate" | "materialize";
+export type CompilerStepKind = "plan" | "retrieve" | "extract" | "reconcile" | "resolve" | "lower" | "validate" | "materialize";
 export type CompilerStepStatus = "started" | "completed" | "failed" | "skipped";
 export type CompilerGapSeverity = "info" | "warning" | "blocking";
 export type CompilerEvidenceRole = "requirement" | "threshold" | "timing" | "exception" | "population" | "escalation";
@@ -115,6 +115,32 @@ export type CompilerGapPresentation = {
     capabilityLabel: string | null;
     class: CompilerGapClass;
     requestable: boolean;
+};
+
+export const COMPILER_CAPABILITY_REQUEST_STATUSES = [
+    "requested",
+    "under_review",
+    "needs_information",
+    "delivering",
+    "resolved",
+    "declined",
+    "cancelled",
+] as const;
+
+export type CompilerCapabilityRequestStatus = (typeof COMPILER_CAPABILITY_REQUEST_STATUSES)[number];
+
+export type CompilerCapabilityRequest = {
+    id: string;
+    gap_id: string;
+    capability_key: string;
+    requested_contract: Record<string, unknown>;
+    status: CompilerCapabilityRequestStatus;
+    workspace_note: string | null;
+    operator_response: string | null;
+    delivery_reference: string | null;
+    active_resolution_id: string | null;
+    created_at: string;
+    updated_at: string;
 };
 
 export type CompilerRun = {
@@ -136,6 +162,8 @@ export type CompilerRun = {
     started_at: string | null;
     completed_at: string | null;
     updated_at: string;
+    parent_run_id: string | null;
+    resolution_digest: string | null;
 };
 
 export type CompilerStep = {
@@ -172,6 +200,8 @@ export type CompilerGap = {
     explanation: string;
     missing_capability: string | null;
     details: Record<string, unknown>;
+    presentation: CompilerGapPresentation;
+    capability_request: CompilerCapabilityRequest | null;
     evidence: CompilerGapEvidence[];
     review_status: "open" | "accepted" | "resolved";
     resolution_note: string | null;
@@ -212,11 +242,12 @@ const ACTIVE_COMPILER_STATUSES = new Set<CompilerRunStatus>(["queued", "planning
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TARGET_PATH_PATTERN = /^(?:agent|flow)(?:\.[A-Za-z0-9_-]+)+$/;
-const STEP_KINDS = new Set<CompilerStepKind>(["plan", "retrieve", "extract", "reconcile", "lower", "validate", "materialize"]);
+const STEP_KINDS = new Set<CompilerStepKind>(["plan", "retrieve", "extract", "reconcile", "resolve", "lower", "validate", "materialize"]);
 const STEP_STATUSES = new Set<CompilerStepStatus>(["started", "completed", "failed", "skipped"]);
 const GAP_SEVERITIES = new Set<CompilerGapSeverity>(["info", "warning", "blocking"]);
 const REVIEW_STATUSES = new Set<CompilerGap["review_status"]>(["open", "accepted", "resolved"]);
 const EVIDENCE_ROLES = new Set<CompilerEvidenceRole>(["requirement", "threshold", "timing", "exception", "population", "escalation"]);
+const CAPABILITY_REQUEST_STATUSES = new Set<CompilerCapabilityRequestStatus>(COMPILER_CAPABILITY_REQUEST_STATUSES);
 
 type RequestableGapDefinition = Omit<CompilerGapPresentation, "requestable"> & {
     capability: string;
@@ -279,6 +310,30 @@ export function compilerGapPresentation(code: string, missingCapability: string 
     };
 }
 
+export function canRequestCompilerCapability(gap: CompilerGap): boolean {
+    return gap.presentation.requestable && gap.capability_request === null;
+}
+
+export function canRecompileWithCapabilities(report: CompilerRunReport): boolean {
+    return report.gaps.some(
+        (gap) => gap.capability_request?.status === "resolved" && gap.capability_request.active_resolution_id !== null,
+    );
+}
+
+export function compilerCapabilityRequestStatusLabel(status: CompilerCapabilityRequestStatus): string {
+    return (
+        {
+            requested: "Requested",
+            under_review: "Under review",
+            needs_information: "More information needed",
+            delivering: "Being delivered",
+            resolved: "Resolved",
+            declined: "Declined",
+            cancelled: "Cancelled",
+        } satisfies Record<CompilerCapabilityRequestStatus, string>
+    )[status];
+}
+
 export function shouldPollCompilerRun(run: Pick<CompilerRun, "status"> | null): boolean {
     return !!run && ACTIVE_COMPILER_STATUSES.has(run.status);
 }
@@ -339,6 +394,8 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
         started_at: stringOrNull(rawRun.started_at),
         completed_at: stringOrNull(rawRun.completed_at),
         updated_at: rawRun.updated_at as string,
+        parent_run_id: rawRun.parent_run_id === null || rawRun.parent_run_id === undefined ? null : uuidOrNull(rawRun.parent_run_id),
+        resolution_digest: stringOrNull(rawRun.resolution_digest),
     };
 
     const steps = (Array.isArray(root?.steps) ? root.steps : [])
@@ -405,6 +462,43 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
         if (item.step_id !== null && !stepId) return [];
         const details = record(item.details);
         if (!details) return [];
+        const presentation = compilerGapPresentation(item.code, stringOrNull(item.missing_capability));
+        const rawRequest = record(item.capability_request);
+        let capabilityRequest: CompilerCapabilityRequest | null = null;
+        if (rawRequest) {
+            const requestId = uuidOrNull(rawRequest.id);
+            const requestGapId = uuidOrNull(rawRequest.gap_id);
+            const requestedContract = record(rawRequest.requested_contract);
+            const requestStatus = rawRequest.status;
+            const activeResolutionId =
+                rawRequest.active_resolution_id === null ? null : uuidOrNull(rawRequest.active_resolution_id);
+            if (
+                requestId &&
+                requestGapId === id &&
+                requestedContract &&
+                typeof rawRequest.capability_key === "string" &&
+                rawRequest.capability_key === item.missing_capability &&
+                typeof requestStatus === "string" &&
+                CAPABILITY_REQUEST_STATUSES.has(requestStatus as CompilerCapabilityRequestStatus) &&
+                typeof rawRequest.created_at === "string" &&
+                typeof rawRequest.updated_at === "string" &&
+                (rawRequest.active_resolution_id === null || activeResolutionId)
+            ) {
+                capabilityRequest = {
+                    id: requestId,
+                    gap_id: requestGapId,
+                    capability_key: rawRequest.capability_key,
+                    requested_contract: requestedContract,
+                    status: requestStatus as CompilerCapabilityRequestStatus,
+                    workspace_note: stringOrNull(rawRequest.workspace_note),
+                    operator_response: stringOrNull(rawRequest.operator_response),
+                    delivery_reference: stringOrNull(rawRequest.delivery_reference),
+                    active_resolution_id: activeResolutionId,
+                    created_at: rawRequest.created_at,
+                    updated_at: rawRequest.updated_at,
+                };
+            }
+        }
         const evidence = (Array.isArray(item.evidence) ? item.evidence : []).flatMap((candidate): CompilerGapEvidence[] => {
             const cited = record(candidate);
             const chunkId = uuidOrNull(cited?.chunk_id);
@@ -436,6 +530,8 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
                 explanation: item.explanation,
                 missing_capability: stringOrNull(item.missing_capability),
                 details,
+                presentation,
+                capability_request: capabilityRequest,
                 evidence,
                 review_status: item.review_status as CompilerGap["review_status"],
                 resolution_note: stringOrNull(item.resolution_note),

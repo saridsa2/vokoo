@@ -12,16 +12,19 @@ import {
 } from "react";
 import Link from "next/link";
 import { PdfDocumentViewer } from "@/components/application/documents/pdf-document-viewer";
+import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { useNotify } from "@/components/application/notifications/notification-provider";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
+import { TextArea } from "@/components/base/textarea/textarea";
 import { IconDocument, SearchLg } from "@/components/icons";
 import { useResource } from "@/hooks/use-resource";
 import { useSession } from "@/hooks/use-session";
 import {
     type CompilerEvidence,
+    type CompilerGap,
     type CompilerRunReport,
     type DocumentIntelligence,
     type DocumentJob,
@@ -29,8 +32,11 @@ import {
     type DocumentVersion,
     type WorkspaceDocument,
     canCancelCompilerRun,
+    canRecompileWithCapabilities,
+    canRequestCompilerCapability,
     clampDocumentInspectorWidth,
     compilerStatusLabel,
+    compilerCapabilityRequestStatusLabel,
     documentProcessingLabel,
     documentUploadProblem,
     formatDocumentSize,
@@ -93,6 +99,10 @@ export function DocumentsScreen() {
     const [compilerReport, setCompilerReport] = useState<CompilerRunReport | null>(null);
     const [isStartingCompiler, setIsStartingCompiler] = useState(false);
     const [isCancellingCompiler, setIsCancellingCompiler] = useState(false);
+    const [requestedGap, setRequestedGap] = useState<CompilerGap | null>(null);
+    const [capabilityNote, setCapabilityNote] = useState("");
+    const [isRequestingCapability, setIsRequestingCapability] = useState(false);
+    const [isRecompiling, setIsRecompiling] = useState(false);
     const [inspectorWidth, setInspectorWidth] = useState(400);
     const [isResizingInspector, setIsResizingInspector] = useState(false);
 
@@ -380,6 +390,36 @@ export function DocumentsScreen() {
             notify.failure("Could not cancel compilation", cause);
         } finally {
             setIsCancellingCompiler(false);
+        }
+    }
+
+    async function requestCapability() {
+        if (!requestedGap || !context || !compilerReport || !canRequestCompilerCapability(requestedGap)) return;
+        setIsRequestingCapability(true);
+        try {
+            await api.requestCompilerCapability(requestedGap.id, capabilityNote.trim(), context);
+            await loadCompilerReport(compilerReport.run.id);
+            setRequestedGap(null);
+            setCapabilityNote("");
+            notify.success("Capability requested");
+        } catch (cause) {
+            notify.failure("Could not request the capability", cause);
+        } finally {
+            setIsRequestingCapability(false);
+        }
+    }
+
+    async function recompileWithCapabilities() {
+        if (!context || !compilerReport || !canRecompileWithCapabilities(compilerReport)) return;
+        setIsRecompiling(true);
+        try {
+            const { data } = await api.recompileWithCapabilities(compilerReport.run.id, context);
+            await loadCompilerReport(data.id);
+            notify.success("Recompilation started");
+        } catch (cause) {
+            notify.failure("Could not recompile the workflow", cause);
+        } finally {
+            setIsRecompiling(false);
         }
     }
 
@@ -690,7 +730,13 @@ export function DocumentsScreen() {
                                             <CompilerReview
                                                 report={compilerReport}
                                                 isCancelling={isCancellingCompiler}
+                                                isRecompiling={isRecompiling}
                                                 onCancel={cancelCompiler}
+                                                onRequestCapability={(gap) => {
+                                                    setRequestedGap(gap);
+                                                    setCapabilityNote("");
+                                                }}
+                                                onRecompile={recompileWithCapabilities}
                                                 onEvidence={(chunkId) => setSelectedEvidence({ chunk_id: chunkId, page: null })}
                                             />
                                         ) : null}
@@ -701,6 +747,18 @@ export function DocumentsScreen() {
                     </>
                 )}
             </section>
+            {requestedGap ? (
+                <CapabilityRequestDialog
+                    gap={requestedGap}
+                    note={capabilityNote}
+                    isSubmitting={isRequestingCapability}
+                    onNoteChange={setCapabilityNote}
+                    onClose={() => {
+                        if (!isRequestingCapability) setRequestedGap(null);
+                    }}
+                    onSubmit={requestCapability}
+                />
+            ) : null}
         </div>
     );
 }
@@ -801,12 +859,18 @@ function traceSummary(step: CompilerRunReport["steps"][number]): string {
 function CompilerReview({
     report,
     isCancelling,
+    isRecompiling,
     onCancel,
+    onRequestCapability,
+    onRecompile,
     onEvidence,
 }: {
     report: CompilerRunReport;
     isCancelling: boolean;
+    isRecompiling: boolean;
     onCancel: () => void;
+    onRequestCapability: (gap: CompilerGap) => void;
+    onRecompile: () => void;
     onEvidence: (chunkId: string) => void;
 }) {
     const active = shouldPollCompilerRun(report.run);
@@ -821,11 +885,18 @@ function CompilerReview({
                     </h3>
                     {report.run.summary ? <p className="mt-1 text-sm text-tertiary">{report.run.summary}</p> : null}
                 </div>
-                {canCancelCompilerRun(report.run) ? (
-                    <Button size="sm" color="secondary-destructive" isLoading={isCancelling} showTextWhileLoading onClick={onCancel}>
-                        Cancel
-                    </Button>
-                ) : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                    {canRecompileWithCapabilities(report) ? (
+                        <Button size="sm" isLoading={isRecompiling} showTextWhileLoading onClick={onRecompile}>
+                            Recompile with resolved capabilities
+                        </Button>
+                    ) : null}
+                    {canCancelCompilerRun(report.run) ? (
+                        <Button size="sm" color="secondary-destructive" isLoading={isCancelling} showTextWhileLoading onClick={onCancel}>
+                            Cancel
+                        </Button>
+                    ) : null}
+                </div>
             </div>
 
             <div className="mt-4 rounded-xl bg-secondary px-4 py-3 ring-1 ring-secondary" role="status" aria-live="polite" aria-label="Compiler progress">
@@ -885,17 +956,21 @@ function CompilerReview({
                         {report.gaps.map((gap) => (
                             <li key={gap.id} className="border-warning-primary rounded-lg border px-3 py-3">
                                 <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-medium text-primary">{gap.code}</span>
+                                    <span className="text-sm font-medium text-primary">{gap.presentation.title}</span>
                                     <Badge
                                         size="sm"
                                         type="pill-color"
                                         color={gap.severity === "blocking" ? "error" : gap.severity === "warning" ? "warning" : "gray"}
                                     >
-                                        {gap.severity}
+                                        {gap.severity === "blocking" ? "Blocking" : gap.severity === "warning" ? "Warning" : "Information"}
                                     </Badge>
                                 </div>
                                 <p className="mt-1 text-sm text-tertiary">{gap.explanation}</p>
-                                {gap.missing_capability ? <p className="mt-1 text-xs text-quaternary">Missing capability: {gap.missing_capability}</p> : null}
+                                {gap.presentation.capabilityLabel ? (
+                                    <p className="mt-2 text-xs text-tertiary">
+                                        <span className="font-medium text-secondary">Needed capability:</span> {gap.presentation.capabilityLabel}
+                                    </p>
+                                ) : null}
                                 {gap.evidence.map((evidence, index) => (
                                     <button
                                         key={`${evidence.chunk_id}-${index}`}
@@ -906,6 +981,46 @@ function CompilerReview({
                                         “{evidence.excerpt}”
                                     </button>
                                 ))}
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                    {canRequestCompilerCapability(gap) ? (
+                                        <Button size="sm" color="secondary" onClick={() => onRequestCapability(gap)}>
+                                            Request capability
+                                        </Button>
+                                    ) : null}
+                                    {gap.capability_request ? (
+                                        <Badge
+                                            size="sm"
+                                            type="pill-color"
+                                            color={
+                                                gap.capability_request.status === "resolved"
+                                                    ? "success"
+                                                    : gap.capability_request.status === "declined"
+                                                      ? "error"
+                                                      : "gray"
+                                            }
+                                        >
+                                            {compilerCapabilityRequestStatusLabel(gap.capability_request.status)}
+                                        </Badge>
+                                    ) : null}
+                                </div>
+                                {gap.capability_request?.operator_response ? (
+                                    <p className="mt-2 text-xs text-tertiary">
+                                        <span className="font-medium text-secondary">Operator response:</span> {gap.capability_request.operator_response}
+                                    </p>
+                                ) : null}
+                                <details className="mt-3 text-xs text-quaternary">
+                                    <summary className="cursor-pointer">Technical details</summary>
+                                    <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 font-mono">
+                                        <dt>Gap code</dt>
+                                        <dd className="break-all">{gap.code}</dd>
+                                        {gap.missing_capability ? (
+                                            <>
+                                                <dt>Capability key</dt>
+                                                <dd className="break-all">{gap.missing_capability}</dd>
+                                            </>
+                                        ) : null}
+                                    </dl>
+                                </details>
                             </li>
                         ))}
                     </ul>
@@ -957,5 +1072,83 @@ function CompilerReview({
                 </details>
             ) : null}
         </section>
+    );
+}
+
+const CAPABILITY_DETAIL_LABELS: Readonly<Record<string, string>> = {
+    what: "Requested work",
+    instructions: "Instructions",
+    actor: "Responsible role",
+    expires_days: "Due within",
+    observation: "Observation",
+    operator: "Condition",
+    value: "Threshold",
+    unit: "Unit",
+};
+
+function capabilityDetailValue(key: string, value: unknown): string {
+    if (key === "expires_days" && typeof value === "number") return `${value} days`;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+    return JSON.stringify(value) ?? "Not specified";
+}
+
+function CapabilityRequestDialog({
+    gap,
+    note,
+    isSubmitting,
+    onNoteChange,
+    onClose,
+    onSubmit,
+}: {
+    gap: CompilerGap;
+    note: string;
+    isSubmitting: boolean;
+    onNoteChange: (value: string) => void;
+    onClose: () => void;
+    onSubmit: () => void;
+}) {
+    const details = Object.entries(gap.details).filter(([key, value]) => key in CAPABILITY_DETAIL_LABELS && value !== null && value !== "");
+    return (
+        <ModalOverlay isOpen onOpenChange={(open) => !open && onClose()} isDismissable={!isSubmitting}>
+            <Modal className="max-w-lg">
+                <Dialog aria-label="Request capability">
+                    <div className="flex max-h-[80dvh] w-full flex-col rounded-xl bg-primary shadow-xl ring-1 ring-secondary">
+                        <header className="border-b border-secondary px-6 py-5">
+                            <h2 className="text-lg font-semibold text-primary">Request capability</h2>
+                        </header>
+                        <div className="min-h-0 overflow-y-auto px-6 py-5">
+                            <p className="text-xs font-medium text-tertiary">Needed capability</p>
+                            <p className="mt-1 text-sm font-medium text-primary">{gap.presentation.capabilityLabel}</p>
+                            {details.length > 0 ? (
+                                <dl className="mt-5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm">
+                                    {details.map(([key, value]) => (
+                                        <div key={key} className="contents">
+                                            <dt className="text-tertiary">{CAPABILITY_DETAIL_LABELS[key]}</dt>
+                                            <dd className="break-words text-primary">{capabilityDetailValue(key, value)}</dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                            ) : null}
+                            <TextArea
+                                className="mt-5"
+                                label="Note (optional)"
+                                rows={4}
+                                maxLength={2_000}
+                                value={note}
+                                onChange={(value) => onNoteChange(String(value))}
+                            />
+                        </div>
+                        <footer className="flex justify-end gap-3 border-t border-secondary px-6 py-4">
+                            <Button size="sm" color="secondary" isDisabled={isSubmitting} onClick={onClose}>
+                                Cancel
+                            </Button>
+                            <Button size="sm" isLoading={isSubmitting} showTextWhileLoading onClick={onSubmit}>
+                                Request capability
+                            </Button>
+                        </footer>
+                    </div>
+                </Dialog>
+            </Modal>
+        </ModalOverlay>
     );
 }

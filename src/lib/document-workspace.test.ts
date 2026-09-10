@@ -4,6 +4,8 @@ import {
     type DocumentLayoutItem,
     type DocumentVersion,
     type WorkspaceDocument,
+    canRecompileWithCapabilities,
+    canRequestCompilerCapability,
     clampDocumentInspectorWidth,
     compilerGapPresentation,
     documentProcessingLabel,
@@ -21,6 +23,68 @@ import {
 } from "./document-workspace";
 
 const uuid = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+
+const compilerReportWithRequest = (status: string, overrides: Record<string, unknown> = {}) => ({
+    run: {
+        id: uuid("1"),
+        file_id: uuid("2"),
+        file_version_id: uuid("3"),
+        compiler_id: "care_path",
+        status: "completed_with_gaps",
+        provider: "minimax",
+        model: "MiniMax-M2.1",
+        compiler_version: "care-path-v1",
+        prompt_version: "care-path-prompt-v1",
+        attempt_count: 1,
+        max_attempts: 3,
+        summary: null,
+        coverage: { gap_count: 1 },
+        last_error_code: null,
+        created_at: "2026-09-08T00:00:00Z",
+        started_at: "2026-09-08T00:00:01Z",
+        completed_at: "2026-09-08T00:00:03Z",
+        updated_at: "2026-09-08T00:00:03Z",
+    },
+    steps: [],
+    gaps: [
+        {
+            id: uuid("4"),
+            step_id: null,
+            code: "unsupported_action_actor",
+            severity: "blocking",
+            recommendation_id: "HLT-1",
+            explanation: "Clinician work needs a supported task node.",
+            missing_capability: "clinical.task",
+            details: { actor: "clinician", what: "Review the patient" },
+            presentation: {
+                title: "Care-team work cannot be created",
+                capability_label: "Create work for a clinician",
+                class: "missing_capability",
+                requestable: true,
+            },
+            capability_request: {
+                id: uuid("5"),
+                gap_id: uuid("4"),
+                capability_key: "clinical.task",
+                requested_contract: { actor: "clinician", what: "Review the patient" },
+                status,
+                workspace_note: "Needed for transplant review.",
+                operator_response: null,
+                delivery_reference: null,
+                active_resolution_id: status === "resolved" ? uuid("6") : null,
+                created_at: "2026-09-08T00:00:04Z",
+                updated_at: "2026-09-08T00:00:04Z",
+            },
+            review_status: "open",
+            resolution_note: null,
+            created_at: "2026-09-08T00:00:02Z",
+            updated_at: "2026-09-08T00:00:02Z",
+            ...overrides,
+        },
+    ],
+    artifacts: [],
+    evidence: [],
+});
 
 test("presents only known compiler gaps as requestable capabilities", () => {
     assert.deepEqual(compilerGapPresentation("threshold_requires_mapping", "clinical.threshold_mapping"), {
@@ -41,6 +105,41 @@ test("presents only known compiler gaps as requestable capabilities", () => {
         class: "unknown",
         requestable: false,
     });
+});
+
+test("normalizes every capability request state and enables recompilation only after resolution", () => {
+    for (const status of ["requested", "under_review", "needs_information", "delivering", "resolved", "declined", "cancelled"]) {
+        const report = normalizeCompilerRunReport(compilerReportWithRequest(status));
+        assert.equal(report?.gaps[0].capability_request?.status, status);
+        assert.equal(canRequestCompilerCapability(report!.gaps[0]), false);
+        assert.equal(canRecompileWithCapabilities(report!), status === "resolved");
+    }
+});
+
+test("drops malformed requests and never trusts payload requestability for unknown gaps", () => {
+    const malformed = normalizeCompilerRunReport(
+        compilerReportWithRequest("requested", {
+            capability_request: { status: "requested" },
+        }),
+    );
+    assert.equal(malformed?.gaps[0].capability_request, null);
+    assert.equal(canRequestCompilerCapability(malformed!.gaps[0]), true);
+
+    const unknown = normalizeCompilerRunReport(
+        compilerReportWithRequest("requested", {
+            code: "invented_gap",
+            missing_capability: "invented.capability",
+            presentation: {
+                title: "Trust me",
+                capability_label: "Unsafe capability",
+                class: "missing_capability",
+                requestable: true,
+            },
+            capability_request: null,
+        }),
+    );
+    assert.equal(unknown?.gaps[0].presentation.requestable, false);
+    assert.equal(canRequestCompilerCapability(unknown!.gaps[0]), false);
 });
 
 test("keeps the document inspector usable without crowding out the document", () => {
