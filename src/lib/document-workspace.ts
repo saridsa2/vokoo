@@ -102,6 +102,20 @@ export type CompilerStepKind = "plan" | "retrieve" | "extract" | "reconcile" | "
 export type CompilerStepStatus = "started" | "completed" | "failed" | "skipped";
 export type CompilerGapSeverity = "info" | "warning" | "blocking";
 export type CompilerEvidenceRole = "requirement" | "threshold" | "timing" | "exception" | "population" | "escalation";
+export type CompilerGapClass =
+    | "missing_capability"
+    | "missing_mapping"
+    | "ambiguous_evidence"
+    | "insufficient_evidence"
+    | "safety_conflict"
+    | "unknown";
+
+export type CompilerGapPresentation = {
+    title: string;
+    capabilityLabel: string | null;
+    class: CompilerGapClass;
+    requestable: boolean;
+};
 
 export type CompilerRun = {
     id: string;
@@ -157,6 +171,7 @@ export type CompilerGap = {
     recommendation_id: string;
     explanation: string;
     missing_capability: string | null;
+    details: Record<string, unknown>;
     evidence: CompilerGapEvidence[];
     review_status: "open" | "accepted" | "resolved";
     resolution_note: string | null;
@@ -203,6 +218,25 @@ const GAP_SEVERITIES = new Set<CompilerGapSeverity>(["info", "warning", "blockin
 const REVIEW_STATUSES = new Set<CompilerGap["review_status"]>(["open", "accepted", "resolved"]);
 const EVIDENCE_ROLES = new Set<CompilerEvidenceRole>(["requirement", "threshold", "timing", "exception", "population", "escalation"]);
 
+type RequestableGapDefinition = Omit<CompilerGapPresentation, "requestable"> & {
+    capability: string;
+};
+
+const REQUESTABLE_GAP_PRESENTATION: Readonly<Record<string, RequestableGapDefinition>> = {
+    threshold_requires_mapping: {
+        title: "Clinical threshold cannot be evaluated",
+        capability: "clinical.threshold_mapping",
+        capabilityLabel: "Evaluate a clinical observation threshold",
+        class: "missing_mapping",
+    },
+    unsupported_action_actor: {
+        title: "Care-team work cannot be created",
+        capability: "clinical.task",
+        capabilityLabel: "Create work for a clinician",
+        class: "missing_capability",
+    },
+};
+
 function record(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -217,6 +251,32 @@ function uuidOrNull(value: unknown): string | null {
 
 function nonnegativeNumberOrNull(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function compilerGapPresentation(code: string, missingCapability: string | null): CompilerGapPresentation {
+    const definition = REQUESTABLE_GAP_PRESENTATION[code];
+    if (!definition) {
+        return {
+            title: "Compiler gap",
+            capabilityLabel: null,
+            class: "unknown",
+            requestable: false,
+        };
+    }
+    if (missingCapability !== definition.capability) {
+        return {
+            title: definition.title,
+            capabilityLabel: null,
+            class: definition.class,
+            requestable: false,
+        };
+    }
+    return {
+        title: definition.title,
+        capabilityLabel: definition.capabilityLabel,
+        class: definition.class,
+        requestable: true,
+    };
 }
 
 export function shouldPollCompilerRun(run: Pick<CompilerRun, "status"> | null): boolean {
@@ -343,6 +403,8 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
             return [];
         const stepId = item.step_id === null ? null : uuidOrNull(item.step_id);
         if (item.step_id !== null && !stepId) return [];
+        const details = record(item.details);
+        if (!details) return [];
         const evidence = (Array.isArray(item.evidence) ? item.evidence : []).flatMap((candidate): CompilerGapEvidence[] => {
             const cited = record(candidate);
             const chunkId = uuidOrNull(cited?.chunk_id);
@@ -373,6 +435,7 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
                 recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
                 explanation: item.explanation,
                 missing_capability: stringOrNull(item.missing_capability),
+                details,
                 evidence,
                 review_status: item.review_status as CompilerGap["review_status"],
                 resolution_note: stringOrNull(item.resolution_note),

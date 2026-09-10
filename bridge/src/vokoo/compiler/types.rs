@@ -295,6 +295,7 @@ pub struct CompilerGap {
     pub recommendation_id: String,
     pub explanation: String,
     pub missing_capability: Option<String>,
+    pub details: Value,
     pub evidence: Vec<EvidenceRef>,
 }
 

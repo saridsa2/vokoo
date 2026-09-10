@@ -69,6 +69,12 @@ fn lower_recommendation(
                 threshold.observation, threshold.operator, threshold.value, threshold.unit
             ),
             missing_capability: Some("clinical.threshold_mapping".into()),
+            details: json!({
+                "observation": threshold.observation,
+                "operator": threshold.operator,
+                "value": threshold.value,
+                "unit": threshold.unit,
+            }),
             evidence: threshold.evidence.clone(),
         });
     }
@@ -88,7 +94,12 @@ fn lower_recommendation(
                 needs_escalation = true;
                 has_supported_action = true;
             }
-            ActionOperation::Request { actor, .. } => {
+            ActionOperation::Request {
+                actor,
+                what,
+                instructions,
+                expires_days,
+            } => {
                 output.gaps.push(CompilerGap {
                     code: "unsupported_action_actor".into(),
                     severity: GapSeverity::Blocking,
@@ -98,6 +109,13 @@ fn lower_recommendation(
                         actor.as_str()
                     ),
                     missing_capability: Some("clinical.task".into()),
+                    details: json!({
+                        "actor": actor.as_str(),
+                        "action_key": action.key,
+                        "what": what,
+                        "instructions": instructions,
+                        "expires_days": expires_days,
+                    }),
                     evidence: action.evidence.clone(),
                 });
                 return;
@@ -124,6 +142,10 @@ fn lower_recommendation(
                             "Structured output {shape_id} is not in the frozen workspace resources."
                         ),
                         missing_capability: Some("structured_output".into()),
+                        details: json!({
+                            "action_key": action.key,
+                            "shape_id": shape_id,
+                        }),
                         evidence: action.evidence.clone(),
                     });
                     return;
@@ -140,6 +162,10 @@ fn lower_recommendation(
                     "{description} cannot be represented by the active catalogue."
                 ),
                 missing_capability: Some(capability.clone()),
+                details: json!({
+                    "action_key": action.key,
+                    "description": description,
+                }),
                 evidence: action.evidence.clone(),
             }),
         }
@@ -157,6 +183,7 @@ fn lower_recommendation(
                 explanation: "The source-bound program has no escalation policy for a failure-capable action."
                     .into(),
                 missing_capability: None,
+                details: json!({}),
                 evidence: recommendation.evidence.clone(),
             });
             return;
@@ -182,6 +209,7 @@ fn lower_recommendation(
                     "Required component {component} is not active for care paths."
                 ),
                 missing_capability: Some(component.into()),
+                details: json!({ "component": component }),
                 evidence: recommendation.evidence.clone(),
             });
         }

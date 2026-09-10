@@ -5,6 +5,7 @@ import {
     type DocumentVersion,
     type WorkspaceDocument,
     clampDocumentInspectorWidth,
+    compilerGapPresentation,
     documentProcessingLabel,
     documentUploadProblem,
     normalizeCompilerRecommendations,
@@ -20,6 +21,27 @@ import {
 } from "./document-workspace";
 
 const uuid = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+
+test("presents only known compiler gaps as requestable capabilities", () => {
+    assert.deepEqual(compilerGapPresentation("threshold_requires_mapping", "clinical.threshold_mapping"), {
+        title: "Clinical threshold cannot be evaluated",
+        capabilityLabel: "Evaluate a clinical observation threshold",
+        class: "missing_mapping",
+        requestable: true,
+    });
+    assert.deepEqual(compilerGapPresentation("unsupported_action_actor", "clinical.task"), {
+        title: "Care-team work cannot be created",
+        capabilityLabel: "Create work for a clinician",
+        class: "missing_capability",
+        requestable: true,
+    });
+    assert.deepEqual(compilerGapPresentation("unknown_code", "unknown.capability"), {
+        title: "Compiler gap",
+        capabilityLabel: null,
+        class: "unknown",
+        requestable: false,
+    });
+});
 
 test("keeps the document inspector usable without crowding out the document", () => {
     assert.equal(clampDocumentInspectorWidth(200, 1_600), 320);
@@ -304,6 +326,7 @@ test("normalizes compiler reports, sorts trace steps, and retains deleted artifa
                 recommendation_id: "NG28-1.6.1",
                 explanation: "Medication prescribing is outside the catalogue.",
                 missing_capability: "prescribe.medication",
+                details: { action_key: "review-medication" },
                 evidence: [{ chunk_id: uuid("10"), excerpt: "Consider treatment escalation.", role: "requirement" }],
                 review_status: "open",
                 resolution_note: null,
@@ -381,7 +404,23 @@ test("rejects unknown compiler states and discards malformed nested report rows"
     const report = normalizeCompilerRunReport({
         run: { ...base, status: "queued" },
         steps: [{ id: "not-a-uuid", sequence: 1, kind: "plan", status: "completed", result: {}, created_at: "now" }],
-        gaps: [],
+        gaps: [
+            {
+                id: uuid("8"),
+                step_id: null,
+                code: "unsupported_action_actor",
+                severity: "blocking",
+                recommendation_id: "HLT-1",
+                explanation: "Clinician work needs a supported task node.",
+                missing_capability: "clinical.task",
+                details: ["not", "an", "object"],
+                evidence: [],
+                review_status: "open",
+                resolution_note: null,
+                created_at: "now",
+                updated_at: "now",
+            },
+        ],
         artifacts: [
             { id: uuid("4"), artifact_type: "flow", stable_key: "bad", role: "care_path", flow_id: "javascript:alert(1)", agent_id: null, created_at: "now" },
         ],
@@ -408,6 +447,7 @@ test("rejects unknown compiler states and discards malformed nested report rows"
     });
     assert.ok(report);
     assert.equal(report.steps.length, 0);
+    assert.equal(report.gaps.length, 0);
     assert.equal(report.artifacts.length, 0);
     assert.equal(report.evidence.length, 0);
 });

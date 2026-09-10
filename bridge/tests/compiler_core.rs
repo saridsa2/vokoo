@@ -274,6 +274,16 @@ fn clinician_directed_requests_do_not_become_patient_outreach() {
         output.gaps[0].missing_capability.as_deref(),
         Some("clinical.task")
     );
+    assert_eq!(
+        output.gaps[0].details,
+        json!({
+            "actor": "clinician",
+            "action_key": "order-genotyping",
+            "what": "test",
+            "instructions": "Order CYP3A5 genotyping.",
+            "expires_days": 7
+        })
+    );
 }
 
 #[test]
@@ -371,6 +381,15 @@ fn repeated_threshold_gaps_share_one_materialization_identity() {
 
     assert_eq!(threshold_gaps.len(), 1);
     assert_eq!(threshold_gaps[0].evidence.len(), 2);
+    assert_eq!(
+        threshold_gaps[0].details,
+        json!({
+            "observation": "frailty",
+            "operator": "equals",
+            "value": true,
+            "unit": "boolean"
+        })
+    );
 }
 
 #[test]
