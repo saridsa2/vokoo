@@ -145,6 +145,16 @@ lowering so this contract is never reconstructed by parsing human-readable
 explanations. Known gap definitions validate the object before a request can be
 created; legacy gaps with empty details remain readable but cannot be requested.
 
+### `compiler_capability_adapters`
+
+The database exposes a release-managed registry of adapters implemented by the
+compiler binary. Each row contains adapter key and version, capability key,
+user-facing label, compatible node type IDs, mapping schema, and active state.
+Application migrations seed adapters shipped in that release. Operators may
+select active adapters but cannot create or modify registry rows; this prevents
+the database from claiming deterministic lowering support that the worker does
+not implement.
+
 ### `compiler_capability_resolutions`
 
 A resolution is reusable and operator-controlled:
@@ -222,6 +232,7 @@ Workspace endpoints:
 Operator endpoints:
 
 - `GET /api/v1/operator/capability-requests`;
+- `GET /api/v1/operator/compiler-capability-adapters`;
 - `POST /api/v1/operator/capability-requests/{id}/review`;
 - `POST /api/v1/operator/capability-requests/{id}/request-information`;
 - `POST /api/v1/operator/capability-requests/{id}/resolve-existing`;
