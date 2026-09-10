@@ -162,12 +162,18 @@ impl FrameHandler for BaseOutputTransport {
                     return Ok(());
                 }
 
-                let prev = self.state.chunk_size.swap(new_chunk_size, Ordering::Relaxed);
+                let prev = self
+                    .state
+                    .chunk_size
+                    .swap(new_chunk_size, Ordering::Relaxed);
                 if prev != new_chunk_size {
                     log::info!(
                         "BaseOutputTransport: chunk_size={}B ({}ms) (sr={}, ch={}, 10ms_chunks={})",
-                        new_chunk_size, multiplier * 10,
-                        audio.sample_rate, channels, multiplier,
+                        new_chunk_size,
+                        multiplier * 10,
+                        audio.sample_rate,
+                        channels,
+                        multiplier,
                     );
                 }
 
@@ -175,7 +181,9 @@ impl FrameHandler for BaseOutputTransport {
 
                 if !self.state.bot_speaking.swap(true, Ordering::Relaxed) {
                     log::debug!("BaseOutputTransport: bot started speaking");
-                    processor.broadcast_frame(Frame::bot_started_speaking()).await?;
+                    processor
+                        .broadcast_frame(Frame::bot_started_speaking())
+                        .await?;
                 }
 
                 let chunks: Vec<Vec<u8>> = {
@@ -247,7 +255,9 @@ impl FrameHandler for BaseOutputTransport {
 
                 if self.state.bot_speaking.swap(false, Ordering::Relaxed) {
                     log::debug!("BaseOutputTransport: bot stopped speaking (interruption)");
-                    processor.broadcast_frame(Frame::bot_stopped_speaking()).await?;
+                    processor
+                        .broadcast_frame(Frame::bot_stopped_speaking())
+                        .await?;
                 }
                 processor.push_frame(frame, direction).await?;
             }

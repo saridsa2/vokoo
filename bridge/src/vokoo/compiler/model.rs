@@ -149,7 +149,9 @@ impl CompilerModel for AisdkCompilerModel {
         if let Some(code) = &request.correction {
             prompt.push_str("\nPrevious output was rejected with code: ");
             prompt.push_str(code);
-            prompt.push_str(". Call the required tool again with corrected arguments.");
+            prompt.push_str(". ");
+            prompt.push_str(correction_instruction(code));
+            prompt.push_str(" Call the required tool again with corrected arguments.");
         }
         let anthropic_style = self.provider != Provider::OpenAi;
         let body = if anthropic_style {
@@ -223,5 +225,30 @@ impl CompilerModel for AisdkCompilerModel {
                 output_tokens: usage.output_tokens,
             },
         })
+    }
+}
+
+fn correction_instruction(code: &str) -> &'static str {
+    match code {
+        "required_tool_not_called" => "You must call the named tool exactly once.",
+        "invalid_tool_output_recommendations" => {
+            "recommendations must be an array of objects matching the tool schema."
+        }
+        "invalid_tool_output_recommendation_evidence" => {
+            "Every recommendation must include evidence as a non-empty array."
+        }
+        "invalid_tool_output_trigger_evidence" | "uncited_recommendation" => {
+            "Every trigger must include evidence as a non-empty array of citation objects; do not omit it or use null."
+        }
+        "invalid_tool_output_action_evidence" | "uncited_action" => {
+            "Every action must include evidence as a non-empty array of citation objects."
+        }
+        "invalid_tool_output_thresholds" => {
+            "Every recommendation must include thresholds as an array; use an empty array when the source defines no threshold."
+        }
+        "invalid_tool_output_request_actor" => {
+            "Every request action must include actor as exactly patient, clinician, care_team, or system."
+        }
+        _ => "Return every required field with the exact type and nesting defined by the tool schema.",
     }
 }

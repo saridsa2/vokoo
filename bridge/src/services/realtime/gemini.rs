@@ -11,9 +11,8 @@ use async_trait::async_trait;
 // easy to confuse.
 use gemini_live::{
     Auth, Content, FunctionDeclaration, FunctionResponse, GenerationConfig, Modality, Part,
-    PrebuiltVoiceConfig,
-    ReconnectPolicy, ServerEvent, Session, SessionConfig, SetupConfig, SpeechConfig, Tool,
-    TransportConfig, VoiceConfig,
+    PrebuiltVoiceConfig, ReconnectPolicy, ServerEvent, Session, SessionConfig, SetupConfig,
+    SpeechConfig, Tool, TransportConfig, VoiceConfig,
 };
 
 use super::{RealtimeEvent, RealtimeSession};
@@ -106,7 +105,10 @@ impl GeminiLiveSession {
             generation_config: Some(generation),
             system_instruction: (!cfg.instructions.is_empty()).then(|| Content {
                 role: None,
-                parts: vec![Part { text: Some(cfg.instructions.clone()), inline_data: None }],
+                parts: vec![Part {
+                    text: Some(cfg.instructions.clone()),
+                    inline_data: None,
+                }],
             }),
             // Both transcriptions on. Without them the call log holds no record
             // of what was said, and the turn timing has nothing to key off —
@@ -227,7 +229,12 @@ impl GeminiLiveSession {
             log::debug!("gemini live session task exited");
         });
 
-        Ok(Self { audio_tx, text_tx, tool_tx, events: Some(events) })
+        Ok(Self {
+            audio_tx,
+            text_tx,
+            tool_tx,
+            events: Some(events),
+        })
     }
 }
 

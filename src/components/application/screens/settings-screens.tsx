@@ -210,7 +210,6 @@ export function OrganizationScreen() {
         <>
             <ScreenHeader
                 title="Organization"
-                description="Who this business is, and what it has decided."
                 actions={
                     <Button
                         size="sm"
@@ -888,5 +887,4 @@ const Toggle = ({
  */
 
 /* ------------------------------------------------------------- API keys */
-
 

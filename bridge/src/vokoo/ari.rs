@@ -64,7 +64,10 @@ pub enum AriEvent {
     /// A channel entered our Stasis application. `args` are the `appArgs` it
     /// was originated with, which is how the caller leg and the agent leg tell
     /// themselves apart.
-    StasisStart { channel_id: String, args: Vec<String> },
+    StasisStart {
+        channel_id: String,
+        args: Vec<String>,
+    },
     /// A channel left the application, usually because it hung up.
     StasisEnd { channel_id: String },
     /// An endpoint's registration changed — somebody went on or off duty.
@@ -163,9 +166,7 @@ impl Ari {
         let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
         Ok(rows
             .iter()
-            .filter(|row| {
-                row.get("technology").and_then(Value::as_str) == Some("PJSIP")
-            })
+            .filter(|row| row.get("technology").and_then(Value::as_str) == Some("PJSIP"))
             .filter_map(|row| {
                 let name = row.get("resource").and_then(Value::as_str)?;
                 let calls = row
@@ -214,7 +215,12 @@ impl Ari {
             .http
             .post(self.url(&format!("channels/{channel}/snoop")))
             .basic_auth(&self.user, Some(&self.password))
-            .query(&[("spy", spy), ("whisper", whisper), ("app", app), ("appArgs", args)])
+            .query(&[
+                ("spy", spy),
+                ("whisper", whisper),
+                ("app", app),
+                ("appArgs", args),
+            ])
             .send()
             .await
             .map_err(|e| e.to_string())?;
@@ -395,7 +401,10 @@ impl Ari {
     /// it means the password can end up in a proxy log if this ever leaves
     /// loopback.
     pub fn events_url(&self, app: &str) -> String {
-        let ws = self.base.replacen("http://", "ws://", 1).replacen("https://", "wss://", 1);
+        let ws = self
+            .base
+            .replacen("http://", "ws://", 1)
+            .replacen("https://", "wss://", 1);
         format!(
             "{ws}/ari/events?app={app}&subscribeAll=true&api_key={}:{}",
             self.user, self.password
@@ -408,7 +417,10 @@ pub fn parse_event(text: &str) -> AriEvent {
     let Ok(value) = serde_json::from_str::<Value>(text) else {
         return AriEvent::Other("unparseable".into());
     };
-    let kind = value.get("type").and_then(Value::as_str).unwrap_or_default();
+    let kind = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let channel_id = value
         .get("channel")
         .and_then(|c| c.get("id"))
@@ -422,7 +434,12 @@ pub fn parse_event(text: &str) -> AriEvent {
             args: value
                 .get("args")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
                 .unwrap_or_default(),
         },
         "StasisEnd" => AriEvent::StasisEnd { channel_id },
@@ -457,7 +474,13 @@ mod tests {
     #[test]
     fn an_event_with_no_args_is_still_a_start() {
         let event = parse_event(r#"{"type":"StasisStart","channel":{"id":"9.9"}}"#);
-        assert_eq!(event, AriEvent::StasisStart { channel_id: "9.9".into(), args: vec![] });
+        assert_eq!(
+            event,
+            AriEvent::StasisStart {
+                channel_id: "9.9".into(),
+                args: vec![]
+            }
+        );
     }
 
     #[test]
@@ -467,7 +490,10 @@ mod tests {
             parse_event(r#"{"type":"ChannelDtmfReceived","channel":{"id":"1"}}"#),
             AriEvent::Other("ChannelDtmfReceived".into()),
         );
-        assert_eq!(parse_event("not json"), AriEvent::Other("unparseable".into()));
+        assert_eq!(
+            parse_event("not json"),
+            AriEvent::Other("unparseable".into())
+        );
     }
 
     #[test]
@@ -479,7 +505,10 @@ mod tests {
             http: reqwest::Client::new(),
         };
         let url = ari.events_url("sarvathra");
-        assert!(url.starts_with("ws://127.0.0.1:8088/ari/events?app=sarvathra"), "{url}");
+        assert!(
+            url.starts_with("ws://127.0.0.1:8088/ari/events?app=sarvathra"),
+            "{url}"
+        );
         assert!(url.contains("api_key=vokoo:secret"));
     }
 

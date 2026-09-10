@@ -73,7 +73,12 @@ pub struct Agent {
 
 impl Agent {
     pub fn from_row(row: &Value) -> Option<Self> {
-        let get = |k: &str| row.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+        let get = |k: &str| {
+            row.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
         let endpoint = get("endpoint");
         if endpoint.is_empty() {
             return None;
@@ -182,11 +187,7 @@ pub fn render(agent: &Agent, family: Family) -> String {
 /// Returns `None` when nobody is on duty, which the caller must treat as a real
 /// answer: an escalation to an agent who is not registered is a caller
 /// listening to ringing that nobody will answer.
-pub async fn on_duty(
-    base: &str,
-    key: &str,
-    org_id: &str,
-) -> Option<String> {
+pub async fn on_duty(base: &str, key: &str, org_id: &str) -> Option<String> {
     let rows = super::graph::rows(
         base,
         key,
@@ -218,7 +219,9 @@ pub async fn on_duty(
 /// `id LIKE=%` for a multi. Anything that is not a plain `id=` is treated as
 /// "give me everything", which is what `multi` means.
 pub fn wanted_id(form: &BTreeMap<String, String>) -> Option<String> {
-    form.get("id").filter(|v| !v.is_empty() && *v != "%").cloned()
+    form.get("id")
+        .filter(|v| !v.is_empty() && *v != "%")
+        .cloned()
 }
 
 #[cfg(test)]
@@ -322,8 +325,7 @@ mod tests {
         let multi: BTreeMap<String, String> = [("id".to_string(), "%".to_string())].into();
         assert_eq!(wanted_id(&multi), None, "% means give me all of them");
 
-        let like: BTreeMap<String, String> =
-            [("id LIKE".to_string(), "%".to_string())].into();
+        let like: BTreeMap<String, String> = [("id LIKE".to_string(), "%".to_string())].into();
         assert_eq!(wanted_id(&like), None);
     }
 }

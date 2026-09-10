@@ -1,40 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    type CSSProperties,
+    type KeyboardEvent as ReactKeyboardEvent,
+    type PointerEvent as ReactPointerEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import Link from "next/link";
-
-import { useNotify } from "@/components/application/notifications/notification-provider";
 import { PdfDocumentViewer } from "@/components/application/documents/pdf-document-viewer";
+import { useNotify } from "@/components/application/notifications/notification-provider";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
+import { Select } from "@/components/base/select/select";
 import { IconDocument, SearchLg } from "@/components/icons";
 import { useResource } from "@/hooks/use-resource";
 import { useSession } from "@/hooks/use-session";
 import {
-    canCancelCompilerRun,
-    compilerStatusLabel,
-    documentUploadProblem,
-    documentProcessingLabel,
-    formatDocumentSize,
-    normalizeCompilerRunReport,
-    normalizeDocumentEvidence,
-    normalizeCompilerRecommendations,
-    selectDocument,
-    selectDocumentVersion,
-    selectEvidenceLayout,
-    shouldPollDocumentJob,
-    shouldPollCompilerRun,
-    validateHistoricalSearch,
-    type DocumentJob,
     type CompilerEvidence,
     type CompilerRunReport,
     type DocumentIntelligence,
+    type DocumentJob,
     type DocumentLayout,
     type DocumentVersion,
     type WorkspaceDocument,
+    canCancelCompilerRun,
+    clampDocumentInspectorWidth,
+    compilerStatusLabel,
+    documentProcessingLabel,
+    documentUploadProblem,
+    formatDocumentSize,
+    normalizeCompilerRecommendations,
+    normalizeCompilerRunReport,
+    normalizeDocumentEvidence,
+    selectDocument,
+    selectDocumentVersion,
+    selectEvidenceLayout,
+    shouldPollCompilerRun,
+    shouldPollDocumentJob,
+    validateHistoricalSearch,
 } from "@/lib/document-workspace";
-import { api, type DocumentSearchResult } from "@/utils/api-client";
+import { type DocumentSearchResult, api } from "@/utils/api-client";
 import { timeAgo } from "@/utils/format";
 
 async function sourceBase64(file: File): Promise<string> {
@@ -62,6 +72,8 @@ export function DocumentsScreen() {
     const notify = useNotify();
     const picker = useRef<HTMLInputElement>(null);
     const replacementPicker = useRef<HTMLInputElement>(null);
+    const documentWorkspace = useRef<HTMLDivElement>(null);
+    const inspectorResize = useRef<{ startX: number; startWidth: number; workspaceWidth: number } | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [query, setQuery] = useState("");
     const [isUploading, setIsUploading] = useState(false);
@@ -81,6 +93,8 @@ export function DocumentsScreen() {
     const [compilerReport, setCompilerReport] = useState<CompilerRunReport | null>(null);
     const [isStartingCompiler, setIsStartingCompiler] = useState(false);
     const [isCancellingCompiler, setIsCancellingCompiler] = useState(false);
+    const [inspectorWidth, setInspectorWidth] = useState(400);
+    const [isResizingInspector, setIsResizingInspector] = useState(false);
 
     useEffect(() => {
         setSelectedId((current) => selectDocument(records, current));
@@ -91,19 +105,81 @@ export function DocumentsScreen() {
         return needle ? records.filter((document) => document.name.toLowerCase().includes(needle)) : records;
     }, [records, query]);
     const selected = records.find((document) => document.id === selectedId) ?? null;
-
-    const loadVersions = useCallback(async (document: WorkspaceDocument) => {
-        if (!context) return [];
-        const { data } = await api.listDocumentVersions<DocumentVersion>(document.id, context);
-        setVersions(data);
-        setSelectedVersionId((current) =>
-            selectDocumentVersion(data, current, document.current_version),
-        );
-        return data;
-    }, [context]);
+    const versionItems = useMemo(
+        () =>
+            versions.map((version) => ({
+                id: version.id,
+                label: `Version ${version.version}${version.version === selected?.current_version ? " (current)" : ""}`,
+            })),
+        [versions, selected?.current_version],
+    );
 
     useEffect(() => {
-        setJob((current) => current?.file_id === selected?.id ? current : null);
+        const move = (event: PointerEvent) => {
+            const resize = inspectorResize.current;
+            if (!resize) return;
+            setInspectorWidth(clampDocumentInspectorWidth(resize.startWidth + resize.startX - event.clientX, resize.workspaceWidth));
+        };
+        const stop = () => {
+            inspectorResize.current = null;
+            setIsResizingInspector(false);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", stop);
+        window.addEventListener("pointercancel", stop);
+        return () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", stop);
+            window.removeEventListener("pointercancel", stop);
+        };
+    }, []);
+
+    useEffect(() => {
+        const workspace = documentWorkspace.current;
+        if (!workspace) return;
+        const observer = new ResizeObserver(([entry]) => {
+            setInspectorWidth((current) => clampDocumentInspectorWidth(current, entry.contentRect.width));
+        });
+        observer.observe(workspace);
+        return () => observer.disconnect();
+    }, [selected?.id]);
+
+    const beginInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+        if (event.button !== 0 || !documentWorkspace.current) return;
+        event.preventDefault();
+        inspectorResize.current = {
+            startX: event.clientX,
+            startWidth: inspectorWidth,
+            workspaceWidth: documentWorkspace.current.getBoundingClientRect().width,
+        };
+        setIsResizingInspector(true);
+    };
+
+    const resizeInspectorWithKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+        const workspaceWidth = documentWorkspace.current?.getBoundingClientRect().width ?? window.innerWidth;
+        let nextWidth: number | null = null;
+        if (event.key === "ArrowLeft") nextWidth = inspectorWidth + 32;
+        if (event.key === "ArrowRight") nextWidth = inspectorWidth - 32;
+        if (event.key === "Home") nextWidth = 0;
+        if (event.key === "End") nextWidth = Number.MAX_SAFE_INTEGER;
+        if (nextWidth === null) return;
+        event.preventDefault();
+        setInspectorWidth(clampDocumentInspectorWidth(nextWidth, workspaceWidth));
+    };
+
+    const loadVersions = useCallback(
+        async (document: WorkspaceDocument) => {
+            if (!context) return [];
+            const { data } = await api.listDocumentVersions<DocumentVersion>(document.id, context);
+            setVersions(data);
+            setSelectedVersionId((current) => selectDocumentVersion(data, current, document.current_version));
+            return data;
+        },
+        [context],
+    );
+
+    useEffect(() => {
+        setJob((current) => (current?.file_id === selected?.id ? current : null));
         setCompilerReport(null);
         setSearchResults([]);
         setUnavailableDocuments(0);
@@ -112,9 +188,7 @@ export function DocumentsScreen() {
             setSelectedVersionId(null);
             return;
         }
-        void loadVersions(selected).catch((cause) =>
-            notify.failure("Could not load document versions", cause),
-        );
+        void loadVersions(selected).catch((cause) => notify.failure("Could not load document versions", cause));
     }, [selected?.id, selected?.current_version, loadVersions]);
 
     useEffect(() => {
@@ -133,16 +207,12 @@ export function DocumentsScreen() {
         return () => window.clearTimeout(timer);
     }, [context, job, loadVersions, notify, refresh, selected]);
 
-    const selectedVersion =
-        versions.find((version) => version.id === selectedVersionId) ?? null;
+    const selectedVersion = versions.find((version) => version.id === selectedVersionId) ?? null;
     const intelligence = normalizeDocumentEvidence(
-        selectedVersion?.intelligence ??
-            (selectedVersion?.version === selected?.current_version ? selected?.intelligence : null),
+        selectedVersion?.intelligence ?? (selectedVersion?.version === selected?.current_version ? selected?.intelligence : null),
     );
     const carePathRecommended = intelligence?.recommendations.some((item) => item.compiler_id === "care_path") ?? false;
-    const stage = job && job.file_version_id === selectedVersion?.id
-        ? job.stage
-        : selectedVersion?.status ?? selected?.status ?? "queued";
+    const stage = job && job.file_version_id === selectedVersion?.id ? job.stage : (selectedVersion?.status ?? selected?.status ?? "queued");
 
     useEffect(() => {
         let cancelled = false;
@@ -152,45 +222,42 @@ export function DocumentsScreen() {
         setSourceError(null);
         setSelectedEvidence(null);
         if (!context || !selected || !selectedVersion) return;
-        void Promise.all([
-            api.documentSource(selected.id, selectedVersion.version, context),
-            api.documentLayout(selected.id, selectedVersion.version, context),
-        ]).then(async ([blob, response]) => {
-            if (cancelled) return;
-            setSource(blob);
-            setLayout(response.data);
-            if (selectedVersion.mime_type !== "application/pdf") setSourceText(await blob.text());
-        }).catch((cause) => {
-            if (!cancelled) setSourceError(cause instanceof Error ? cause.message : "The source could not be loaded.");
-        });
+        void Promise.all([api.documentSource(selected.id, selectedVersion.version, context), api.documentLayout(selected.id, selectedVersion.version, context)])
+            .then(async ([blob, response]) => {
+                if (cancelled) return;
+                setSource(blob);
+                setLayout(response.data);
+                if (selectedVersion.mime_type !== "application/pdf") setSourceText(await blob.text());
+            })
+            .catch((cause) => {
+                if (!cancelled) setSourceError(cause instanceof Error ? cause.message : "The source could not be loaded.");
+            });
         return () => {
             cancelled = true;
         };
     }, [context, selected?.id, selectedVersion?.id]);
 
     const evidenceSelection = useMemo(
-        () => selectEvidenceLayout(
-            layout?.items ?? [],
-            selectedEvidence?.chunk_id,
-            selectedEvidence?.page ?? null,
-        ),
+        () => selectEvidenceLayout(layout?.items ?? [], selectedEvidence?.chunk_id, selectedEvidence?.page ?? null),
         [layout?.items, selectedEvidence],
     );
 
-    const loadCompilerReport = useCallback(async (runId: string) => {
-        if (!context) return null;
-        const response = await api.getCompilerRun(runId, context);
-        const normalized = normalizeCompilerRunReport(response.data);
-        if (!normalized) throw new Error("The compiler returned an invalid report.");
-        setCompilerReport(normalized);
-        return normalized;
-    }, [context]);
+    const loadCompilerReport = useCallback(
+        async (runId: string) => {
+            if (!context) return null;
+            const response = await api.getCompilerRun(runId, context);
+            const normalized = normalizeCompilerRunReport(response.data);
+            if (!normalized) throw new Error("The compiler returned an invalid report.");
+            setCompilerReport(normalized);
+            return normalized;
+        },
+        [context],
+    );
 
     useEffect(() => {
         if (!compilerReport || !shouldPollCompilerRun(compilerReport.run)) return;
         const timer = window.setTimeout(() => {
-            void loadCompilerReport(compilerReport.run.id)
-                .catch((cause) => notify.failure("Could not refresh compiler progress", cause));
+            void loadCompilerReport(compilerReport.run.id).catch((cause) => notify.failure("Could not refresh compiler progress", cause));
         }, 1_500);
         return () => window.clearTimeout(timer);
     }, [compilerReport, loadCompilerReport, notify]);
@@ -202,7 +269,8 @@ export function DocumentsScreen() {
             !selectedVersion ||
             job?.file_version_id === selectedVersion.id ||
             ["indexed", "ready", "failed", "permanent_failed"].includes(selectedVersion.status)
-        ) return;
+        )
+            return;
         void api
             .processDocumentVersion(selected.id, selectedVersion.version, context)
             .then(({ data }) => setJob(data.job))
@@ -223,25 +291,14 @@ export function DocumentsScreen() {
                 content_base64: await sourceBase64(file),
             };
             if (replacement && selected) {
-                const { data: version } = await api.uploadDocumentVersion<DocumentVersion>(
-                    selected.id,
-                    body,
-                    context,
-                );
-                const { data } = await api.processDocumentVersion(
-                    selected.id,
-                    version.version,
-                    context,
-                );
+                const { data: version } = await api.uploadDocumentVersion<DocumentVersion>(selected.id, body, context);
+                const { data } = await api.processDocumentVersion(selected.id, version.version, context);
                 setJob(data.job);
                 setSelectedVersionId(version.id);
                 await Promise.all([refresh(), loadVersions({ ...selected, current_version: version.version })]);
                 notify.success("New version uploaded", "Indexing continues in the background.");
             } else {
-                const { data } = await api.uploadDocument<WorkspaceDocument>(
-                    { name: file.name, ...body },
-                    context,
-                );
+                const { data } = await api.uploadDocument<WorkspaceDocument>({ name: file.name, ...body }, context);
                 const queued = await api.analyzeDocument<{ job: DocumentJob }>(data.id, context);
                 setJob(queued.data.job);
                 await refresh();
@@ -261,11 +318,7 @@ export function DocumentsScreen() {
         if (!selected || !selectedVersion || !context) return;
         setIsProcessing(true);
         try {
-            const { data } = await api.processDocumentVersion(
-                selected.id,
-                selectedVersion.version,
-                context,
-            );
+            const { data } = await api.processDocumentVersion(selected.id, selectedVersion.version, context);
             setJob(data.job);
             notify.success("Document queued", "Processing resumes from the last completed stage.");
         } catch (cause) {
@@ -277,13 +330,14 @@ export function DocumentsScreen() {
 
     async function searchDocument() {
         if (!selected || !selectedVersion || !context) return;
-        const request = selectedVersion.version === selected.current_version
-            ? { query: semanticQuery, limit: 10, document_ids: [selected.id] }
-            : {
-                  query: semanticQuery,
-                  limit: 10,
-                  versions: [{ document_id: selected.id, version: selectedVersion.version }],
-              };
+        const request =
+            selectedVersion.version === selected.current_version
+                ? { query: semanticQuery, limit: 10, document_ids: [selected.id] }
+                : {
+                      query: semanticQuery,
+                      limit: 10,
+                      versions: [{ document_id: selected.id, version: selectedVersion.version }],
+                  };
         const problem = validateHistoricalSearch(request);
         if (problem) {
             notify.failure("Could not search the document", new Error(problem));
@@ -375,12 +429,16 @@ export function DocumentsScreen() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-                    {isLoading && Array.from({ length: 3 }).map((_, index) => (
-                        <div key={index} className="mb-1 flex gap-3 px-3 py-3">
-                            <div className="size-8 animate-pulse rounded-md bg-secondary" />
-                            <div className="flex flex-1 flex-col gap-2"><div className="h-3 w-2/3 animate-pulse rounded bg-secondary" /><div className="h-2.5 w-1/2 animate-pulse rounded bg-secondary" /></div>
-                        </div>
-                    ))}
+                    {isLoading &&
+                        Array.from({ length: 3 }).map((_, index) => (
+                            <div key={index} className="mb-1 flex gap-3 px-3 py-3">
+                                <div className="size-8 animate-pulse rounded-md bg-secondary" />
+                                <div className="flex flex-1 flex-col gap-2">
+                                    <div className="h-3 w-2/3 animate-pulse rounded bg-secondary" />
+                                    <div className="h-2.5 w-1/2 animate-pulse rounded bg-secondary" />
+                                </div>
+                            </div>
+                        ))}
                     {!isLoading && error && <p className="px-3 py-8 text-sm text-error-primary">{error.message}</p>}
                     {!isLoading && !error && records.length === 0 && (
                         <div className="px-4 py-10 text-center">
@@ -389,7 +447,9 @@ export function DocumentsScreen() {
                             <p className="mt-1 text-sm text-tertiary">Guidelines, policies, and reference documents remain versioned here.</p>
                         </div>
                     )}
-                    {!isLoading && records.length > 0 && visible.length === 0 && <p className="px-3 py-8 text-center text-sm text-tertiary">Nothing matches “{query}”.</p>}
+                    {!isLoading && records.length > 0 && visible.length === 0 && (
+                        <p className="px-3 py-8 text-center text-sm text-tertiary">Nothing matches “{query}”.</p>
+                    )}
                     {visible.map((document) => (
                         <button
                             key={document.id}
@@ -400,7 +460,9 @@ export function DocumentsScreen() {
                             <IconDocument className="mt-0.5 size-4 shrink-0 text-tertiary" />
                             <span className="min-w-0">
                                 <span className="block truncate text-sm font-medium text-primary">{document.name}</span>
-                                <span className="block truncate text-xs text-tertiary">Version {document.current_version} · {formatDocumentSize(document.size_bytes)}</span>
+                                <span className="block truncate text-xs text-tertiary">
+                                    Version {document.current_version} · {formatDocumentSize(document.size_bytes)}
+                                </span>
                             </span>
                         </button>
                     ))}
@@ -409,7 +471,9 @@ export function DocumentsScreen() {
 
             <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
                 {!selected ? (
-                    <div className="grid flex-1 place-items-center p-8"><p className="text-sm text-tertiary">{isLoading ? "Loading…" : "Select a document."}</p></div>
+                    <div className="grid flex-1 place-items-center p-8">
+                        <p className="text-sm text-tertiary">{isLoading ? "Loading…" : "Select a document."}</p>
+                    </div>
                 ) : (
                     <>
                         <header className="shrink-0 border-b border-secondary px-6 py-5">
@@ -425,23 +489,22 @@ export function DocumentsScreen() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2">
                                     {versions.length > 0 ? (
-                                        <select
-                                            aria-label="Document version"
-                                            className="h-9 rounded-lg border border-primary bg-primary px-3 text-sm text-primary outline-none focus:ring-2 focus:ring-brand"
-                                            value={selectedVersionId ?? ""}
-                                            onChange={(event) => {
-                                                setSelectedVersionId(event.currentTarget.value);
-                                                setJob(null);
-                                                setCompilerReport(null);
-                                                setSearchResults([]);
-                                            }}
-                                        >
-                                            {versions.map((version) => (
-                                                <option key={version.id} value={version.id}>
-                                                    Version {version.version}{version.version === selected.current_version ? " (current)" : ""}
-                                                </option>
-                                            ))}
-                                        </select>
+                                        <div className="w-44">
+                                            <Select
+                                                size="sm"
+                                                aria-label="Document version"
+                                                selectedKey={selectedVersionId ?? undefined}
+                                                onSelectionChange={(key) => {
+                                                    setSelectedVersionId(String(key));
+                                                    setJob(null);
+                                                    setCompilerReport(null);
+                                                    setSearchResults([]);
+                                                }}
+                                                items={versionItems}
+                                            >
+                                                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                            </Select>
+                                        </div>
                                     ) : null}
                                     <Button
                                         size="sm"
@@ -455,7 +518,13 @@ export function DocumentsScreen() {
                                     <Badge
                                         size="sm"
                                         type="pill-color"
-                                        color={stage === "indexed" || stage === "ready" ? "success" : stage === "permanent_failed" || stage === "failed" ? "error" : "gray"}
+                                        color={
+                                            stage === "indexed" || stage === "ready"
+                                                ? "success"
+                                                : stage === "permanent_failed" || stage === "failed"
+                                                  ? "error"
+                                                  : "gray"
+                                        }
                                     >
                                         {documentProcessingLabel(stage)}
                                     </Badge>
@@ -463,7 +532,12 @@ export function DocumentsScreen() {
                             </div>
                         </header>
 
-                        <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px]">
+                        <div
+                            ref={documentWorkspace}
+                            data-testid="document-workspace"
+                            className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto xl:grid-cols-[minmax(0,1fr)_var(--document-inspector-width)] xl:overflow-hidden"
+                            style={{ "--document-inspector-width": `${inspectorWidth}px` } as CSSProperties}
+                        >
                             <div className="min-h-[50vh] min-w-0 overflow-hidden border-secondary xl:min-h-0 xl:border-r">
                                 {selectedVersion?.mime_type === "application/pdf" ? (
                                     <PdfDocumentViewer
@@ -478,126 +552,150 @@ export function DocumentsScreen() {
                                         {sourceError ? (
                                             <p className="text-sm text-error-primary">{sourceError}</p>
                                         ) : (
-                                            <pre className="mx-auto min-h-full max-w-3xl whitespace-pre-wrap bg-primary p-6 text-sm leading-6 text-secondary shadow-xs ring-1 ring-secondary">
+                                            <pre className="mx-auto min-h-full max-w-3xl bg-primary p-6 text-sm leading-6 whitespace-pre-wrap text-secondary shadow-xs ring-1 ring-secondary">
                                                 {sourceText || "Loading source…"}
                                             </pre>
                                         )}
                                     </div>
                                 )}
                             </div>
-                            <aside className="min-h-0 overflow-y-auto p-5">
-                              <div className="flex flex-col gap-5">
-                                <div className="flex items-start justify-between gap-4 border-b border-secondary pb-4">
-                                    <div>
-                                        <h3 className="text-md font-semibold text-primary">Workspace Intelligence</h3>
-                                        <p className="mt-1 max-w-2xl text-sm text-tertiary">Identifies the source and recommends registered compilers. It does not create or publish workspace artifacts.</p>
-                                    </div>
-                                    {stage !== "indexed" && stage !== "ready" ? (
-                                        <Button
-                                            size="sm"
-                                            color="secondary"
-                                            isLoading={isProcessing}
-                                            showTextWhileLoading
-                                            onClick={processVersion}
-                                        >
-                                            {stage === "permanent_failed" || stage === "failed" ? "Retry processing" : "Process version"}
-                                        </Button>
-                                    ) : null}
+                            <aside
+                                data-testid="document-inspector"
+                                className="relative flex min-h-[28rem] min-w-0 flex-col border-secondary bg-primary xl:min-h-0 xl:border-l"
+                            >
+                                <div
+                                    role="separator"
+                                    aria-label="Resize Workspace Intelligence panel"
+                                    aria-orientation="vertical"
+                                    aria-valuemin={320}
+                                    aria-valuemax={640}
+                                    aria-valuenow={inspectorWidth}
+                                    tabIndex={0}
+                                    data-testid="document-inspector-resizer"
+                                    className={`group absolute inset-y-0 -left-1 z-10 hidden w-2 cursor-col-resize touch-none items-center justify-center outline-none xl:flex ${isResizingInspector ? "bg-brand-secondary" : ""}`}
+                                    onPointerDown={beginInspectorResize}
+                                    onKeyDown={resizeInspectorWithKeyboard}
+                                    onDoubleClick={() => {
+                                        const workspaceWidth = documentWorkspace.current?.getBoundingClientRect().width ?? window.innerWidth;
+                                        setInspectorWidth(clampDocumentInspectorWidth(400, workspaceWidth));
+                                    }}
+                                >
+                                    <span className="h-full w-px bg-border-secondary transition-colors group-hover:bg-border-brand group-focus-visible:w-0.5 group-focus-visible:bg-border-brand" />
                                 </div>
 
-                                {shouldPollDocumentJob(job) ? (
-                                    <div
-                                        className="rounded-xl bg-secondary px-5 py-4 ring-1 ring-secondary"
-                                        role="status"
-                                        aria-live="polite"
-                                        aria-label="Document processing progress"
-                                    >
-                                        <p className="text-sm font-medium text-primary">{documentProcessingLabel(job!.stage)}</p>
-                                        <p className="mt-1 text-sm text-tertiary">
-                                            Attempt {job!.attempt_count} of {job!.max_attempts}. You can leave this page while the worker continues.
-                                        </p>
+                                <div data-testid="document-inspector-header" className="shrink-0 border-b border-secondary bg-primary px-5 py-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                        <h3 className="text-md font-semibold text-primary">Workspace Intelligence</h3>
+                                        {stage !== "indexed" && stage !== "ready" ? (
+                                            <Button size="sm" color="secondary" isLoading={isProcessing} showTextWhileLoading onClick={processVersion}>
+                                                {stage === "permanent_failed" || stage === "failed" ? "Retry processing" : "Process version"}
+                                            </Button>
+                                        ) : null}
                                     </div>
-                                ) : null}
-
-                                {(stage === "permanent_failed" || stage === "failed") ? (
-                                    <div className="rounded-xl border border-error-primary px-5 py-4" role="alert">
-                                        <p className="text-sm font-medium text-error-primary">This version could not be indexed</p>
-                                        <p className="mt-1 text-sm text-tertiary">
-                                            {job?.last_error_detail ?? selectedVersion?.processing_error?.detail ?? "Correct the source or provider configuration, then retry."}
-                                        </p>
-                                    </div>
-                                ) : null}
-
-                                <IntelligenceResult
-                                    intelligence={intelligence}
-                                    version={selectedVersion?.version ?? selected.current_version}
-                                    onEvidence={setSelectedEvidence}
-                                    canCompile={selectedVersion?.status === "indexed" && carePathRecommended && !compilerReport}
-                                    isCompiling={isStartingCompiler}
-                                    onCompile={startCompiler}
-                                />
-
-                                {compilerReport ? (
-                                    <CompilerReview
-                                        report={compilerReport}
-                                        isCancelling={isCancellingCompiler}
-                                        onCancel={cancelCompiler}
-                                        onEvidence={(chunkId) => setSelectedEvidence({ chunk_id: chunkId, page: null })}
-                                    />
-                                ) : null}
-
-                                <section className="border-t border-secondary pt-5" aria-labelledby="document-search-title">
-                                    <h3 id="document-search-title" className="text-md font-semibold text-primary">Search this document</h3>
-                                    <p className="mt-1 text-sm text-tertiary">
-                                        Semantic and exact-term search stays on {selectedVersion?.version === selected.current_version ? "the current version" : `historical version ${selectedVersion?.version ?? selected.current_version}`}.
-                                    </p>
                                     <form
-                                        className="mt-3 flex gap-2"
+                                        aria-label="Search this document"
+                                        className="mt-4 flex gap-2"
                                         onSubmit={(event) => {
                                             event.preventDefault();
                                             void searchDocument();
                                         }}
                                     >
                                         <Input
+                                            size="sm"
+                                            icon={SearchLg}
                                             aria-label="Search document contents"
-                                            placeholder="Find a recommendation or clinical identifier"
+                                            placeholder="Search this document"
                                             value={semanticQuery}
                                             onChange={(value) => setSemanticQuery(String(value))}
                                         />
-                                        <Button type="submit" isLoading={isSearching} showTextWhileLoading>
+                                        <Button size="sm" type="submit" isLoading={isSearching} showTextWhileLoading>
                                             Search
                                         </Button>
                                     </form>
-                                    {unavailableDocuments > 0 ? (
-                                        <p className="mt-3 text-sm text-warning-primary" role="status">
-                                            This current document is still indexing, so no older version was substituted.
-                                        </p>
-                                    ) : null}
-                                    {searchResults.length > 0 ? (
-                                        <ol className="mt-4 flex flex-col gap-3">
-                                            {searchResults.map((result) => (
-                                                <li key={result.chunk_id} className="overflow-hidden rounded-xl ring-1 ring-secondary">
-                                                    <button
-                                                        type="button"
-                                                        className="w-full px-4 py-3 text-left hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
-                                                        onClick={() => setSelectedEvidence({
-                                                            chunk_id: result.chunk_id,
-                                                            page: result.page_start,
-                                                        })}
-                                                    >
-                                                        <p className="text-sm leading-6 text-secondary">{result.text}</p>
-                                                        <p className="mt-2 text-xs text-quaternary">
-                                                            Version {result.version}
-                                                            {result.page_start ? ` · Page ${result.page_start}${result.page_end && result.page_end !== result.page_start ? `–${result.page_end}` : ""}` : ""}
-                                                            {result.section_path.length ? ` · ${result.section_path.join(" › ")}` : ""}
-                                                        </p>
-                                                    </button>
-                                                </li>
-                                            ))}
-                                        </ol>
-                                    ) : null}
-                                </section>
-                              </div>
+                                </div>
+
+                                <div data-testid="document-inspector-scroll" className="min-h-0 flex-1 overflow-y-auto p-5">
+                                    <div className="flex flex-col gap-5">
+                                        {unavailableDocuments > 0 || searchResults.length > 0 ? (
+                                            <section aria-label="Document search results" className="flex flex-col gap-3">
+                                                {unavailableDocuments > 0 ? (
+                                                    <p className="text-sm text-warning-primary" role="status">
+                                                        This current document is still indexing, so no older version was substituted.
+                                                    </p>
+                                                ) : null}
+                                                {searchResults.length > 0 ? (
+                                                    <ol className="flex flex-col gap-3">
+                                                        {searchResults.map((result) => (
+                                                            <li key={result.chunk_id} className="overflow-hidden rounded-xl ring-1 ring-secondary">
+                                                                <button
+                                                                    type="button"
+                                                                    className="w-full px-4 py-3 text-left hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
+                                                                    onClick={() =>
+                                                                        setSelectedEvidence({
+                                                                            chunk_id: result.chunk_id,
+                                                                            page: result.page_start,
+                                                                        })
+                                                                    }
+                                                                >
+                                                                    <p className="text-sm leading-6 text-secondary">{result.text}</p>
+                                                                    <p className="mt-2 text-xs text-quaternary">
+                                                                        Version {result.version}
+                                                                        {result.page_start
+                                                                            ? ` · Page ${result.page_start}${result.page_end && result.page_end !== result.page_start ? `–${result.page_end}` : ""}`
+                                                                            : ""}
+                                                                        {result.section_path.length ? ` · ${result.section_path.join(" › ")}` : ""}
+                                                                    </p>
+                                                                </button>
+                                                            </li>
+                                                        ))}
+                                                    </ol>
+                                                ) : null}
+                                            </section>
+                                        ) : null}
+
+                                        {shouldPollDocumentJob(job) ? (
+                                            <div
+                                                className="rounded-xl bg-secondary px-5 py-4 ring-1 ring-secondary"
+                                                role="status"
+                                                aria-live="polite"
+                                                aria-label="Document processing progress"
+                                            >
+                                                <p className="text-sm font-medium text-primary">{documentProcessingLabel(job!.stage)}</p>
+                                                <p className="mt-1 text-sm text-tertiary">
+                                                    Attempt {job!.attempt_count} of {job!.max_attempts}
+                                                </p>
+                                            </div>
+                                        ) : null}
+
+                                        {stage === "permanent_failed" || stage === "failed" ? (
+                                            <div className="border-error-primary rounded-xl border px-5 py-4" role="alert">
+                                                <p className="text-sm font-medium text-error-primary">This version could not be indexed</p>
+                                                <p className="mt-1 text-sm text-tertiary">
+                                                    {job?.last_error_detail ??
+                                                        selectedVersion?.processing_error?.detail ??
+                                                        "Correct the source or provider configuration, then retry."}
+                                                </p>
+                                            </div>
+                                        ) : null}
+
+                                        <IntelligenceResult
+                                            intelligence={intelligence}
+                                            onEvidence={setSelectedEvidence}
+                                            canCompile={selectedVersion?.status === "indexed" && carePathRecommended && !compilerReport}
+                                            isCompiling={isStartingCompiler}
+                                            onCompile={startCompiler}
+                                        />
+
+                                        {compilerReport ? (
+                                            <CompilerReview
+                                                report={compilerReport}
+                                                isCancelling={isCancellingCompiler}
+                                                onCancel={cancelCompiler}
+                                                onEvidence={(chunkId) => setSelectedEvidence({ chunk_id: chunkId, page: null })}
+                                            />
+                                        ) : null}
+                                    </div>
+                                </div>
                             </aside>
                         </div>
                     </>
@@ -609,14 +707,12 @@ export function DocumentsScreen() {
 
 function IntelligenceResult({
     intelligence,
-    version,
     onEvidence,
     canCompile,
     isCompiling,
     onCompile,
 }: {
     intelligence: DocumentIntelligence | null;
-    version: number;
     onEvidence: (evidence: Pick<CompilerEvidence, "chunk_id" | "page">) => void;
     canCompile: boolean;
     isCompiling: boolean;
@@ -633,54 +729,59 @@ function IntelligenceResult({
     const recommendations = normalizeCompilerRecommendations(intelligence.recommendations);
     return (
         <div className="flex flex-col gap-5">
-            <p className="max-w-2xl text-sm leading-6 text-secondary">{intelligence.summary}</p>
+            {recommendations.length === 0 && intelligence.summary ? <p className="max-w-2xl text-sm leading-6 text-secondary">{intelligence.summary}</p> : null}
             {recommendations.length === 0 ? (
                 <div className="rounded-xl bg-secondary px-5 py-4 ring-1 ring-secondary">
                     <p className="text-sm font-medium text-primary">No compiler recommended</p>
-                    <p className="mt-1 text-sm text-tertiary">This document remains available as workspace knowledge.</p>
                 </div>
-            ) : recommendations.map((recommendation) => (
-                <article key={recommendation.compiler_id} className="overflow-hidden rounded-xl ring-1 ring-secondary">
-                    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-secondary bg-secondary px-5 py-4">
-                        <div>
+            ) : (
+                recommendations.map((recommendation) => (
+                    <article key={recommendation.compiler_id} className="overflow-hidden rounded-xl ring-1 ring-secondary">
+                        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-secondary bg-secondary px-5 py-4">
                             <p className="text-sm font-semibold text-primary">{recommendation.label}</p>
-                            <p className="mt-1 text-sm text-tertiary">This document can be converted into a workflow draft.</p>
+                            <Badge size="sm" type="pill-color" color="brand">
+                                {Math.round(recommendation.confidence * 100)}% match
+                            </Badge>
                         </div>
-                        <Badge size="sm" type="pill-color" color="brand">{Math.round(recommendation.confidence * 100)}% match</Badge>
-                    </div>
-                    <div className="px-5 py-4">
-                        <p className="text-sm text-secondary">{recommendation.reason}</p>
-                        {canCompile ? (
-                            <Button size="sm" className="mt-4" isLoading={isCompiling} showTextWhileLoading onClick={onCompile}>
-                                Compile into workflow
-                            </Button>
-                        ) : null}
-                        {recommendation.evidence.length > 0 && (
-                            <div className="mt-4 flex flex-col gap-3">
-                        <p className="text-xs font-medium text-tertiary">Evidence in version {version}</p>
-                                {recommendation.evidence.map((evidence, index) => (
-                                    <button
-                                        key={`${evidence.page}-${index}`}
-                                        type="button"
-                                        className="border-l-2 border-brand py-1 pl-3 text-left text-sm text-tertiary hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-brand"
-                                        onClick={() => onEvidence(evidence)}
-                                    >
-                                        “{evidence.text}”
-                                        <span className="ml-2 text-xs text-quaternary">
-                                            {evidence.page ? `Page ${evidence.page}${evidence.page_end && evidence.page_end !== evidence.page ? `–${evidence.page_end}` : ""}` : "Location unavailable"}
-                                            {evidence.section_path?.length ? ` · ${evidence.section_path.join(" › ")}` : ""}
-                                        </span>
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </article>
-            ))}
+                        <div className="px-5 py-4">
+                            {canCompile ? (
+                                <Button size="sm" isLoading={isCompiling} showTextWhileLoading onClick={onCompile}>
+                                    Compile into workflow
+                                </Button>
+                            ) : null}
+                            {recommendation.evidence.length > 0 && (
+                                <div className="mt-4 flex flex-col gap-3">
+                                    <p className="text-xs font-medium text-tertiary">Evidence</p>
+                                    {recommendation.evidence.map((evidence, index) => (
+                                        <button
+                                            key={`${evidence.page}-${index}`}
+                                            type="button"
+                                            className="border-l-2 border-brand py-1 pl-3 text-left text-sm text-tertiary hover:bg-primary_hover focus-visible:outline-2 focus-visible:outline-brand"
+                                            onClick={() => onEvidence(evidence)}
+                                        >
+                                            <span className="line-clamp-3">“{evidence.text}”</span>
+                                            <span className="mt-1 block text-xs text-quaternary">
+                                                {evidence.page
+                                                    ? `Page ${evidence.page}${evidence.page_end && evidence.page_end !== evidence.page ? `–${evidence.page_end}` : ""}`
+                                                    : "Location unavailable"}
+                                                {evidence.section_path?.length ? ` · ${evidence.section_path[evidence.section_path.length - 1]}` : ""}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </article>
+                ))
+            )}
             {intelligence.gaps.length > 0 && (
                 <div>
                     <p className="text-sm font-medium text-primary">Needs attention</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-tertiary">{intelligence.gaps.map((gap) => <li key={gap}>{gap}</li>)}</ul>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-tertiary">
+                        {intelligence.gaps.map((gap) => (
+                            <li key={gap}>{gap}</li>
+                        ))}
+                    </ul>
                 </div>
             )}
         </div>
@@ -694,7 +795,7 @@ function traceSummary(step: CompilerRunReport["steps"][number]): string {
     );
     if (counts.length) return counts.join(" · ");
     if (step.result.output_stored === true) return "Compiler output stored for deterministic validation.";
-    return step.status === "completed" ? "Completed." : step.error_code ?? step.status;
+    return step.status === "completed" ? "Completed." : (step.error_code ?? step.status);
 }
 
 function CompilerReview({
@@ -715,8 +816,10 @@ function CompilerReview({
         <section className="border-t border-secondary pt-5" aria-labelledby="compiler-review-title">
             <div className="flex items-start justify-between gap-3">
                 <div>
-                    <h3 id="compiler-review-title" className="text-md font-semibold text-primary">Compiler review</h3>
-                    <p className="mt-1 text-sm text-tertiary">{report.run.summary ?? "The compiler run is retained with its cited decisions and gaps."}</p>
+                    <h3 id="compiler-review-title" className="text-md font-semibold text-primary">
+                        Compiler review
+                    </h3>
+                    {report.run.summary ? <p className="mt-1 text-sm text-tertiary">{report.run.summary}</p> : null}
                 </div>
                 {canCancelCompilerRun(report.run) ? (
                     <Button size="sm" color="secondary-destructive" isLoading={isCancelling} showTextWhileLoading onClick={onCancel}>
@@ -728,10 +831,13 @@ function CompilerReview({
             <div className="mt-4 rounded-xl bg-secondary px-4 py-3 ring-1 ring-secondary" role="status" aria-live="polite" aria-label="Compiler progress">
                 <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-primary">{compilerStatusLabel(report.run.status)}</p>
-                    <span className="text-xs text-tertiary">Attempt {report.run.attempt_count}/{report.run.max_attempts}</span>
+                    <span className="text-xs text-tertiary">
+                        Attempt {report.run.attempt_count}/{report.run.max_attempts}
+                    </span>
                 </div>
-                {active ? <p className="mt-1 text-xs text-tertiary">You can leave this page while the durable worker continues.</p> : null}
-                {report.run.status === "failed" ? <p className="mt-1 text-xs text-error-primary">Error: {report.run.last_error_code ?? "compiler_failed"}</p> : null}
+                {report.run.status === "failed" ? (
+                    <p className="mt-1 text-xs text-error-primary">Error: {report.run.last_error_code ?? "compiler_failed"}</p>
+                ) : null}
             </div>
 
             {!active && report.run.status !== "cancelled" ? (
@@ -754,13 +860,21 @@ function CompilerReview({
                             const href = resourceId ? (artifact.artifact_type === "flow" ? `/flows/${resourceId}` : `/team/${resourceId}`) : null;
                             return (
                                 <li key={artifact.id} className="rounded-lg border border-secondary px-3 py-2 text-sm">
-                                    {href ? <Link className="font-medium text-brand-secondary hover:underline" href={href}>{artifact.stable_key}</Link> : <span className="font-medium text-tertiary">{artifact.stable_key}</span>}
-                                    <span className="ml-2 text-xs text-quaternary">{artifact.artifact_type}{href ? " · Draft" : " · Unavailable (deleted)"}</span>
+                                    {href ? (
+                                        <Link className="font-medium text-brand-secondary hover:underline" href={href}>
+                                            {artifact.stable_key}
+                                        </Link>
+                                    ) : (
+                                        <span className="font-medium text-tertiary">{artifact.stable_key}</span>
+                                    )}
+                                    <span className="ml-2 text-xs text-quaternary">
+                                        {artifact.artifact_type}
+                                        {href ? " · Draft" : " · Unavailable (deleted)"}
+                                    </span>
                                 </li>
                             );
                         })}
                     </ul>
-                    <p className="mt-2 text-xs text-tertiary"><code>escalate.notify</code> creates trackable escalation work.</p>
                 </div>
             ) : null}
 
@@ -769,15 +883,26 @@ function CompilerReview({
                     <p className="text-sm font-medium text-primary">Gaps requiring review</p>
                     <ul className="mt-2 space-y-3">
                         {report.gaps.map((gap) => (
-                            <li key={gap.id} className="rounded-lg border border-warning-primary px-3 py-3">
+                            <li key={gap.id} className="border-warning-primary rounded-lg border px-3 py-3">
                                 <div className="flex items-center justify-between gap-2">
                                     <span className="text-sm font-medium text-primary">{gap.code}</span>
-                                    <Badge size="sm" type="pill-color" color={gap.severity === "blocking" ? "error" : gap.severity === "warning" ? "warning" : "gray"}>{gap.severity}</Badge>
+                                    <Badge
+                                        size="sm"
+                                        type="pill-color"
+                                        color={gap.severity === "blocking" ? "error" : gap.severity === "warning" ? "warning" : "gray"}
+                                    >
+                                        {gap.severity}
+                                    </Badge>
                                 </div>
                                 <p className="mt-1 text-sm text-tertiary">{gap.explanation}</p>
                                 {gap.missing_capability ? <p className="mt-1 text-xs text-quaternary">Missing capability: {gap.missing_capability}</p> : null}
                                 {gap.evidence.map((evidence, index) => (
-                                    <button key={`${evidence.chunk_id}-${index}`} type="button" className="mt-2 block border-l-2 border-brand pl-2 text-left text-xs text-tertiary hover:bg-primary_hover" onClick={() => onEvidence(evidence.chunk_id)}>
+                                    <button
+                                        key={`${evidence.chunk_id}-${index}`}
+                                        type="button"
+                                        className="mt-2 block border-l-2 border-brand pl-2 text-left text-xs text-tertiary hover:bg-primary_hover"
+                                        onClick={() => onEvidence(evidence.chunk_id)}
+                                    >
                                         “{evidence.excerpt}”
                                     </button>
                                 ))}
@@ -793,8 +918,14 @@ function CompilerReview({
                     <ul className="mt-2 space-y-2">
                         {report.evidence.map((evidence) => (
                             <li key={evidence.id}>
-                                <button type="button" className="w-full rounded-lg border border-secondary px-3 py-2 text-left hover:bg-primary_hover" onClick={() => onEvidence(evidence.chunk_id)}>
-                                    <p className="text-xs font-medium text-primary">{artifactsById.get(evidence.artifact_id)?.stable_key ?? "Generated artifact"} · {evidence.target_path}</p>
+                                <button
+                                    type="button"
+                                    className="w-full rounded-lg border border-secondary px-3 py-2 text-left hover:bg-primary_hover"
+                                    onClick={() => onEvidence(evidence.chunk_id)}
+                                >
+                                    <p className="text-xs font-medium text-primary">
+                                        {artifactsById.get(evidence.artifact_id)?.stable_key ?? "Generated artifact"} · {evidence.target_path}
+                                    </p>
                                     <p className="mt-1 line-clamp-3 text-xs text-tertiary">“{evidence.excerpt}”</p>
                                 </button>
                             </li>
@@ -809,10 +940,15 @@ function CompilerReview({
                     <ol className="mt-3 space-y-3">
                         {report.steps.map((step) => (
                             <li key={step.id} className="text-xs text-tertiary">
-                                <p className="font-medium text-primary">{step.sequence}. {step.kind}{step.task_key ? ` · ${step.task_key}` : ""}</p>
+                                <p className="font-medium text-primary">
+                                    {step.sequence}. {step.kind}
+                                    {step.task_key ? ` · ${step.task_key}` : ""}
+                                </p>
                                 <p className="mt-0.5">{traceSummary(step)}</p>
                                 <p className="mt-0.5 text-quaternary">
-                                    {step.page_start ? `Page ${step.page_start}${step.page_end && step.page_end !== step.page_start ? `–${step.page_end}` : ""} · ` : ""}
+                                    {step.page_start
+                                        ? `Page ${step.page_start}${step.page_end && step.page_end !== step.page_start ? `–${step.page_end}` : ""} · `
+                                        : ""}
                                     {step.duration_ms !== null ? `${step.duration_ms} ms` : step.status}
                                 </p>
                             </li>

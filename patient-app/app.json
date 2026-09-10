@@ -1,0 +1,66 @@
+{
+  "name": "Sarvathra",
+  "slug": "sarvathra-patient",
+  "scheme": "sarvathra",
+  "version": "1.0.0",
+  "orientation": "portrait",
+  "userInterfaceStyle": "light",
+  "icon": "./assets/images/app-icon.png",
+  "updates": {
+    "fallbackToCacheTimeout": 0
+  },
+  "newArchEnabled": true,
+  "jsEngine": "hermes",
+  "assetBundlePatterns": [
+    "**/*"
+  ],
+  "android": {
+    "icon": "./assets/images/app-icon.png",
+    "package": "ai.sarvathra.patient",
+    "adaptiveIcon": {
+      "foregroundImage": "./assets/images/app-icon-foreground.png",
+      "backgroundColor": "#fdfcfc"
+    },
+    "allowBackup": false
+  },
+  "ios": {
+    "icon": "./assets/images/app-icon.png",
+    "supportsTablet": true,
+    "bundleIdentifier": "ai.sarvathra.patient"
+  },
+  "web": {
+    "favicon": "./assets/images/app-icon.png",
+    "bundler": "metro"
+  },
+  "plugins": [
+    "expo-localization",
+    "expo-font",
+    [
+      "expo-splash-screen",
+      {
+        "image": "./assets/images/sarvathra-mark.png",
+        "imageWidth": 120,
+        "resizeMode": "contain",
+        "backgroundColor": "#f5f3f1"
+      }
+    ],
+    [
+      "react-native-edge-to-edge",
+      {
+        "android": {
+          "parentTheme": "Light",
+          "enforceNavigationBarContrast": false
+        }
+      }
+    ],
+    "expo-build-properties"
+  ],
+  "experiments": {
+    "tsconfigPaths": true
+  },
+  "extra": {
+    "ignite": {
+      "version": "11.5.0"
+    }
+  }
+}

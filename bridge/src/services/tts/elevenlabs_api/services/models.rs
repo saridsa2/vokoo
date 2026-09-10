@@ -52,7 +52,6 @@ impl<'a> ModelsService<'a> {
 // Tests
 // ---------------------------------------------------------------------------
 
-
 // VENDOR CHANGE: the upstream crate's tests for this module were removed.
 // They construct the hpx-based ElevenLabsClient and import `config`/`types`,
 // none of which this subset vendors — see docs/vendor-overrides.md.

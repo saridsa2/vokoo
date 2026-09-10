@@ -58,8 +58,13 @@ impl Keypresses {
     pub fn record(&self, ucid: &str, node_id: &str, digit: &str) {
         let mut map = self.lock();
         map.retain(|_, (_, at)| at.elapsed() < TTL);
-        let entry = map.entry(ucid.to_string()).or_insert_with(|| (CallKeys::default(), Instant::now()));
-        entry.0.answers.insert(node_id.to_string(), digit.to_string());
+        let entry = map
+            .entry(ucid.to_string())
+            .or_insert_with(|| (CallKeys::default(), Instant::now()));
+        entry
+            .0
+            .answers
+            .insert(node_id.to_string(), digit.to_string());
         // Answered, so no longer outstanding. A second callback for the same
         // menu — the carrier repeating itself — must not be read as an answer
         // to whatever menu comes next.
@@ -73,14 +78,18 @@ impl Keypresses {
     pub fn asking(&self, ucid: &str, node_id: &str) {
         let mut map = self.lock();
         map.retain(|_, (_, at)| at.elapsed() < TTL);
-        let entry = map.entry(ucid.to_string()).or_insert_with(|| (CallKeys::default(), Instant::now()));
+        let entry = map
+            .entry(ucid.to_string())
+            .or_insert_with(|| (CallKeys::default(), Instant::now()));
         entry.0.asked = Some(node_id.to_string());
         entry.1 = Instant::now();
     }
 
     /// The menu this call was last asked, if it has not answered yet.
     pub fn awaiting(&self, ucid: &str) -> Option<String> {
-        self.lock().get(ucid).and_then(|(keys, _)| keys.asked.clone())
+        self.lock()
+            .get(ucid)
+            .and_then(|(keys, _)| keys.asked.clone())
     }
 
     /// Every answer this call has given so far.
@@ -91,7 +100,9 @@ impl Keypresses {
     pub fn all(&self, ucid: &str) -> HashMap<String, String> {
         let mut map = self.lock();
         map.retain(|_, (_, at)| at.elapsed() < TTL);
-        map.get(ucid).map(|(keys, _)| keys.answers.clone()).unwrap_or_default()
+        map.get(ucid)
+            .map(|(keys, _)| keys.answers.clone())
+            .unwrap_or_default()
     }
 
     /// The call is over.
@@ -103,7 +114,9 @@ impl Keypresses {
     /// cache of what a caller pressed; carrying on with it is better than
     /// taking the process down and dropping every call in progress.
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, (CallKeys, Instant)>> {
-        self.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -115,9 +128,15 @@ mod tests {
     fn answers_survive_being_read() {
         let keys = Keypresses::new();
         keys.record("call-1", "menu", "2");
-        assert_eq!(keys.all("call-1").get("menu").map(String::as_str), Some("2"));
+        assert_eq!(
+            keys.all("call-1").get("menu").map(String::as_str),
+            Some("2")
+        );
         // The second walk must see it too, or the caller is asked twice.
-        assert_eq!(keys.all("call-1").get("menu").map(String::as_str), Some("2"));
+        assert_eq!(
+            keys.all("call-1").get("menu").map(String::as_str),
+            Some("2")
+        );
     }
 
     #[test]
@@ -125,8 +144,14 @@ mod tests {
         let keys = Keypresses::new();
         keys.record("call-1", "menu", "1");
         keys.record("call-2", "menu", "3");
-        assert_eq!(keys.all("call-1").get("menu").map(String::as_str), Some("1"));
-        assert_eq!(keys.all("call-2").get("menu").map(String::as_str), Some("3"));
+        assert_eq!(
+            keys.all("call-1").get("menu").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            keys.all("call-2").get("menu").map(String::as_str),
+            Some("3")
+        );
     }
 
     #[test]
@@ -148,8 +173,15 @@ mod tests {
         keys.asking("call-1", "n_lang");
         assert_eq!(keys.awaiting("call-1").as_deref(), Some("n_lang"));
         keys.record("call-1", "n_lang", "2");
-        assert_eq!(keys.awaiting("call-1"), None, "a repeat callback must not answer the next menu");
-        assert_eq!(keys.all("call-1").get("n_lang").map(String::as_str), Some("2"));
+        assert_eq!(
+            keys.awaiting("call-1"),
+            None,
+            "a repeat callback must not answer the next menu"
+        );
+        assert_eq!(
+            keys.all("call-1").get("n_lang").map(String::as_str),
+            Some("2")
+        );
     }
 
     #[test]
@@ -159,6 +191,9 @@ mod tests {
         keys.record("call-2", "menu", "2");
         keys.forget("call-1");
         assert!(keys.all("call-1").is_empty());
-        assert_eq!(keys.all("call-2").get("menu").map(String::as_str), Some("2"));
+        assert_eq!(
+            keys.all("call-2").get("menu").map(String::as_str),
+            Some("2")
+        );
     }
 }

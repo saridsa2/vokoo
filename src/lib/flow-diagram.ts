@@ -42,7 +42,7 @@ export function flowToDiagram(flow: Flow): Diagram {
         // is kept rather than dropped: the node is real, someone drew it, and
         // silently removing it would lose work to a catalogue that moved on.
         type: node.implementation as NodeType,
-        name: node.name,
+        name: storedNodeName(node),
         // The author's note, or nothing. This was the node type's label, so
         // every node arrived carrying a description identical to the type
         // already shown beside its name — the same words three times in one
@@ -80,6 +80,11 @@ export function flowToDiagram(flow: Flow): Diagram {
         createdAt: now,
         updatedAt: flow.updated_at ?? now,
     };
+}
+
+function storedNodeName(node: FlowNode): string {
+    if (typeof node.name === "string" && node.name.trim()) return node.name;
+    return NODE_TYPES[node.implementation as NodeType]?.label ?? node.implementation;
 }
 
 function outcomeLabel(graph: FlowGraph, transition: FlowTransition): string {

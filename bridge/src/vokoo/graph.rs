@@ -51,7 +51,10 @@ impl FlowNode {
     }
 
     pub fn config_bool(&self, key: &str, default: bool) -> bool {
-        self.config.get(key).and_then(Value::as_bool).unwrap_or(default)
+        self.config
+            .get(key)
+            .and_then(Value::as_bool)
+            .unwrap_or(default)
     }
 
     pub fn config_i64(&self, key: &str) -> Option<i64> {
@@ -130,14 +133,21 @@ pub struct EntryPoint {
 
 impl EntryPoint {
     pub fn new(event: impl Into<String>) -> Self {
-        Self { event: event.into(), key: "default".into() }
+        Self {
+            event: event.into(),
+            key: "default".into(),
+        }
     }
 
     pub fn with_key(event: impl Into<String>, key: impl Into<String>) -> Self {
         let key = key.into();
         Self {
             event: event.into(),
-            key: if key.trim().is_empty() { "default".into() } else { key.trim().to_owned() },
+            key: if key.trim().is_empty() {
+                "default".into()
+            } else {
+                key.trim().to_owned()
+            },
         }
     }
 }
@@ -182,12 +192,22 @@ impl Flow {
         registry: HashMap<String, NodeType>,
         legacy_event: &str,
     ) -> Result<Self, EntryError> {
-        let Graph { version, start, nodes, transitions } = row.graph;
-        let nodes: HashMap<String, FlowNode> =
-            nodes.into_iter().map(|node| (node.id.clone(), node)).collect();
+        let Graph {
+            version,
+            start,
+            nodes,
+            transitions,
+        } = row.graph;
+        let nodes: HashMap<String, FlowNode> = nodes
+            .into_iter()
+            .map(|node| (node.id.clone(), node))
+            .collect();
         let mut entries = HashMap::new();
 
-        for node in nodes.values().filter(|node| node.implementation.starts_with("trigger.")) {
+        for node in nodes
+            .values()
+            .filter(|node| node.implementation.starts_with("trigger."))
+        {
             let event = event_for_trigger_implementation(&node.implementation);
             let key = node
                 .config_str("key")
@@ -195,7 +215,10 @@ impl Flow {
                 .filter(|key| !key.is_empty())
                 .unwrap_or("default")
                 .to_owned();
-            if entries.insert((event.clone(), key.clone()), node.id.clone()).is_some() {
+            if entries
+                .insert((event.clone(), key.clone()), node.id.clone())
+                .is_some()
+            {
                 return Err(EntryError::Duplicate { event, key });
             }
         }
@@ -210,8 +233,13 @@ impl Flow {
             let start = start
                 .as_deref()
                 .filter(|node_id| !node_id.is_empty() && nodes.contains_key(*node_id))
-                .ok_or_else(|| EntryError::InvalidGraph("legacy flow has no valid start node".into()))?;
-            entries.insert((legacy_event.to_owned(), "default".into()), start.to_owned());
+                .ok_or_else(|| {
+                    EntryError::InvalidGraph("legacy flow has no valid start node".into())
+                })?;
+            entries.insert(
+                (legacy_event.to_owned(), "default".into()),
+                start.to_owned(),
+            );
         }
 
         let requested = (legacy_event.to_owned(), "default".into());
@@ -277,9 +305,14 @@ fn event_for_trigger_implementation(implementation: &str) -> String {
         implementation,
         "trigger.due" | "trigger.recurring" | "trigger.reported" | "trigger.document"
     ) {
-        return format!("care_path.{}", implementation.trim_start_matches("trigger."));
+        return format!(
+            "care_path.{}",
+            implementation.trim_start_matches("trigger.")
+        );
     }
-    let encoded = implementation.strip_prefix("trigger.").unwrap_or(implementation);
+    let encoded = implementation
+        .strip_prefix("trigger.")
+        .unwrap_or(implementation);
     match encoded.split_once('_') {
         Some((family, event)) => format!("{family}.{event}"),
         None => encoded.to_owned(),
@@ -347,9 +380,16 @@ async fn get(
         .map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
-        return Err(format!("{} {}", response.status(), response.text().await.unwrap_or_default()));
+        return Err(format!(
+            "{} {}",
+            response.status(),
+            response.text().await.unwrap_or_default()
+        ));
     }
-    response.json::<Vec<Value>>().await.map_err(|e| e.to_string())
+    response
+        .json::<Vec<Value>>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The event a flow handles. A call is the durable object; flows are handlers
@@ -404,7 +444,9 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
     )
     .await?;
 
-    let Some(number) = numbers.first() else { return Ok(None) };
+    let Some(number) = numbers.first() else {
+        return Ok(None);
+    };
     let number_id = number.get("id").and_then(Value::as_str).unwrap_or_default();
 
     // The binding is asked first, and its absence is not an error: this runs
@@ -425,7 +467,11 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
     )
     .await
     {
-        Ok(rows) => rows.first().and_then(|r| r.get("flow_id")).and_then(Value::as_str).map(str::to_owned),
+        Ok(rows) => rows
+            .first()
+            .and_then(|r| r.get("flow_id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         Err(e) => {
             log::debug!("[flow] no number_flows binding readable ({e}) — falling back to phone_numbers.flow_id");
             None
@@ -437,7 +483,9 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
         // See resolve_for_event: the legacy pointer only ever meant the
         // answering flow.
         None if trigger == TRIGGER_ANSWERED => {
-            let Some(id) = number.get("flow_id").and_then(Value::as_str) else { return Ok(None) };
+            let Some(id) = number.get("flow_id").and_then(Value::as_str) else {
+                return Ok(None);
+            };
             id.to_owned()
         }
         None => {
@@ -476,7 +524,10 @@ async fn load(base: &str, key: &str, did: &str, trigger: &str) -> Result<Option<
         "catalogue_node_types",
         &[
             ("is_active", "eq.true".into()),
-            ("select", "id,node_type,label,provider_action,suspends,default_timeout_seconds".into()),
+            (
+                "select",
+                "id,node_type,label,provider_action,suspends,default_timeout_seconds".into(),
+            ),
         ],
     )
     .await?;
@@ -521,7 +572,10 @@ pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
     .await
     .ok()?;
     let row: FlowRow = serde_json::from_value(rows.into_iter().next()?).ok()?;
-    let legacy_event = row.trigger_event.clone().unwrap_or_else(|| TRIGGER_ANSWERED.into());
+    let legacy_event = row
+        .trigger_event
+        .clone()
+        .unwrap_or_else(|| TRIGGER_ANSWERED.into());
 
     let registry_rows = get(
         &client,
@@ -530,7 +584,10 @@ pub async fn load_flow(base: &str, key: &str, flow_id: &str) -> Option<Flow> {
         "catalogue_node_types",
         &[
             ("is_active", "eq.true".into()),
-            ("select", "id,node_type,label,provider_action,suspends,default_timeout_seconds".into()),
+            (
+                "select",
+                "id,node_type,label,provider_action,suspends,default_timeout_seconds".into(),
+            ),
         ],
     )
     .await
@@ -576,9 +633,7 @@ pub async fn load_flow_version(
         ],
     )
     .await
-    .map_err(|error| {
-        log::warn!("[flow] could not load pinned flow {flow_id} v{version}: {error}")
-    })
+    .map_err(|error| log::warn!("[flow] could not load pinned flow {flow_id} v{version}: {error}"))
     .ok()?;
 
     let registry_rows = get(
@@ -588,7 +643,10 @@ pub async fn load_flow_version(
         "catalogue_node_types",
         &[
             ("is_active", "eq.true".into()),
-            ("select", "id,node_type,label,provider_action,suspends,default_timeout_seconds".into()),
+            (
+                "select",
+                "id,node_type,label,provider_action,suspends,default_timeout_seconds".into(),
+            ),
         ],
     )
     .await
@@ -662,7 +720,9 @@ impl Engine {
     /// dropping a call over.
     pub fn get_f64(&self, stage: &str, field: &str) -> Option<f64> {
         let value = self.config.get(stage)?.get(field)?;
-        value.as_f64().or_else(|| value.as_str()?.trim().parse().ok())
+        value
+            .as_f64()
+            .or_else(|| value.as_str()?.trim().parse().ok())
     }
 }
 
@@ -719,10 +779,17 @@ pub async fn engine_by_id(base: &str, key: &str, engine_id: &str) -> Option<(Eng
         .to_owned();
     Some((
         Engine {
-            id: row.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            id: row
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
             name: row.get("name")?.as_str()?.to_owned(),
             mode: row.get("mode")?.as_str()?.to_owned(),
-            config: row.get("config").cloned().unwrap_or_else(|| serde_json::json!({})),
+            config: row
+                .get("config")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
         },
         org,
     ))
@@ -768,10 +835,21 @@ pub async fn engine_for_agent(base: &str, key: &str, agent_id: &str) -> Option<E
     }
 
     Some(Engine {
-        id: engine.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
-        name: engine.get("name").and_then(Value::as_str).unwrap_or("engine").to_string(),
+        id: engine
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        name: engine
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("engine")
+            .to_string(),
         mode: engine.get("mode").and_then(Value::as_str)?.to_string(),
-        config: engine.get("config").cloned().unwrap_or_else(|| serde_json::json!({})),
+        config: engine
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
     })
 }
 
@@ -836,7 +914,10 @@ pub async fn model_for_agent(base: &str, key: &str, agent_id: &str) -> Option<St
     .map_err(|e| log::warn!("[model] could not read agent {agent_id} ({e})"))
     .ok()?;
 
-    let model_id = agents.first().and_then(|a| a.get("model")).and_then(Value::as_str)?;
+    let model_id = agents
+        .first()
+        .and_then(|a| a.get("model"))
+        .and_then(Value::as_str)?;
 
     let models = get(
         &client,
@@ -963,7 +1044,11 @@ pub async fn agent_greeting(base: &str, key: &str, agent_id: &str) -> Option<Opt
         return Some(None);
     }
 
-    let text = row.get("first_message").and_then(Value::as_str).unwrap_or("").trim();
+    let text = row
+        .get("first_message")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
     // An agent set to speak first with nothing to say still has to speak, or
     // KooKoo never starts streaming caller audio. Falling back to the
     // environment keeps that true.
@@ -990,7 +1075,12 @@ pub async fn agent_prompt(base: &str, key: &str, agent_id: &str) -> Option<Strin
         .await
         .ok()?;
 
-    response.json::<Option<String>>().await.ok().flatten().filter(|s| !s.trim().is_empty())
+    response
+        .json::<Option<String>>()
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
 }
 
 pub async fn vendor_account(
@@ -1019,7 +1109,9 @@ pub async fn vendor_account(
         .ok()?;
 
     let rows: Vec<serde_json::Value> = response.json().await.ok()?;
-    rows.into_iter().next().and_then(|r| r.get("metadata").cloned())
+    rows.into_iter()
+        .next()
+        .and_then(|r| r.get("metadata").cloned())
 }
 
 pub async fn vendor_secret(base: &str, key: &str, org_id: &str, vendor: &str) -> Option<String> {
@@ -1044,7 +1136,12 @@ pub async fn vendor_secret(base: &str, key: &str, org_id: &str, vendor: &str) ->
         .await
         .ok()?;
 
-    response.json::<Option<String>>().await.ok().flatten().filter(|s| !s.is_empty())
+    response
+        .json::<Option<String>>()
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -1092,7 +1189,10 @@ mod tests {
         let flow = flow_from_version_row(snapshot, HashMap::new(), TRIGGER_ANSWERED).unwrap();
 
         assert_eq!(flow.id, "flow-1");
-        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+        assert_eq!(
+            flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(),
+            "ended"
+        );
     }
 
     #[test]
@@ -1111,8 +1211,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "answered");
-        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(), "ended");
+        assert_eq!(
+            flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(),
+            "answered"
+        );
+        assert_eq!(
+            flow.entry_node(&EntryPoint::new(TRIGGER_ENDED)).unwrap(),
+            "ended"
+        );
     }
 
     #[test]
@@ -1199,7 +1305,11 @@ mod tests {
     #[test]
     fn missing_entry_does_not_fall_through_to_node_order() {
         let flow = Flow::from_value(
-            row(json!([trigger("answered", "trigger.call_answered", None)]), None, 3),
+            row(
+                json!([trigger("answered", "trigger.call_answered", None)]),
+                None,
+                3,
+            ),
             HashMap::new(),
             TRIGGER_ANSWERED,
         )
@@ -1230,6 +1340,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(), "agent");
+        assert_eq!(
+            flow.entry_node(&EntryPoint::new(TRIGGER_ANSWERED)).unwrap(),
+            "agent"
+        );
     }
 }

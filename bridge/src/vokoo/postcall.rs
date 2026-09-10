@@ -31,7 +31,10 @@ fn lifecycle_selection(call: &Value) -> LifecycleSelection {
     match (flow_id, version) {
         (Some(flow_id), Some(version)) if !flow_id.is_empty() => i32::try_from(version)
             .ok()
-            .map(|version| LifecycleSelection::Pinned { flow_id: flow_id.to_owned(), version })
+            .map(|version| LifecycleSelection::Pinned {
+                flow_id: flow_id.to_owned(),
+                version,
+            })
             .unwrap_or(LifecycleSelection::Invalid),
         (None, None) => LifecycleSelection::Legacy,
         _ => LifecycleSelection::Invalid,
@@ -77,10 +80,26 @@ pub async fn dry_run(
         Some("user_disconnected") => "caller_hung_up",
         _ => "we_ended",
     };
-    let recording = call.get("recording_url").and_then(Value::as_str).map(str::to_owned);
+    let recording = call
+        .get("recording_url")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
 
     let mut steps = Vec::new();
-    walk(base, key, &flow, None, None, &call, ucid, ended_by, recording.as_deref(), true, &mut steps).await?;
+    walk(
+        base,
+        key,
+        &flow,
+        None,
+        None,
+        &call,
+        ucid,
+        ended_by,
+        recording.as_deref(),
+        true,
+        &mut steps,
+    )
+    .await?;
     Ok(steps)
 }
 
@@ -106,7 +125,16 @@ pub fn run_detached(
             recording_url.as_deref(),
         )
         .await;
-        if let Err(problem) = run(&base, &key, &did, &ucid, &ended_by, recording_url.as_deref()).await {
+        if let Err(problem) = run(
+            &base,
+            &key,
+            &did,
+            &ucid,
+            &ended_by,
+            recording_url.as_deref(),
+        )
+        .await
+        {
             // Named, not swallowed. A post-call flow failing is invisible by
             // definition — there is no caller to notice — so the log is the
             // only place it can surface.
@@ -154,8 +182,20 @@ async fn run(
     }
 
     let mut steps = Vec::new();
-    walk(base, key, &flow, source_flow_id.as_deref(), source_flow_version,
-        &call, ucid, ended_by, recording_url, false, &mut steps).await
+    walk(
+        base,
+        key,
+        &flow,
+        source_flow_id.as_deref(),
+        source_flow_version,
+        &call,
+        ucid,
+        ended_by,
+        recording_url,
+        false,
+        &mut steps,
+    )
+    .await
 }
 
 /// The walk both runs take.
@@ -178,7 +218,11 @@ async fn walk(
     dry: bool,
     steps: &mut Vec<Step>,
 ) -> Result<(), String> {
-    let call_id = call.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let call_id = call
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
 
     // The call itself: `$call` for the whole flow, and what the trigger emits.
     // Assembled once, because every node needs it and none should be reaching
@@ -201,7 +245,11 @@ async fn walk(
     // paths there — see `expression.rs`.
     let mut scope = Scope::for_integration(facts);
 
-    log::info!("[post-call] ucid={ucid} {}'{}'", if dry { "dry run of " } else { "running " }, flow.name);
+    log::info!(
+        "[post-call] ucid={ucid} {}'{}'",
+        if dry { "dry run of " } else { "running " },
+        flow.name
+    );
 
     let mut current = Some(
         flow.entry_node(&EntryPoint::new(TRIGGER_ENDED))
@@ -219,15 +267,24 @@ async fn walk(
     while let Some(node_id) = current {
         count += 1;
         if count > 32 {
-            return Err(format!("'{}' did not finish in 32 steps — it probably loops", flow.name));
+            return Err(format!(
+                "'{}' did not finish in 32 steps — it probably loops",
+                flow.name
+            ));
         }
 
         let Some(node) = flow.node(&node_id) else {
-            return Err(format!("transition led to a node that is not here: {node_id}"));
+            return Err(format!(
+                "transition led to a node that is not here: {node_id}"
+            ));
         };
 
         // What a node is called on the canvas, which is what `$('...')` names.
-        let node_name = if node.name.is_empty() { node.id.clone() } else { node.name.clone() };
+        let node_name = if node.name.is_empty() {
+            node.id.clone()
+        } else {
+            node.name.clone()
+        };
         let began = std::time::Instant::now();
         // What `$json` held when this node started — its input, in the sense
         // the console's node view means.
@@ -243,8 +300,16 @@ async fn walk(
             }
 
             "intelligence" => {
-                let (outcome, extracted) =
-                    super::intelligence::run(base, key, &flow.org_id, node, &scope.call, &call_id, dry).await;
+                let (outcome, extracted) = super::intelligence::run(
+                    base,
+                    key,
+                    &flow.org_id,
+                    node,
+                    &scope.call,
+                    &call_id,
+                    dry,
+                )
+                .await;
                 if let Some(shape) = extracted.clone() {
                     scope.record(&node_name, shape);
                 }
@@ -260,35 +325,46 @@ async fn walk(
                 (outcome, built)
             }
 
-            "http.request" => super::webhook::send(base, key, &flow.org_id, node, &scope, dry).await,
+            "http.request" => {
+                super::webhook::send(base, key, &flow.org_id, node, &scope, dry).await
+            }
 
             "integration.invoke" => match super::integration::prepare(node, &scope).await {
                 Err(problem) => ("invalid_payload".to_string(), json!({ "problem": problem })),
                 Ok(prepared) => {
                     let result = if dry {
-                        super::integration::validate(base, key, &flow.org_id, &prepared).await.map(|version| json!({
-                            "target_flow_id": prepared.target_flow_id,
-                            "target_flow_version": version,
-                            "input": prepared.input,
-                            "dry_run": true
-                        }))
+                        super::integration::validate(base, key, &flow.org_id, &prepared)
+                            .await
+                            .map(|version| {
+                                json!({
+                                    "target_flow_id": prepared.target_flow_id,
+                                    "target_flow_version": version,
+                                    "input": prepared.input,
+                                    "dry_run": true
+                                })
+                            })
                     } else {
                         let source = super::integration::InvocationSource {
                             flow_id: source_flow_id.map(str::to_owned),
                             flow_version: source_flow_version,
-                            execution_id: format!("call:{}", if call_id.is_empty() { ucid } else { &call_id }),
+                            execution_id: format!(
+                                "call:{}",
+                                if call_id.is_empty() { ucid } else { &call_id }
+                            ),
                             call_id: (!call_id.is_empty()).then(|| call_id.clone()),
                             node_id: node.id.clone(),
                         };
-                        super::integration::enqueue(base, key, &flow.org_id, &source, &prepared).await
+                        super::integration::enqueue(base, key, &flow.org_id, &source, &prepared)
+                            .await
                     };
                     match result {
                         Ok(run) => {
                             scope.record(&node_name, run.clone());
                             ("queued".to_string(), run)
                         }
-                        Err(problem) if problem.contains("payload is invalid") =>
-                            ("invalid_payload".to_string(), json!({ "problem": problem })),
+                        Err(problem) if problem.contains("payload is invalid") => {
+                            ("invalid_payload".to_string(), json!({ "problem": problem }))
+                        }
                         Err(problem) => ("failed".to_string(), json!({ "problem": problem })),
                     }
                 }
@@ -335,9 +411,13 @@ async fn walk(
                     // Through the same resolver every expression uses: wrapping
                     // the source in `{{ }}` is what makes it one expression, so
                     // there is no second evaluator to disagree with the first.
-                    let returned = super::expression::resolve(&format!("={{{{ {source} }}}}"), &scope).await;
+                    let returned =
+                        super::expression::resolve(&format!("={{{{ {source} }}}}"), &scope).await;
                     match returned {
-                        Value::Null => ("failed".to_string(), json!({ "problem": "returned nothing, or threw — see the log" })),
+                        Value::Null => (
+                            "failed".to_string(),
+                            json!({ "problem": "returned nothing, or threw — see the log" }),
+                        ),
                         value => {
                             scope.record(&node_name, value.clone());
                             ("ok".to_string(), value)
@@ -349,8 +429,14 @@ async fn walk(
             // Everything else on a post-call board is a node somebody drew that
             // this cannot run. Said by name rather than treated as a dead end.
             other => {
-                log::warn!("[post-call] '{}' is not something a post-call flow can run", other);
-                ("failed".to_string(), json!({ "problem": format!("'{other}' is not implemented") }))
+                log::warn!(
+                    "[post-call] '{}' is not something a post-call flow can run",
+                    other
+                );
+                (
+                    "failed".to_string(),
+                    json!({ "problem": format!("'{other}' is not implemented") }),
+                )
             }
         };
 
@@ -395,7 +481,9 @@ async fn load_call(base: &str, key: &str, ucid: &str) -> Result<Value, String> {
         .map_err(|e| format!("could not read the call: {e}"))?;
 
     let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
-    rows.into_iter().next().ok_or_else(|| format!("no call row for {ucid}"))
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| format!("no call row for {ucid}"))
 }
 
 #[cfg(test)]
@@ -406,7 +494,10 @@ mod tests {
     fn a_complete_pin_selects_the_exact_snapshot() {
         assert_eq!(
             lifecycle_selection(&json!({ "flow_id": "flow-1", "flow_version": 4 })),
-            LifecycleSelection::Pinned { flow_id: "flow-1".into(), version: 4 }
+            LifecycleSelection::Pinned {
+                flow_id: "flow-1".into(),
+                version: 4
+            }
         );
     }
 

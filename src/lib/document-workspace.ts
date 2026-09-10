@@ -1,5 +1,14 @@
 export const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 
+const MIN_DOCUMENT_INSPECTOR_WIDTH = 320;
+const MAX_DOCUMENT_INSPECTOR_WIDTH = 640;
+const MIN_DOCUMENT_VIEWER_WIDTH = 530;
+
+export function clampDocumentInspectorWidth(width: number, workspaceWidth: number): number {
+    const availableMaximum = Math.max(MIN_DOCUMENT_INSPECTOR_WIDTH, Math.min(MAX_DOCUMENT_INSPECTOR_WIDTH, workspaceWidth - MIN_DOCUMENT_VIEWER_WIDTH));
+    return Math.round(Math.min(availableMaximum, Math.max(MIN_DOCUMENT_INSPECTOR_WIDTH, width)));
+}
+
 const ACCEPTED_DOCUMENT_TYPES = new Set([
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -184,9 +193,7 @@ export type CompilerRunReport = {
     evidence: CompilerArtifactEvidence[];
 };
 
-const ACTIVE_COMPILER_STATUSES = new Set<CompilerRunStatus>([
-    "queued", "planning", "compiling", "validating", "materializing",
-]);
+const ACTIVE_COMPILER_STATUSES = new Set<CompilerRunStatus>(["queued", "planning", "compiling", "validating", "materializing"]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TARGET_PATH_PATTERN = /^(?:agent|flow)(?:\.[A-Za-z0-9_-]+)+$/;
@@ -197,9 +204,7 @@ const REVIEW_STATUSES = new Set<CompilerGap["review_status"]>(["open", "accepted
 const EVIDENCE_ROLES = new Set<CompilerEvidenceRole>(["requirement", "threshold", "timing", "exception", "population", "escalation"]);
 
 function record(value: unknown): Record<string, unknown> | null {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -223,17 +228,19 @@ export function canCancelCompilerRun(run: Pick<CompilerRun, "status"> | null): b
 }
 
 export function compilerStatusLabel(status: CompilerRunStatus): string {
-    return ({
-        queued: "Queued",
-        planning: "Planning the care journey",
-        compiling: "Compiling cited recommendations",
-        validating: "Checking workflow safety",
-        materializing: "Creating workspace drafts",
-        completed: "Drafts ready",
-        completed_with_gaps: "Drafts ready with gaps",
-        failed: "Compilation failed",
-        cancelled: "Compilation cancelled",
-    } satisfies Record<CompilerRunStatus, string>)[status];
+    return (
+        {
+            queued: "Queued",
+            planning: "Planning the care journey",
+            compiling: "Compiling cited recommendations",
+            validating: "Checking workflow safety",
+            materializing: "Creating workspace drafts",
+            completed: "Drafts ready",
+            completed_with_gaps: "Drafts ready with gaps",
+            failed: "Compilation failed",
+            cancelled: "Compilation cancelled",
+        } satisfies Record<CompilerRunStatus, string>
+    )[status];
 }
 
 export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | null {
@@ -250,9 +257,9 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
     if (!Number.isInteger(rawRun.attempt_count) || !Number.isInteger(rawRun.max_attempts)) return null;
 
     const rawCoverage = record(rawRun.coverage) ?? {};
-    const coverage = Object.fromEntries(Object.entries(rawCoverage).filter((entry): entry is [string, number] =>
-        typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0,
-    ));
+    const coverage = Object.fromEntries(
+        Object.entries(rawCoverage).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0),
+    );
     const run: CompilerRun = {
         id: runId,
         file_id: fileId,
@@ -274,64 +281,135 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
         updated_at: rawRun.updated_at as string,
     };
 
-    const steps = (Array.isArray(root?.steps) ? root.steps : []).flatMap((value): CompilerStep[] => {
-        const item = record(value);
-        const id = uuidOrNull(item?.id);
-        if (!item || !id || !Number.isInteger(item.sequence) || (item.sequence as number) < 1 ||
-            typeof item.kind !== "string" || !STEP_KINDS.has(item.kind as CompilerStepKind) ||
-            typeof item.status !== "string" || !STEP_STATUSES.has(item.status as CompilerStepStatus) ||
-            typeof item.created_at !== "string") return [];
-        const inputRefs = record(item.input_refs) ?? {};
-        const result = record(item.result) ?? {};
-        const pageStart = Number.isInteger(item.page_start) && (item.page_start as number) > 0 ? item.page_start as number : null;
-        const pageEnd = Number.isInteger(item.page_end) && (item.page_end as number) >= (pageStart ?? 1) ? item.page_end as number : pageStart;
-        return [{
-            id, sequence: item.sequence as number, kind: item.kind as CompilerStepKind,
-            status: item.status as CompilerStepStatus, task_key: stringOrNull(item.task_key),
-            page_start: pageStart, page_end: pageEnd, input_refs: inputRefs, result,
-            input_tokens: nonnegativeNumberOrNull(item.input_tokens), output_tokens: nonnegativeNumberOrNull(item.output_tokens),
-            duration_ms: nonnegativeNumberOrNull(item.duration_ms),
-            retry_count: Number.isInteger(item.retry_count) && (item.retry_count as number) >= 0 ? item.retry_count as number : 0,
-            error_code: stringOrNull(item.error_code), created_at: item.created_at,
-        }];
-    }).sort((left, right) => left.sequence - right.sequence);
+    const steps = (Array.isArray(root?.steps) ? root.steps : [])
+        .flatMap((value): CompilerStep[] => {
+            const item = record(value);
+            const id = uuidOrNull(item?.id);
+            if (
+                !item ||
+                !id ||
+                !Number.isInteger(item.sequence) ||
+                (item.sequence as number) < 1 ||
+                typeof item.kind !== "string" ||
+                !STEP_KINDS.has(item.kind as CompilerStepKind) ||
+                typeof item.status !== "string" ||
+                !STEP_STATUSES.has(item.status as CompilerStepStatus) ||
+                typeof item.created_at !== "string"
+            )
+                return [];
+            const inputRefs = record(item.input_refs) ?? {};
+            const result = record(item.result) ?? {};
+            const pageStart = Number.isInteger(item.page_start) && (item.page_start as number) > 0 ? (item.page_start as number) : null;
+            const pageEnd = Number.isInteger(item.page_end) && (item.page_end as number) >= (pageStart ?? 1) ? (item.page_end as number) : pageStart;
+            return [
+                {
+                    id,
+                    sequence: item.sequence as number,
+                    kind: item.kind as CompilerStepKind,
+                    status: item.status as CompilerStepStatus,
+                    task_key: stringOrNull(item.task_key),
+                    page_start: pageStart,
+                    page_end: pageEnd,
+                    input_refs: inputRefs,
+                    result,
+                    input_tokens: nonnegativeNumberOrNull(item.input_tokens),
+                    output_tokens: nonnegativeNumberOrNull(item.output_tokens),
+                    duration_ms: nonnegativeNumberOrNull(item.duration_ms),
+                    retry_count: Number.isInteger(item.retry_count) && (item.retry_count as number) >= 0 ? (item.retry_count as number) : 0,
+                    error_code: stringOrNull(item.error_code),
+                    created_at: item.created_at,
+                },
+            ];
+        })
+        .sort((left, right) => left.sequence - right.sequence);
 
     const gaps = (Array.isArray(root?.gaps) ? root.gaps : []).flatMap((value): CompilerGap[] => {
         const item = record(value);
         const id = uuidOrNull(item?.id);
-        if (!item || !id || typeof item.code !== "string" || !item.code || typeof item.severity !== "string" ||
-            !GAP_SEVERITIES.has(item.severity as CompilerGapSeverity) || typeof item.explanation !== "string" || !item.explanation ||
-            typeof item.review_status !== "string" || !REVIEW_STATUSES.has(item.review_status as CompilerGap["review_status"]) ||
-            typeof item.created_at !== "string" || typeof item.updated_at !== "string") return [];
+        if (
+            !item ||
+            !id ||
+            typeof item.code !== "string" ||
+            !item.code ||
+            typeof item.severity !== "string" ||
+            !GAP_SEVERITIES.has(item.severity as CompilerGapSeverity) ||
+            typeof item.explanation !== "string" ||
+            !item.explanation ||
+            typeof item.review_status !== "string" ||
+            !REVIEW_STATUSES.has(item.review_status as CompilerGap["review_status"]) ||
+            typeof item.created_at !== "string" ||
+            typeof item.updated_at !== "string"
+        )
+            return [];
         const stepId = item.step_id === null ? null : uuidOrNull(item.step_id);
         if (item.step_id !== null && !stepId) return [];
         const evidence = (Array.isArray(item.evidence) ? item.evidence : []).flatMap((candidate): CompilerGapEvidence[] => {
             const cited = record(candidate);
             const chunkId = uuidOrNull(cited?.chunk_id);
-            if (!cited || !chunkId || typeof cited.excerpt !== "string" || !cited.excerpt.trim() ||
-                typeof cited.role !== "string" || !EVIDENCE_ROLES.has(cited.role as CompilerEvidenceRole)) return [];
-            return [{ chunk_id: chunkId, excerpt: cited.excerpt.trim(), role: cited.role as CompilerEvidenceRole, recommendation_id: stringOrNull(cited.recommendation_id) }];
+            if (
+                !cited ||
+                !chunkId ||
+                typeof cited.excerpt !== "string" ||
+                !cited.excerpt.trim() ||
+                typeof cited.role !== "string" ||
+                !EVIDENCE_ROLES.has(cited.role as CompilerEvidenceRole)
+            )
+                return [];
+            return [
+                {
+                    chunk_id: chunkId,
+                    excerpt: cited.excerpt.trim(),
+                    role: cited.role as CompilerEvidenceRole,
+                    recommendation_id: stringOrNull(cited.recommendation_id),
+                },
+            ];
         });
-        return [{
-            id, step_id: stepId, code: item.code, severity: item.severity as CompilerGapSeverity,
-            recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
-            explanation: item.explanation, missing_capability: stringOrNull(item.missing_capability), evidence,
-            review_status: item.review_status as CompilerGap["review_status"], resolution_note: stringOrNull(item.resolution_note),
-            created_at: item.created_at, updated_at: item.updated_at,
-        }];
+        return [
+            {
+                id,
+                step_id: stepId,
+                code: item.code,
+                severity: item.severity as CompilerGapSeverity,
+                recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
+                explanation: item.explanation,
+                missing_capability: stringOrNull(item.missing_capability),
+                evidence,
+                review_status: item.review_status as CompilerGap["review_status"],
+                resolution_note: stringOrNull(item.resolution_note),
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+            },
+        ];
     });
 
     const artifacts = (Array.isArray(root?.artifacts) ? root.artifacts : []).flatMap((value): CompilerArtifact[] => {
         const item = record(value);
         const id = uuidOrNull(item?.id);
-        if (!item || !id || (item.artifact_type !== "agent" && item.artifact_type !== "flow") ||
-            typeof item.stable_key !== "string" || !item.stable_key || typeof item.role !== "string" ||
-            typeof item.created_at !== "string") return [];
+        if (
+            !item ||
+            !id ||
+            (item.artifact_type !== "agent" && item.artifact_type !== "flow") ||
+            typeof item.stable_key !== "string" ||
+            !item.stable_key ||
+            typeof item.role !== "string" ||
+            typeof item.created_at !== "string"
+        )
+            return [];
         const agentId = item.agent_id === null ? null : uuidOrNull(item.agent_id);
         const flowId = item.flow_id === null ? null : uuidOrNull(item.flow_id);
         if ((item.agent_id !== null && !agentId) || (item.flow_id !== null && !flowId)) return [];
-        if (item.artifact_type === "agent" && flowId || item.artifact_type === "flow" && agentId) return [];
-        return [{ id, artifact_type: item.artifact_type, stable_key: item.stable_key, role: item.role, agent_id: agentId, flow_id: flowId, created_at: item.created_at }];
+        if ((item.artifact_type === "agent" && flowId) || (item.artifact_type === "flow" && agentId)) return [];
+        return [
+            {
+                id,
+                artifact_type: item.artifact_type,
+                stable_key: item.stable_key,
+                role: item.role,
+                agent_id: agentId,
+                flow_id: flowId,
+                created_at: item.created_at,
+            },
+        ];
     });
 
     const artifactIds = new Set(artifacts.map((artifact) => artifact.id));
@@ -340,15 +418,33 @@ export function normalizeCompilerRunReport(input: unknown): CompilerRunReport | 
         const id = uuidOrNull(item?.id);
         const artifactId = uuidOrNull(item?.artifact_id);
         const chunkId = uuidOrNull(item?.chunk_id);
-        if (!item || !id || !artifactId || !artifactIds.has(artifactId) || !chunkId || typeof item.target_path !== "string" ||
-            !TARGET_PATH_PATTERN.test(item.target_path) || typeof item.excerpt !== "string" || !item.excerpt.trim() ||
-            typeof item.evidence_role !== "string" || !EVIDENCE_ROLES.has(item.evidence_role as CompilerEvidenceRole) ||
-            typeof item.created_at !== "string") return [];
-        return [{
-            id, artifact_id: artifactId, target_path: item.target_path, chunk_id: chunkId,
-            excerpt: item.excerpt.trim(), recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
-            evidence_role: item.evidence_role as CompilerEvidenceRole, created_at: item.created_at,
-        }];
+        if (
+            !item ||
+            !id ||
+            !artifactId ||
+            !artifactIds.has(artifactId) ||
+            !chunkId ||
+            typeof item.target_path !== "string" ||
+            !TARGET_PATH_PATTERN.test(item.target_path) ||
+            typeof item.excerpt !== "string" ||
+            !item.excerpt.trim() ||
+            typeof item.evidence_role !== "string" ||
+            !EVIDENCE_ROLES.has(item.evidence_role as CompilerEvidenceRole) ||
+            typeof item.created_at !== "string"
+        )
+            return [];
+        return [
+            {
+                id,
+                artifact_id: artifactId,
+                target_path: item.target_path,
+                chunk_id: chunkId,
+                excerpt: item.excerpt.trim(),
+                recommendation_id: typeof item.recommendation_id === "string" ? item.recommendation_id : "",
+                evidence_role: item.evidence_role as CompilerEvidenceRole,
+                created_at: item.created_at,
+            },
+        ];
     });
 
     return { run, steps, gaps, artifacts, evidence };
@@ -405,11 +501,7 @@ export type ViewportRectangle = { x: number; y: number; width: number; height: n
 
 export type SelectedLayoutSpan = DocumentLayoutSpan & { item_id: string };
 
-export function pdfPointBoxToViewport(
-    box: DocumentLayoutBox,
-    page: DocumentLayoutPage,
-    scale: number,
-): ViewportRectangle {
+export function pdfPointBoxToViewport(box: DocumentLayoutBox, page: DocumentLayoutPage, scale: number): ViewportRectangle {
     if (box.origin !== "BOTTOMLEFT") throw new Error(`Unsupported PDF coordinate origin: ${box.origin}`);
     return {
         x: box.left * scale,
@@ -424,16 +516,9 @@ export function selectEvidenceLayout(
     chunkId: string | null | undefined,
     fallbackPage: number | null = null,
 ): { page: number | null; spans: SelectedLayoutSpan[] } {
-    const linked = chunkId
-        ? items.filter((item) => item.chunk_ids.includes(chunkId)).sort((left, right) => left.ordinal - right.ordinal)
-        : [];
-    const spans = linked.flatMap((item) =>
-        item.spans.map((span) => ({ ...span, item_id: item.id })),
-    );
-    const firstPage = spans.reduce<number | null>(
-        (page, span) => (page === null ? span.page_number : Math.min(page, span.page_number)),
-        null,
-    );
+    const linked = chunkId ? items.filter((item) => item.chunk_ids.includes(chunkId)).sort((left, right) => left.ordinal - right.ordinal) : [];
+    const spans = linked.flatMap((item) => item.spans.map((span) => ({ ...span, item_id: item.id })));
+    const firstPage = spans.reduce<number | null>((page, span) => (page === null ? span.page_number : Math.min(page, span.page_number)), null);
     return { page: firstPage ?? fallbackPage, spans };
 }
 
@@ -471,11 +556,7 @@ export function selectDocument(documents: WorkspaceDocument[], selectedId: strin
     return documents[0]?.id ?? null;
 }
 
-export function selectDocumentVersion(
-    versions: DocumentVersion[],
-    selectedId: string | null,
-    currentVersion: number,
-): string | null {
+export function selectDocumentVersion(versions: DocumentVersion[], selectedId: string | null, currentVersion: number): string | null {
     if (selectedId && versions.some((version) => version.id === selectedId)) return selectedId;
     return versions.find((version) => version.version === currentVersion)?.id ?? versions[0]?.id ?? null;
 }
@@ -518,19 +599,36 @@ const COMPILERS = {
     care_path: "Care path compiler",
 } as const;
 
-export function normalizeCompilerRecommendations(
-    recommendations: RawCompilerRecommendation[],
-): CompilerRecommendation[] {
-    return recommendations.flatMap((recommendation) => {
-        if (!(recommendation.compiler_id in COMPILERS)) return [];
+export function normalizeCompilerRecommendations(recommendations: RawCompilerRecommendation[]): CompilerRecommendation[] {
+    const byCompiler = new Map<keyof typeof COMPILERS, CompilerRecommendation>();
+    for (const recommendation of recommendations) {
+        if (!(recommendation.compiler_id in COMPILERS)) continue;
         const compilerId = recommendation.compiler_id as keyof typeof COMPILERS;
-        return [{
+        const normalized = {
             ...recommendation,
             compiler_id: compilerId,
             label: COMPILERS[compilerId],
             confidence: Math.max(0, Math.min(1, recommendation.confidence)),
-        }];
-    });
+        };
+        const existing = byCompiler.get(compilerId);
+        if (!existing) {
+            byCompiler.set(compilerId, normalized);
+            continue;
+        }
+
+        const evidence = [...existing.evidence];
+        const evidenceKeys = new Set(evidence.map((item) => JSON.stringify(item)));
+        for (const item of normalized.evidence) {
+            const key = JSON.stringify(item);
+            if (!evidenceKeys.has(key)) {
+                evidenceKeys.add(key);
+                evidence.push(item);
+            }
+        }
+        const strongest = normalized.confidence > existing.confidence ? normalized : existing;
+        byCompiler.set(compilerId, { ...strongest, evidence });
+    }
+    return [...byCompiler.values()];
 }
 
 export function normalizeDocumentEvidence(input: unknown): DocumentIntelligence | null {
@@ -555,36 +653,35 @@ export function normalizeDocumentEvidence(input: unknown): DocumentIntelligence 
                         if (typeof value.text !== "string" || !value.text.trim()) return [];
                         const pageValue = value.page_start ?? value.page;
                         const page = typeof pageValue === "number" && pageValue > 0 ? pageValue : null;
-                        const pageEnd =
-                            typeof value.page_end === "number" && value.page_end >= (page ?? 1)
-                                ? value.page_end
-                                : page;
-                        return [{
-                            text: value.text.trim(),
-                            page,
-                            page_end: pageEnd,
-                            chunk_id: typeof value.chunk_id === "string" ? value.chunk_id : null,
-                            version_id: typeof value.version_id === "string" ? value.version_id : null,
-                            section_path: Array.isArray(value.section_path)
-                                ? value.section_path.filter((part): part is string => typeof part === "string")
-                                : [],
-                        }];
+                        const pageEnd = typeof value.page_end === "number" && value.page_end >= (page ?? 1) ? value.page_end : page;
+                        return [
+                            {
+                                text: value.text.trim(),
+                                page,
+                                page_end: pageEnd,
+                                chunk_id: typeof value.chunk_id === "string" ? value.chunk_id : null,
+                                version_id: typeof value.version_id === "string" ? value.version_id : null,
+                                section_path: Array.isArray(value.section_path)
+                                    ? value.section_path.filter((part): part is string => typeof part === "string")
+                                    : [],
+                            },
+                        ];
                     })
                   : [];
-              return [{
-                  compiler_id: recommendation.compiler_id,
-                  confidence: recommendation.confidence,
-                  reason: recommendation.reason,
-                  evidence,
-              }];
+              return [
+                  {
+                      compiler_id: recommendation.compiler_id,
+                      confidence: recommendation.confidence,
+                      reason: recommendation.reason,
+                      evidence,
+                  },
+              ];
           })
         : [];
     return {
         summary: raw.summary,
         recommendations: normalizeCompilerRecommendations(recommendations),
-        gaps: Array.isArray(raw.gaps)
-            ? raw.gaps.filter((gap): gap is string => typeof gap === "string")
-            : [],
+        gaps: Array.isArray(raw.gaps) ? raw.gaps.filter((gap): gap is string => typeof gap === "string") : [],
         analyzed_at: typeof raw.analyzed_at === "string" ? raw.analyzed_at : undefined,
     };
 }

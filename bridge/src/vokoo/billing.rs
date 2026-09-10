@@ -47,7 +47,11 @@ pub struct PostgrestBillingStorage {
 }
 
 impl PostgrestBillingStorage {
-    pub fn new(base: impl Into<String>, key: impl Into<String>, metadata: HashMap<String, String>) -> Self {
+    pub fn new(
+        base: impl Into<String>,
+        key: impl Into<String>,
+        metadata: HashMap<String, String>,
+    ) -> Self {
         Self {
             base: base.into(),
             key: key.into(),
@@ -80,12 +84,19 @@ impl PostgrestBillingStorage {
         } else {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            Err(PipecatError::pipeline(format!("billing write to {table} answered {status}: {body}")))
+            Err(PipecatError::pipeline(format!(
+                "billing write to {table} answered {status}: {body}"
+            )))
         }
     }
 
     /// The session row, as an absolute snapshot.
-    fn session_row(&self, summary: &SessionSummary, status: &str, transcripts: &[TranscriptEntry]) -> Value {
+    fn session_row(
+        &self,
+        summary: &SessionSummary,
+        status: &str,
+        transcripts: &[TranscriptEntry],
+    ) -> Value {
         let mut metadata = self.metadata.clone();
         // Anything the pipeline learned about the session wins over what the
         // caller guessed at the start.
@@ -125,24 +136,81 @@ impl PostgrestBillingStorage {
 /// kind of provider — which is every call. Found by sending the three real
 /// shapes at PostgREST before a call did.
 fn event_row(event_id: Uuid, event: &BillingEvent) -> Option<Value> {
-    let (session_id, event_type, provider, model, voice, input, output, estimated, chars, audio_ms, at) =
-        match event {
-            BillingEvent::LlmUsage { session_id, provider, model, input_tokens, output_tokens, estimated, occurred_at } => (
-                session_id, "llm", provider.clone(), Some(model.clone()), None,
-                Some(*input_tokens), Some(*output_tokens), Some(*estimated), None, None, occurred_at,
-            ),
-            BillingEvent::TtsUsage { session_id, provider, voice, char_count, occurred_at } => (
-                session_id, "tts", provider.clone(), None, Some(voice.clone()),
-                None, None, None, Some(*char_count), None, occurred_at,
-            ),
-            BillingEvent::SttUsage { session_id, provider, audio_duration_ms, occurred_at } => (
-                session_id, "stt", provider.clone(), None, None,
-                None, None, None, None, Some(*audio_duration_ms), occurred_at,
-            ),
-            BillingEvent::SessionStart { .. } | BillingEvent::SessionEnd { .. } | BillingEvent::Transcript(_) => {
-                return None
-            }
-        };
+    let (
+        session_id,
+        event_type,
+        provider,
+        model,
+        voice,
+        input,
+        output,
+        estimated,
+        chars,
+        audio_ms,
+        at,
+    ) = match event {
+        BillingEvent::LlmUsage {
+            session_id,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            estimated,
+            occurred_at,
+        } => (
+            session_id,
+            "llm",
+            provider.clone(),
+            Some(model.clone()),
+            None,
+            Some(*input_tokens),
+            Some(*output_tokens),
+            Some(*estimated),
+            None,
+            None,
+            occurred_at,
+        ),
+        BillingEvent::TtsUsage {
+            session_id,
+            provider,
+            voice,
+            char_count,
+            occurred_at,
+        } => (
+            session_id,
+            "tts",
+            provider.clone(),
+            None,
+            Some(voice.clone()),
+            None,
+            None,
+            None,
+            Some(*char_count),
+            None,
+            occurred_at,
+        ),
+        BillingEvent::SttUsage {
+            session_id,
+            provider,
+            audio_duration_ms,
+            occurred_at,
+        } => (
+            session_id,
+            "stt",
+            provider.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(*audio_duration_ms),
+            occurred_at,
+        ),
+        BillingEvent::SessionStart { .. }
+        | BillingEvent::SessionEnd { .. }
+        | BillingEvent::Transcript(_) => return None,
+    };
 
     Some(json!({
         "event_id":          event_id,
@@ -177,14 +245,22 @@ impl BillingStorage for PostgrestBillingStorage {
         )
         .await?;
 
-        let rows: Vec<Value> = new_events.iter().filter_map(|(id, e)| event_row(*id, e)).collect();
+        let rows: Vec<Value> = new_events
+            .iter()
+            .filter_map(|(id, e)| event_row(*id, e))
+            .collect();
         if !rows.is_empty() {
-            self.upsert("billing_events", "event_id", Value::Array(rows)).await?;
+            self.upsert("billing_events", "event_id", Value::Array(rows))
+                .await?;
         }
         Ok(())
     }
 
-    async fn finalize_session(&self, summary: &SessionSummary, transcripts: &[TranscriptEntry]) -> Result<()> {
+    async fn finalize_session(
+        &self,
+        summary: &SessionSummary,
+        transcripts: &[TranscriptEntry],
+    ) -> Result<()> {
         self.upsert(
             "billing_sessions",
             "session_id",
@@ -235,16 +311,26 @@ mod tests {
         let session = Uuid::new_v4();
         let rows: Vec<Value> = [
             BillingEvent::LlmUsage {
-                session_id: session, provider: "openai".into(), model: "gpt-4.1-mini".into(),
-                input_tokens: 10, output_tokens: 2, estimated: false, occurred_at: Utc::now(),
+                session_id: session,
+                provider: "openai".into(),
+                model: "gpt-4.1-mini".into(),
+                input_tokens: 10,
+                output_tokens: 2,
+                estimated: false,
+                occurred_at: Utc::now(),
             },
             BillingEvent::TtsUsage {
-                session_id: session, provider: "sarvam".into(), voice: "priya".into(),
-                char_count: 41, occurred_at: Utc::now(),
+                session_id: session,
+                provider: "sarvam".into(),
+                voice: "priya".into(),
+                char_count: 41,
+                occurred_at: Utc::now(),
             },
             BillingEvent::SttUsage {
-                session_id: session, provider: "sarvam".into(),
-                audio_duration_ms: 640.0, occurred_at: Utc::now(),
+                session_id: session,
+                provider: "sarvam".into(),
+                audio_duration_ms: 640.0,
+                occurred_at: Utc::now(),
             },
         ]
         .iter()
@@ -259,7 +345,11 @@ mod tests {
         };
         let first = keys(&rows[0]);
         for row in &rows[1..] {
-            assert_eq!(keys(row), first, "every event shape must write the same columns");
+            assert_eq!(
+                keys(row),
+                first,
+                "every event shape must write the same columns"
+            );
         }
     }
 

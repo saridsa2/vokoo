@@ -162,7 +162,10 @@ mod tests {
             let mut map = calls.inner.lock().unwrap();
             map.insert(
                 "stale".into(),
-                Announcement { call: call("stale"), at: Instant::now() - ANNOUNCEMENT_TTL * 2 },
+                Announcement {
+                    call: call("stale"),
+                    at: Instant::now() - ANNOUNCEMENT_TTL * 2,
+                },
             );
         }
         assert_eq!(calls.len(), 1);
@@ -179,9 +182,15 @@ mod tests {
             let mut map = calls.inner.lock().unwrap();
             map.insert(
                 "old".into(),
-                Announcement { call: call("old"), at: Instant::now() - ANNOUNCEMENT_TTL * 2 },
+                Announcement {
+                    call: call("old"),
+                    at: Instant::now() - ANNOUNCEMENT_TTL * 2,
+                },
             );
         }
-        assert!(calls.claim("old").is_none(), "too old to belong to this socket");
+        assert!(
+            calls.claim("old").is_none(),
+            "too old to belong to this socket"
+        );
     }
 }

@@ -36,7 +36,11 @@ pub enum Handover {
     /// decided here, at the moment of transfer, because by the time we find out
     /// the call went unanswered the flow is over and the agent is gone — there
     /// is nothing left that could compose a sentence.
-    Dial { number: String, record: bool, on_no_answer: String },
+    Dial {
+        number: String,
+        record: bool,
+        on_no_answer: String,
+    },
     /// Say this, then hang up.
     Speak { text: String },
 }
@@ -69,7 +73,9 @@ impl Handovers {
 /// KooKoo parses the response as XML, so a stray `&` or `<` in a message
 /// somebody typed into the composer would truncate it silently.
 pub fn escape(text: &str) -> String {
-    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 impl Handover {
@@ -108,7 +114,10 @@ mod tests {
 
     #[test]
     fn a_typed_message_cannot_break_the_xml() {
-        let xml = Handover::Speak { text: "Reception & <desk> unavailable".into() }.to_xml();
+        let xml = Handover::Speak {
+            text: "Reception & <desk> unavailable".into(),
+        }
+        .to_xml();
         assert!(xml.contains("Reception &amp; &lt;desk&gt; unavailable"));
     }
 

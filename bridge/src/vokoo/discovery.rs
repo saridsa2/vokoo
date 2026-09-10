@@ -103,7 +103,12 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
 
     match row {
         "llm:openai" => {
-            let body = get_json(&client, "https://api.openai.com/v1/models", &[("Authorization", &format!("Bearer {secret}"))]).await?;
+            let body = get_json(
+                &client,
+                "https://api.openai.com/v1/models",
+                &[("Authorization", &format!("Bearer {secret}"))],
+            )
+            .await?;
             // Chat models only. The list also carries embeddings, moderation and
             // image models, none of which can hold a conversation.
             let models = body["data"]
@@ -111,7 +116,11 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
                 .map(|rows| {
                     rows.iter()
                         .filter_map(|row| row["id"].as_str())
-                        .filter(|id| id.starts_with("gpt-") && !id.contains("realtime") && !id.contains("audio"))
+                        .filter(|id| {
+                            id.starts_with("gpt-")
+                                && !id.contains("realtime")
+                                && !id.contains("audio")
+                        })
                         .map(|id| json!({ "id": id, "label": id }))
                         .collect()
                 })
@@ -120,7 +129,12 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
         }
 
         "realtime:openai" => {
-            let body = get_json(&client, "https://api.openai.com/v1/models", &[("Authorization", &format!("Bearer {secret}"))]).await?;
+            let body = get_json(
+                &client,
+                "https://api.openai.com/v1/models",
+                &[("Authorization", &format!("Bearer {secret}"))],
+            )
+            .await?;
             // The complement of the `llm:openai` filter, which excludes these
             // on purpose. Asked for rather than typed: the docs name
             // `gpt-realtime-2.1` and others without publishing a full list, and
@@ -154,7 +168,12 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
         }
 
         "realtime:gemini" => {
-            let body = get_json(&client, "https://generativelanguage.googleapis.com/v1beta/models", &[("x-goog-api-key", secret)]).await?;
+            let body = get_json(
+                &client,
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                &[("x-goog-api-key", secret)],
+            )
+            .await?;
             // The rule CLAUDE.md already wrote down: filter on the method that
             // makes a model usable for a live call.
             let models = body["models"]
@@ -164,7 +183,11 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
                         .filter(|row| {
                             row["supportedGenerationMethods"]
                                 .as_array()
-                                .map(|methods| methods.iter().any(|m| m.as_str() == Some("bidiGenerateContent")))
+                                .map(|methods| {
+                                    methods
+                                        .iter()
+                                        .any(|m| m.as_str() == Some("bidiGenerateContent"))
+                                })
                                 .unwrap_or(false)
                         })
                         .filter_map(|row| row["name"].as_str())
@@ -172,7 +195,9 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
                         // `bidiGenerateContent` on its live *transcriber* too,
                         // and a transcriber cannot answer a caller.
                         .filter(|name| {
-                            ["transcribe", "translate"].iter().all(|word| !name.contains(word))
+                            ["transcribe", "translate"]
+                                .iter()
+                                .all(|word| !name.contains(word))
                         })
                         .map(|name| {
                             // `models/gemini-…` is the provider's id; the
@@ -190,7 +215,12 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
         }
 
         "stt:deepgram" | "tts:deepgram" => {
-            let body = get_json(&client, "https://api.deepgram.com/v1/models", &[("Authorization", &format!("Token {secret}"))]).await?;
+            let body = get_json(
+                &client,
+                "https://api.deepgram.com/v1/models",
+                &[("Authorization", &format!("Token {secret}"))],
+            )
+            .await?;
             let key = if row.starts_with("stt") { "stt" } else { "tts" };
             let entries = body[key]
                 .as_array()
@@ -204,11 +234,20 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
                 })
                 .unwrap_or_default();
             // Deepgram's voices *are* its TTS models — one name selects both.
-            if key == "tts" { Ok((Vec::new(), entries)) } else { Ok((entries, Vec::new())) }
+            if key == "tts" {
+                Ok((Vec::new(), entries))
+            } else {
+                Ok((entries, Vec::new()))
+            }
         }
 
         "tts:elevenlabs" => {
-            let models = get_json(&client, "https://api.elevenlabs.io/v1/models", &[("xi-api-key", secret)]).await?;
+            let models = get_json(
+                &client,
+                "https://api.elevenlabs.io/v1/models",
+                &[("xi-api-key", secret)],
+            )
+            .await?;
             let models = models
                 .as_array()
                 .map(|rows| {
@@ -222,7 +261,12 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
                 })
                 .unwrap_or_default();
 
-            let voices = get_json(&client, "https://api.elevenlabs.io/v1/voices", &[("xi-api-key", secret)]).await?;
+            let voices = get_json(
+                &client,
+                "https://api.elevenlabs.io/v1/voices",
+                &[("xi-api-key", secret)],
+            )
+            .await?;
             let voices = voices["voices"]
                 .as_array()
                 .map(|rows| {
@@ -244,17 +288,27 @@ async fn fetch(row: &str, secret: &str) -> Result<(Vec<Value>, Vec<Value>), Stri
     }
 }
 
-async fn get_json(client: &reqwest::Client, url: &str, headers: &[(&str, &str)]) -> Result<Value, String> {
+async fn get_json(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<Value, String> {
     let mut request = client.get(url);
     for (name, value) in headers {
         request = request.header(*name, *value);
     }
-    let response = request.send().await.map_err(|e| format!("could not reach {url}: {e}"))?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
     let status = response.status();
     if !status.is_success() {
         return Err(format!("{url} answered {status}"));
     }
-    response.json().await.map_err(|e| format!("{url} returned something that is not JSON: {e}"))
+    response
+        .json()
+        .await
+        .map_err(|e| format!("{url} returned something that is not JSON: {e}"))
 }
 
 /// Upsert realtime models into `catalogue_models`, which is the table the
@@ -264,7 +318,12 @@ async fn get_json(client: &reqwest::Client, url: &str, headers: &[(&str, &str)])
 /// stores. Discovery learns them as the same string, and they stay separable so
 /// a vendor renaming a model remains one `UPDATE` rather than a re-publish of
 /// every engine naming it.
-async fn write_models(base: &str, key: &str, provider: &str, models: &[Value]) -> Result<(), String> {
+async fn write_models(
+    base: &str,
+    key: &str,
+    provider: &str,
+    models: &[Value],
+) -> Result<(), String> {
     if models.is_empty() {
         return Err("the provider returned no realtime models — the stored list is kept".into());
     }
@@ -313,7 +372,10 @@ async fn write_models(base: &str, key: &str, provider: &str, models: &[Value]) -
     if response.status().is_success() {
         Ok(())
     } else {
-        Err(format!("could not store realtime models: {}", response.status()))
+        Err(format!(
+            "could not store realtime models: {}",
+            response.status()
+        ))
     }
 }
 
@@ -322,7 +384,13 @@ async fn write_models(base: &str, key: &str, provider: &str, models: &[Value]) -
 /// An empty result is far more likely to be a changed response shape than a
 /// provider that genuinely offers nothing, and writing it would empty the
 /// console's lists on the strength of a guess.
-async fn write_back(base: &str, key: &str, row: &str, models: &[Value], voices: &[Value]) -> Result<(), String> {
+async fn write_back(
+    base: &str,
+    key: &str,
+    row: &str,
+    models: &[Value],
+    voices: &[Value],
+) -> Result<(), String> {
     let mut patch = serde_json::Map::new();
     if !models.is_empty() {
         patch.insert("models".into(), Value::Array(models.to_vec()));
@@ -340,7 +408,9 @@ async fn write_back(base: &str, key: &str, row: &str, models: &[Value], voices: 
         .map_err(|e| e.to_string())?;
 
     let response = client
-        .patch(format!("{base}/rest/v1/catalogue_engine_stages?id=eq.{row}"))
+        .patch(format!(
+            "{base}/rest/v1/catalogue_engine_stages?id=eq.{row}"
+        ))
         .header("apikey", key)
         .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
@@ -365,7 +435,10 @@ fn dedupe(entries: Vec<Value>) -> Vec<Value> {
     entries
         .into_iter()
         .filter(|entry| {
-            entry["id"].as_str().map(|id| seen.insert(id.to_owned())).unwrap_or(false)
+            entry["id"]
+                .as_str()
+                .map(|id| seen.insert(id.to_owned()))
+                .unwrap_or(false)
         })
         .collect()
 }
@@ -404,8 +477,12 @@ pub fn schedule(base: String, key: String, every: std::time::Duration) {
                 Ok(orgs) => {
                     for org in orgs {
                         let found = refresh(&base, &key, &org).await;
-                        let failed: Vec<_> =
-                            found.iter().filter_map(|row| row.error.as_ref().map(|e| format!("{}: {e}", row.id))).collect();
+                        let failed: Vec<_> = found
+                            .iter()
+                            .filter_map(|row| {
+                                row.error.as_ref().map(|e| format!("{}: {e}", row.id))
+                            })
+                            .collect();
                         if failed.is_empty() {
                             log::info!("[discovery] refreshed {} stage(s) for {org}", found.len());
                         } else {
@@ -440,5 +517,8 @@ async fn organisations(base: &str, key: &str) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())?;
 
     let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
-    Ok(rows.iter().filter_map(|row| row["id"].as_str().map(str::to_owned)).collect())
+    Ok(rows
+        .iter()
+        .filter_map(|row| row["id"].as_str().map(str::to_owned))
+        .collect())
 }

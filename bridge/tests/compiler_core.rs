@@ -1,8 +1,8 @@
 use rustvani::vokoo::compiler::{
     lower, validate_output, Action, ActionOperation, AgentConversation, CarePathProgram,
     CatalogueField, CatalogueNode, CatalogueOutcome, CatalogueSnapshot, CompletionSpec,
-    EvidenceRef, EvidenceRole, FailurePolicy, Population, Recommendation, TriggerOperation,
-    TriggerSpec, WorkspaceResources,
+    EvidenceRef, EvidenceRole, FailurePolicy, GapSeverity, Population, Recommendation,
+    RequestActor, Threshold, TriggerOperation, TriggerSpec, WorkspaceResources,
 };
 use serde_json::{json, Value};
 
@@ -200,6 +200,7 @@ fn recurring_request_lowers_to_real_components_and_safe_branches() {
     let program = hba1c_program(vec![Action {
         key: "request-hba1c".into(),
         operation: ActionOperation::Request {
+            actor: RequestActor::Patient,
             what: "test".into(),
             instructions: "Complete an HbA1c test.".into(),
             expires_days: 7,
@@ -247,11 +248,41 @@ fn recurring_request_lowers_to_real_components_and_safe_branches() {
 }
 
 #[test]
+fn clinician_directed_requests_do_not_become_patient_outreach() {
+    let program = hba1c_program(vec![Action {
+        key: "order-genotyping".into(),
+        operation: ActionOperation::Request {
+            actor: RequestActor::Clinician,
+            what: "test".into(),
+            instructions: "Order CYP3A5 genotyping.".into(),
+            expires_days: 7,
+        },
+        evidence: vec![evidence(
+            "chunk-monitoring",
+            "Clinicians should order CYP3A5 genotyping.",
+            EvidenceRole::Requirement,
+        )],
+    }]);
+
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+
+    assert!(output.flows.is_empty());
+    assert_eq!(output.gaps.len(), 1);
+    assert_eq!(output.gaps[0].code, "unsupported_action_actor");
+    assert_eq!(output.gaps[0].severity, GapSeverity::Blocking);
+    assert_eq!(
+        output.gaps[0].missing_capability.as_deref(),
+        Some("clinical.task")
+    );
+}
+
+#[test]
 fn unsupported_action_becomes_a_gap_without_an_approximate_node() {
     let program = hba1c_program(vec![
         Action {
             key: "request-hba1c".into(),
             operation: ActionOperation::Request {
+                actor: RequestActor::Patient,
                 what: "test".into(),
                 instructions: "Complete an HbA1c test.".into(),
                 expires_days: 7,
@@ -288,6 +319,58 @@ fn unsupported_action_becomes_a_gap_without_an_approximate_node() {
         .nodes
         .iter()
         .all(|node| node.implementation != "laboratory.order"));
+}
+
+#[test]
+fn repeated_threshold_gaps_share_one_materialization_identity() {
+    let mut program = hba1c_program(vec![Action {
+        key: "request-hba1c".into(),
+        operation: ActionOperation::Request {
+            actor: RequestActor::Patient,
+            what: "test".into(),
+            instructions: "Complete an HbA1c test.".into(),
+            expires_days: 7,
+        },
+        evidence: vec![evidence(
+            "chunk-monitoring",
+            "Measure HbA1c every 3 to 6 months until stable.",
+            EvidenceRole::Requirement,
+        )],
+    }]);
+    program.recommendations[0].thresholds = vec![
+        Threshold {
+            observation: "frailty".into(),
+            operator: "equals".into(),
+            value: json!(true),
+            unit: "boolean".into(),
+            evidence: vec![evidence(
+                "chunk-frailty-1",
+                "Assess frailty before treatment.",
+                EvidenceRole::Threshold,
+            )],
+        },
+        Threshold {
+            observation: "medicine-risk".into(),
+            operator: "equals".into(),
+            value: json!("high"),
+            unit: "category".into(),
+            evidence: vec![evidence(
+                "chunk-frailty-2",
+                "Review medicine risk for people with frailty.",
+                EvidenceRole::Threshold,
+            )],
+        },
+    ];
+
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let threshold_gaps = output
+        .gaps
+        .iter()
+        .filter(|gap| gap.code == "threshold_requires_mapping")
+        .collect::<Vec<_>>();
+
+    assert_eq!(threshold_gaps.len(), 1);
+    assert_eq!(threshold_gaps[0].evidence.len(), 2);
 }
 
 #[test]
@@ -332,6 +415,7 @@ fn validation_rejects_invented_uncited_and_unsafe_output() {
     let program = hba1c_program(vec![Action {
         key: "request-hba1c".into(),
         operation: ActionOperation::Request {
+            actor: RequestActor::Patient,
             what: "test".into(),
             instructions: "Complete an HbA1c test.".into(),
             expires_days: 7,

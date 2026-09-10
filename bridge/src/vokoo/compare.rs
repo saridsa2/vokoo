@@ -111,7 +111,10 @@ fn truthy(value: &Value) -> bool {
         Value::Null => false,
         Value::Number(n) => n.as_f64().map(|n| n != 0.0).unwrap_or(false),
         // "false" from a model or a form is the string, not the boolean.
-        Value::String(text) => !matches!(text.trim().to_ascii_lowercase().as_str(), "" | "false" | "0" | "no"),
+        Value::String(text) => !matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "" | "false" | "0" | "no"
+        ),
         _ => true,
     }
 }
@@ -148,7 +151,11 @@ mod tests {
 
     #[test]
     fn text_compares_as_text_when_it_is_not_a_number() {
-        assert!(evaluate(&json!("cardiologist"), "contains", &json!("cardio")));
+        assert!(evaluate(
+            &json!("cardiologist"),
+            "contains",
+            &json!("cardio")
+        ));
         assert!(evaluate(&json!("Satya"), "starts_with", &json!("Sat")));
         assert!(!evaluate(&json!("book"), "equals", &json!("cancel")));
     }
@@ -195,7 +202,10 @@ mod tests {
     #[tokio::test]
     async fn both_sides_may_be_expressions() {
         let mut scope = Scope::for_integration(json!({ "duration_secs": 90 }));
-        scope.record("Process call", json!({ "intent": "book", "follow_up_needed": false }));
+        scope.record(
+            "Process call",
+            json!({ "intent": "book", "follow_up_needed": false }),
+        );
 
         let node = |left: &str, op: &str, right: &str| -> FlowNode {
             serde_json::from_value(json!({
@@ -207,7 +217,13 @@ mod tests {
 
         assert!(holds(&node("={{ $json.intent }}", "equals", "book"), &scope).await);
         assert!(holds(&node("={{ $call.duration_secs }}", "gt", "60"), &scope).await);
-        assert!(holds(&node("={{ $json.follow_up_needed }}", "is_false", ""), &scope).await);
+        assert!(
+            holds(
+                &node("={{ $json.follow_up_needed }}", "is_false", ""),
+                &scope
+            )
+            .await
+        );
         assert!(!holds(&node("={{ $json.intent }}", "equals", "cancel"), &scope).await);
     }
 

@@ -23,10 +23,10 @@
 //! without one gets today's behaviour — silence — because inventing a
 //! destination is worse than admitting there isn't one.
 
+use super::control::{CallControl, CallHandle};
 use super::graph::{resolve_for_event, EntryPoint, TRIGGER_FAILED};
 use super::handover::{Handover, Handovers};
 use super::runner::{FlowRunner, NodeAction};
-use super::control::{CallControl, CallHandle};
 
 /// Why a call is being escalated. The `&str` is the outcome the `call.failed`
 /// trigger leaves by, so a flow can route a crash differently from a provider
@@ -77,7 +77,10 @@ pub async fn escalate(
     caller: &str,
     cause: Cause,
 ) -> bool {
-    log::warn!("[escalate] ucid={ucid} {} — looking for somewhere to send this call", cause.as_str());
+    log::warn!(
+        "[escalate] ucid={ucid} {} — looking for somewhere to send this call",
+        cause.as_str()
+    );
 
     // 1. A `call.failed` flow bound to this number.
     if let Some(flow) = resolve_for_event(base, key, did, TRIGGER_FAILED).await {
@@ -93,12 +96,13 @@ pub async fn escalate(
             handovers.clone(),
         );
 
-        let Ok(mut runner) = FlowRunner::for_entry(
-            &flow,
-            &control,
-            EntryPoint::new(TRIGGER_FAILED),
-        ) else {
-            log::warn!("[escalate] ucid={ucid} '{}' has no call.failed entry", flow.name);
+        let Ok(mut runner) =
+            FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_FAILED))
+        else {
+            log::warn!(
+                "[escalate] ucid={ucid} '{}' has no call.failed entry",
+                flow.name
+            );
             return false;
         };
         runner = runner.started_by(cause.as_str());
@@ -116,7 +120,8 @@ pub async fn escalate(
                     log::warn!(
                         "[escalate] ucid={ucid} '{}' wants agent node {} — an exception flow \
                          runs after the audio is gone and cannot talk to anyone. Use a transfer.",
-                        flow.name, node.name
+                        flow.name,
+                        node.name
                     );
                     break;
                 }
@@ -125,7 +130,8 @@ pub async fn escalate(
                 NodeAction::CollectDigits { node, .. } => {
                     log::warn!(
                         "[escalate] ucid={ucid} '{}' wants to ask a key at {} — too late for that.",
-                        flow.name, node.name
+                        flow.name,
+                        node.name
                     );
                     break;
                 }
@@ -146,15 +152,17 @@ pub async fn escalate(
             // account-level fallback is typed once and read only when
             // something has already gone wrong, which is the worst moment to
             // discover it was stored in a shape the carrier will not dial.
-            let dial = super::control::dialable(&number).unwrap_or_else(|| number.trim().to_string());
+            let dial =
+                super::control::dialable(&number).unwrap_or_else(|| number.trim().to_string());
             log::info!("[escalate] ucid={ucid} no call.failed flow — transferring to {dial}");
             handovers.queue(
                 ucid,
                 Handover::Dial {
                     number: dial,
                     record: true,
-                    on_no_answer: "Sorry, nobody is available right now. Please try again later. Goodbye."
-                        .to_string(),
+                    on_no_answer:
+                        "Sorry, nobody is available right now. Please try again later. Goodbye."
+                            .to_string(),
                 },
             );
             true
@@ -182,7 +190,10 @@ async fn escalation_number(base: &str, key: &str, did: &str) -> Option<String> {
     let response = client
         .get(format!("{base}/rest/v1/phone_numbers"))
         .query(&[
-            ("number", format!("in.({})", super::graph::spellings(did).join(","))),
+            (
+                "number",
+                format!("in.({})", super::graph::spellings(did).join(",")),
+            ),
             ("select", "organizations(escalation_number)".to_string()),
             ("limit", "1".to_string()),
         ])
@@ -210,17 +221,36 @@ mod tests {
         // catalogue. A cause whose name drifts from its outcome would resolve
         // to no transition, and the escalation would end where it started.
         let declared = ["engine_failed", "provider_lost", "no_audio", "crashed"];
-        for cause in [Cause::EngineFailed, Cause::ProviderLost, Cause::NoAudio, Cause::Crashed] {
-            assert!(declared.contains(&cause.as_str()), "{} is not a declared outcome", cause.as_str());
+        for cause in [
+            Cause::EngineFailed,
+            Cause::ProviderLost,
+            Cause::NoAudio,
+            Cause::Crashed,
+        ] {
+            assert!(
+                declared.contains(&cause.as_str()),
+                "{} is not a declared outcome",
+                cause.as_str()
+            );
         }
     }
 
     #[test]
     fn the_caller_is_never_told_which_component_failed() {
-        for cause in [Cause::EngineFailed, Cause::ProviderLost, Cause::NoAudio, Cause::Crashed] {
+        for cause in [
+            Cause::EngineFailed,
+            Cause::ProviderLost,
+            Cause::NoAudio,
+            Cause::Crashed,
+        ] {
             let said = cause.spoken().to_lowercase();
-            for leak in ["engine", "provider", "panic", "crash", "socket", "sarvam", "openai"] {
-                assert!(!said.contains(leak), "{leak:?} leaks into what the caller hears");
+            for leak in [
+                "engine", "provider", "panic", "crash", "socket", "sarvam", "openai",
+            ] {
+                assert!(
+                    !said.contains(leak),
+                    "{leak:?} leaks into what the caller hears"
+                );
             }
         }
     }

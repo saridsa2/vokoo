@@ -29,4 +29,4 @@ pub use elevenlabs_api::{ClientConfig as ElevenLabsClientConfig, ElevenLabsClien
 #[cfg(feature = "tts-piper")]
 pub use piper::{PiperModel, PiperQuality, PiperTtsConfig, PiperTtsHandler};
 #[cfg(feature = "tts-sarvam")]
-pub use sarvam::{SarvamTtsConfig, SarvamTtsHandler, TtsModelConfig, get_model_config};
+pub use sarvam::{get_model_config, SarvamTtsConfig, SarvamTtsHandler, TtsModelConfig};

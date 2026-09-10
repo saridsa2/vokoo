@@ -30,7 +30,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 
 /// Audio waiting to cross, in one direction.
 ///
@@ -72,11 +72,17 @@ impl Relays {
     pub async fn open(&self, ucid: &str) -> KookooEnds {
         let (to_asterisk, from_kookoo) = mpsc::channel(RELAY_DEPTH);
         let (to_kookoo, from_asterisk) = mpsc::channel(RELAY_DEPTH);
-        self.inner
-            .lock()
-            .await
-            .insert(ucid.to_string(), RelayEnds { to_kookoo, from_kookoo });
-        KookooEnds { to_asterisk, from_asterisk }
+        self.inner.lock().await.insert(
+            ucid.to_string(),
+            RelayEnds {
+                to_kookoo,
+                from_kookoo,
+            },
+        );
+        KookooEnds {
+            to_asterisk,
+            from_asterisk,
+        }
     }
 
     /// Claim the AudioSocket side. Taken, not read: one relay serves one
@@ -110,7 +116,10 @@ pub struct Reframer {
 impl Reframer {
     /// `samples` is per frame; PCM16 is two bytes each.
     pub fn new(samples: usize) -> Self {
-        Self { buffer: Vec::new(), frame_bytes: samples * 2 }
+        Self {
+            buffer: Vec::new(),
+            frame_bytes: samples * 2,
+        }
     }
 
     pub fn push(&mut self, pcm: &[u8]) -> Vec<Vec<u8>> {
@@ -130,11 +139,16 @@ impl Reframer {
 
 /// KooKoo's `media` event carries samples as a JSON array of integers.
 pub fn samples_to_pcm(samples: &[i64]) -> Vec<u8> {
-    samples.iter().flat_map(|s| (*s as i16).to_le_bytes()).collect()
+    samples
+        .iter()
+        .flat_map(|s| (*s as i16).to_le_bytes())
+        .collect()
 }
 
 pub fn pcm_to_samples(pcm: &[u8]) -> Vec<i16> {
-    pcm.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
+    pcm.chunks_exact(2)
+        .map(|b| i16::from_le_bytes([b[0], b[1]]))
+        .collect()
 }
 
 #[cfg(test)]
@@ -146,7 +160,10 @@ mod tests {
         // KooKoo sends 80 samples; AudioSocket wants 160. One in, nothing out;
         // two in, one frame out.
         let mut r = Reframer::new(160);
-        assert!(r.push(&vec![0u8; 160]).is_empty(), "half a frame is not a frame");
+        assert!(
+            r.push(&vec![0u8; 160]).is_empty(),
+            "half a frame is not a frame"
+        );
         assert_eq!(r.pending(), 160);
 
         let frames = r.push(&vec![0u8; 160]);
@@ -162,7 +179,11 @@ mod tests {
         let mut r = Reframer::new(160);
         let frames = r.push(&vec![7u8; 500]);
         assert_eq!(frames.len(), 1);
-        assert_eq!(r.pending(), 180, "the odd 180 bytes stay for the next packet");
+        assert_eq!(
+            r.pending(),
+            180,
+            "the odd 180 bytes stay for the next packet"
+        );
     }
 
     #[test]

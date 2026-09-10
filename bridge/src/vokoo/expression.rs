@@ -88,10 +88,18 @@ impl Scope {
 
     /// A reusable integration sees its input and execution envelope, not the
     /// source call data that produced that input.
-    pub fn for_invocation(input: Value, run_id: &str, source_execution_id: &str, attempt: i64) -> Self {
+    pub fn for_invocation(
+        input: Value,
+        run_id: &str,
+        source_execution_id: &str,
+        attempt: i64,
+    ) -> Self {
         let mut vars = Map::new();
         vars.insert("run_id".into(), Value::String(run_id.to_owned()));
-        vars.insert("execution_id".into(), Value::String(source_execution_id.to_owned()));
+        vars.insert(
+            "execution_id".into(),
+            Value::String(source_execution_id.to_owned()),
+        );
         vars.insert("idempotency_key".into(), Value::String(run_id.to_owned()));
         vars.insert("attempt".into(), Value::from(attempt));
         Self {
@@ -252,11 +260,16 @@ fn split_root(source: &str) -> (Root, &str) {
             _ => return (Root::Unknown, ""),
         };
         let body = &after[quote.len_utf8()..];
-        let Some(close) = body.find(quote) else { return (Root::Unknown, "") };
+        let Some(close) = body.find(quote) else {
+            return (Root::Unknown, "");
+        };
         let name = &body[..close];
         let remainder = body[close + quote.len_utf8()..].trim_start();
         let remainder = remainder.strip_prefix(')').unwrap_or(remainder);
-        return (Root::Node(name.to_string()), remainder.trim_start_matches('.'));
+        return (
+            Root::Node(name.to_string()),
+            remainder.trim_start_matches('.'),
+        );
     }
 
     let (head, rest) = match source.find('.') {
@@ -306,7 +319,9 @@ fn script(source: &str, roots_json: &str) -> Result<Value, String> {
     // A runaway expression must end by itself. These bound the two ways a
     // script does not return: looping and recursing. Straight-line code cannot
     // run forever, so between them there is no program that never finishes.
-    context.runtime_limits_mut().set_loop_iteration_limit(100_000);
+    context
+        .runtime_limits_mut()
+        .set_loop_iteration_limit(100_000);
     context.runtime_limits_mut().set_recursion_limit(256);
 
     // The scope arrives as a JSON *string literal* parsed inside the engine,
@@ -361,7 +376,10 @@ mod tests {
             vars: Map::new(),
             evaluation,
         };
-        scope.record("Process call", json!({ "patient_name": "सात्या", "score": 8 }));
+        scope.record(
+            "Process call",
+            json!({ "patient_name": "सात्या", "score": 8 }),
+        );
         scope.set_var("attempts", json!(2));
         scope
     }
@@ -369,23 +387,36 @@ mod tests {
     #[tokio::test]
     async fn a_literal_is_left_alone() {
         let scope = scope(Evaluation::Paths);
-        assert_eq!(resolve("https://example.com/hook", &scope).await, json!("https://example.com/hook"));
+        assert_eq!(
+            resolve("https://example.com/hook", &scope).await,
+            json!("https://example.com/hook")
+        );
         // Including one that merely contains braces.
-        assert_eq!(resolve("{{ not an expression }}", &scope).await, json!("{{ not an expression }}"));
+        assert_eq!(
+            resolve("{{ not an expression }}", &scope).await,
+            json!("{{ not an expression }}")
+        );
     }
 
     #[tokio::test]
     async fn a_sole_segment_keeps_its_type() {
         let scope = scope(Evaluation::Paths);
         assert_eq!(resolve("={{ $json.score }}", &scope).await, json!(8));
-        assert_eq!(resolve("={{ $json.patient_name }}", &scope).await, json!("सात्या"));
+        assert_eq!(
+            resolve("={{ $json.patient_name }}", &scope).await,
+            json!("सात्या")
+        );
     }
 
     #[tokio::test]
     async fn text_around_a_segment_makes_it_text() {
         let scope = scope(Evaluation::Paths);
         assert_eq!(
-            resolve("=Lead for {{ $json.patient_name }} ({{ $call.caller }})", &scope).await,
+            resolve(
+                "=Lead for {{ $json.patient_name }} ({{ $call.caller }})",
+                &scope
+            )
+            .await,
             json!("Lead for सात्या (+919949879837)"),
         );
     }
@@ -393,16 +424,25 @@ mod tests {
     #[tokio::test]
     async fn every_root_resolves() {
         let scope = scope(Evaluation::Paths);
-        assert_eq!(resolve("={{ $call.duration_secs }}", &scope).await, json!(90));
+        assert_eq!(
+            resolve("={{ $call.duration_secs }}", &scope).await,
+            json!(90)
+        );
         assert_eq!(resolve("={{ $vars.attempts }}", &scope).await, json!(2));
-        assert_eq!(resolve("={{ $('Process call').score }}", &scope).await, json!(8));
+        assert_eq!(
+            resolve("={{ $('Process call').score }}", &scope).await,
+            json!(8)
+        );
     }
 
     #[test]
     fn an_integration_invocation_has_no_call_root() {
         let scope = Scope::for_invocation(json!({ "lead": "Mira" }), "run-42", "source-42", 2);
         assert!(scope.call.is_null());
-        assert_eq!(scope.vars.get("run_id"), Some(&Value::String("run-42".into())));
+        assert_eq!(
+            scope.vars.get("run_id"),
+            Some(&Value::String("run-42".into()))
+        );
         assert_eq!(scope.vars.get("attempt"), Some(&json!(2)));
     }
 
@@ -411,8 +451,14 @@ mod tests {
         // A body that is 90% right and one field short is more use to whoever
         // is debugging than no request at all.
         let scope = scope(Evaluation::Paths);
-        assert_eq!(resolve("={{ $json.nothing_here }}", &scope).await, Value::Null);
-        assert_eq!(resolve("=x{{ $json.nothing_here }}y", &scope).await, json!("xy"));
+        assert_eq!(
+            resolve("={{ $json.nothing_here }}", &scope).await,
+            Value::Null
+        );
+        assert_eq!(
+            resolve("=x{{ $json.nothing_here }}y", &scope).await,
+            json!("xy")
+        );
     }
 
     #[tokio::test]
@@ -421,10 +467,16 @@ mod tests {
         // an integration reads as a path on a call, finds nothing, and resolves
         // to null — it does not execute.
         let calling = scope(Evaluation::Paths);
-        assert_eq!(resolve("={{ $json.score * 2 }}", &calling).await, Value::Null);
+        assert_eq!(
+            resolve("={{ $json.score * 2 }}", &calling).await,
+            Value::Null
+        );
 
         let integrating = scope(Evaluation::Script);
-        assert_eq!(resolve("={{ $json.score * 2 }}", &integrating).await, json!(16));
+        assert_eq!(
+            resolve("={{ $json.score * 2 }}", &integrating).await,
+            json!(16)
+        );
     }
 
     #[tokio::test]
@@ -466,7 +518,10 @@ mod tests {
     async fn a_runaway_loop_ends_by_itself() {
         let scope = scope(Evaluation::Script);
         // Returns null rather than never returning. The caller carries on.
-        assert_eq!(resolve("={{ (function () { while (true) {} })() }}", &scope).await, Value::Null);
+        assert_eq!(
+            resolve("={{ (function () { while (true) {} })() }}", &scope).await,
+            Value::Null
+        );
     }
 
     #[tokio::test]
@@ -474,7 +529,10 @@ mod tests {
         // The scope is parsed inside the engine rather than pasted into the
         // program, so a caller who says something quote-shaped stays data.
         let mut scope = scope(Evaluation::Script);
-        scope.record("Process call", json!({ "note": "\"); throw new Error('run'); (\"" }));
+        scope.record(
+            "Process call",
+            json!({ "note": "\"); throw new Error('run'); (\"" }),
+        );
         assert_eq!(
             resolve("={{ $json.note }}", &scope).await,
             json!("\"); throw new Error('run'); (\""),

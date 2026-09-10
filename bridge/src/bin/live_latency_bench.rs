@@ -75,7 +75,10 @@ async fn main() {
     }
 
     println!("{PROMPT:?}  x{trials} per model\n");
-    println!("{:<52} {:>9} {:>9} {:>9} {:>9}", "model", "connect", "min", "median", "max");
+    println!(
+        "{:<52} {:>9} {:>9} {:>9} {:>9}",
+        "model", "connect", "min", "median", "max"
+    );
 
     for model in &models {
         let mut connects = Vec::new();
@@ -99,7 +102,10 @@ async fn main() {
         }
 
         if firsts.is_empty() {
-            println!("{model:<52}   {}", failure.unwrap_or_else(|| "no result".into()));
+            println!(
+                "{model:<52}   {}",
+                failure.unwrap_or_else(|| "no result".into())
+            );
             continue;
         }
 
@@ -110,7 +116,9 @@ async fn main() {
             "{model:<52} {connect:>8.0}ms {:>8.0}ms {median:>8.0}ms {:>8.0}ms{}",
             firsts[0],
             firsts[firsts.len() - 1],
-            failure.map(|e| format!("  (then: {e})")).unwrap_or_default()
+            failure
+                .map(|e| format!("  (then: {e})"))
+                .unwrap_or_default()
         );
     }
 }

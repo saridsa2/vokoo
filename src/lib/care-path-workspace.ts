@@ -12,7 +12,7 @@ export const CARE_PATH_WORKSPACE = {
     triggerName: "Milestone due",
     triggerConfig: { key: "", anchor: "enrolment", offset_days: 0, window_days: 0 },
     noun: "care path",
-    empty: "A care path tracks patient milestones over time and starts work when something is due, reported, recurring, or received.",
+    empty: "Create a care path to track patient milestones.",
 } as const;
 
 /** A cohort can only point at the longitudinal flow family. */

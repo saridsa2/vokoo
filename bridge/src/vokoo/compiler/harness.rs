@@ -17,6 +17,8 @@ pub const MAX_TASK_PAGE_SPAN: usize = 80;
 pub const MAX_CHUNKS_PER_TASK: usize = 20;
 pub const MAX_MODEL_CALLS: usize = 8;
 pub const MAX_CORRECTION_ATTEMPTS: usize = 1;
+pub const MAX_DELEGATION_CORRECTION_ATTEMPTS: usize = 2;
+pub const MAX_WORKER_CORRECTION_ATTEMPTS: usize = 2;
 
 #[derive(Clone)]
 pub struct CompilerInput {
@@ -142,6 +144,7 @@ impl<'a> CompilerHarness<'a> {
                     ..Default::default()
                 },
                 None,
+                None,
                 &mut model_calls,
             )
             .await?;
@@ -162,13 +165,14 @@ impl<'a> CompilerHarness<'a> {
                 .collect();
             let task_id = task.id.clone();
             let version_id = input.version_id.clone();
+            let validation_chunks = task_chunks.clone();
             let emission: WorkerEmission = self
                 .call_typed(
                     request(
                         ModelPhase::Compiling,
                         Some(task.id.clone()),
                         "emit_recommendations",
-                        worker_schema(),
+                        worker_schema(&input.catalogue, &task_chunks),
                         json!({
                             "task": task,
                             "version_id": input.version_id,
@@ -178,13 +182,14 @@ impl<'a> CompilerHarness<'a> {
                         }),
                     ),
                     move |emission: &WorkerEmission| {
-                        validate_emission(emission, &task_id, &version_id, &task_chunks)
+                        validate_emission(emission, &task_id, &version_id, &validation_chunks)
                     },
                     |emission| TraceSummary {
                         recommendation_count: emission.recommendations.len(),
                         ..Default::default()
                     },
                     Some(task),
+                    Some(&task_chunks),
                     &mut model_calls,
                 )
                 .await?;
@@ -211,6 +216,7 @@ impl<'a> CompilerHarness<'a> {
                 ),
                 move |value: &Reconciliation| validate_reconciliation(value, &known_for_validation),
                 |value| TraceSummary { selection_count: value.selections.len(), ..Default::default() },
+                None,
                 None,
                 &mut model_calls,
             )
@@ -269,6 +275,7 @@ impl<'a> CompilerHarness<'a> {
                     ..Default::default()
                 },
                 None,
+                None,
                 &mut model_calls,
             )
             .await?;
@@ -281,6 +288,7 @@ impl<'a> CompilerHarness<'a> {
         validate: V,
         summarize: S,
         task: Option<&SectionTask>,
+        canonical_evidence: Option<&[&EvidenceChunk]>,
         model_calls: &mut usize,
     ) -> Result<T, CompilerError>
     where
@@ -289,7 +297,12 @@ impl<'a> CompilerHarness<'a> {
         S: Fn(&T) -> TraceSummary,
     {
         let mut correction = None;
-        for attempt in 0..=MAX_CORRECTION_ATTEMPTS {
+        let max_corrections = match base_request.tool_name.as_str() {
+            "delegate_section" => MAX_DELEGATION_CORRECTION_ATTEMPTS,
+            "emit_recommendations" => MAX_WORKER_CORRECTION_ATTEMPTS,
+            _ => MAX_CORRECTION_ATTEMPTS,
+        };
+        for attempt in 0..=max_corrections {
             if *model_calls >= MAX_MODEL_CALLS {
                 return Err(CompilerError::model("model_step_limit"));
             }
@@ -297,12 +310,39 @@ impl<'a> CompilerHarness<'a> {
             let mut request = base_request.clone();
             request.correction = correction.clone();
             let started = Instant::now();
-            let response = self.model.call(request.clone()).await?;
+            let response = match self.model.call(request.clone()).await {
+                Ok(response) => response,
+                Err(error) if error.code() == "required_tool_not_called" => {
+                    self.trace.emit(trace_event(
+                        &request,
+                        task,
+                        "rejected",
+                        TraceSummary::default(),
+                        TokenUsage::default(),
+                        started.elapsed().as_millis() as u64,
+                        Some("required_tool_not_called".into()),
+                    ));
+                    if attempt == max_corrections {
+                        return Err(error);
+                    }
+                    correction = Some("required_tool_not_called".into());
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let mut arguments = response.arguments;
+            normalize_tool_arguments(
+                request.tool_name.as_str(),
+                &mut arguments,
+                canonical_evidence.unwrap_or_default(),
+            );
             let parsed = if response.tool_name != request.tool_name {
                 Err("wrong_tool_called")
             } else {
-                serde_json::from_value::<T>(response.arguments)
-                    .map_err(|_| "invalid_tool_output")
+                let invalid_code =
+                    classify_invalid_tool_output(request.tool_name.as_str(), &arguments);
+                serde_json::from_value::<T>(arguments)
+                    .map_err(|_| invalid_code)
                     .and_then(|value| validate(&value).map(|_| value))
             };
             match parsed {
@@ -328,7 +368,7 @@ impl<'a> CompilerHarness<'a> {
                         started.elapsed().as_millis() as u64,
                         Some(code.into()),
                     ));
-                    if attempt == MAX_CORRECTION_ATTEMPTS {
+                    if attempt == max_corrections {
                         return Err(CompilerError::new(code, "typed model output was rejected"));
                     }
                     correction = Some(code.into());
@@ -374,7 +414,7 @@ fn request(
         phase,
         task_id,
         tool_name: tool.into(),
-        tool_description: format!("Emit the typed {tool} result."),
+        tool_description: tool_description(tool),
         schema,
         system: "Compile only explicit source requirements. Cite supplied chunks. Unsupported intent is a gap. Call the required tool exactly once.".into(),
         payload,
@@ -382,13 +422,226 @@ fn request(
     }
 }
 
+fn tool_description(tool: &str) -> String {
+    match tool {
+        "delegate_section" => concat!(
+            "Call this tool exactly once to select one to four non-overlapping source tasks. ",
+            "Use the page_map previews and section paths to maximize longitudinal care-path coverage: ",
+            "prefer explicit monitoring cadence, patient actions, completion criteria, and escalation ",
+            "over background, bibliography, or the first isolated actionable statement. Each task must ",
+            "contain one to twenty supplied chunk IDs and span no more than eighty source pages."
+        )
+        .into(),
+        "emit_recommendations" => concat!(
+            "Emit exactly one object with task_id and recommendations. Each recommendation must contain ",
+            "id, title, population, trigger, thresholds, actions, completion, failure_policy, and evidence. ",
+            "Population contains description, inclusions, exclusions, and evidence. Trigger is flattened: ",
+            "put key, kind, the kind-specific fields, and evidence in the same object; kind is exactly one of ",
+            "due, recurring, reported, or document. Every action is also flattened: put key, kind, the ",
+            "kind-specific fields, and evidence in the same object; kind is exactly one of request, conversation, ",
+            "record_observation, intelligence, or unsupported. Every request must include actor: patient, clinician, ",
+            "care_team, or system. Use patient only when the source directs the patient to act. Prescribing, ordering, ",
+            "and clinician review must use clinician or care_team; these become explicit capability gaps and must never ",
+            "be represented as patient outreach. ",
+            "Evidence entries contain only chunk_id and role; the compiler hydrates canonical excerpts. Use null for absent completion or ",
+            "failure_policy. Do not invent fields or nest trigger/action operation objects."
+        ).into(),
+        _ => format!("Emit the typed {tool} result and include every required field from its schema."),
+    }
+}
+
+fn classify_invalid_tool_output(tool: &str, value: &Value) -> &'static str {
+    if tool != "emit_recommendations" {
+        return "invalid_tool_output";
+    }
+    let Some(output) = value.as_object() else {
+        return "invalid_tool_output_top_level";
+    };
+    if !output.get("task_id").is_some_and(Value::is_string) {
+        return "invalid_tool_output_task_id";
+    }
+    let Some(recommendations) = output.get("recommendations").and_then(Value::as_array) else {
+        return "invalid_tool_output_recommendations";
+    };
+    for recommendation in recommendations {
+        let Some(recommendation) = recommendation.as_object() else {
+            return "invalid_tool_output_recommendation";
+        };
+        if !recommendation.get("id").is_some_and(Value::is_string)
+            || !recommendation.get("title").is_some_and(Value::is_string)
+        {
+            return "invalid_tool_output_recommendation_identity";
+        }
+        let Some(population) = recommendation.get("population").and_then(Value::as_object) else {
+            return "invalid_tool_output_population";
+        };
+        if !population.get("description").is_some_and(Value::is_string)
+            || !population.get("evidence").is_some_and(Value::is_array)
+        {
+            return "invalid_tool_output_population_fields";
+        }
+        let Some(trigger) = recommendation.get("trigger").and_then(Value::as_object) else {
+            return "invalid_tool_output_trigger";
+        };
+        if trigger.get("kind").is_none() && trigger.get("operation").is_some() {
+            return "invalid_tool_output_trigger_operation_nested";
+        }
+        if !matches!(
+            trigger.get("kind").and_then(Value::as_str),
+            Some("due" | "recurring" | "reported" | "document")
+        ) {
+            return "invalid_tool_output_trigger_kind";
+        }
+        if !trigger.get("evidence").is_some_and(Value::is_array) {
+            return "invalid_tool_output_trigger_evidence";
+        }
+        if !recommendation
+            .get("thresholds")
+            .is_some_and(Value::is_array)
+        {
+            return "invalid_tool_output_thresholds";
+        }
+        let Some(actions) = recommendation.get("actions").and_then(Value::as_array) else {
+            return "invalid_tool_output_actions";
+        };
+        for action in actions {
+            let Some(action) = action.as_object() else {
+                return "invalid_tool_output_action";
+            };
+            if action.get("kind").is_none() && action.get("operation").is_some() {
+                return "invalid_tool_output_action_operation_nested";
+            }
+            if !matches!(
+                action.get("kind").and_then(Value::as_str),
+                Some(
+                    "request"
+                        | "conversation"
+                        | "record_observation"
+                        | "intelligence"
+                        | "unsupported"
+                )
+            ) {
+                return "invalid_tool_output_action_kind";
+            }
+            if action.get("kind").and_then(Value::as_str) == Some("request")
+                && !matches!(
+                    action.get("actor").and_then(Value::as_str),
+                    Some("patient" | "clinician" | "care_team" | "system")
+                )
+            {
+                return "invalid_tool_output_request_actor";
+            }
+            if !action.get("evidence").is_some_and(Value::is_array) {
+                return "invalid_tool_output_action_evidence";
+            }
+        }
+        if !recommendation.get("evidence").is_some_and(Value::is_array) {
+            return "invalid_tool_output_recommendation_evidence";
+        }
+    }
+    "invalid_tool_output"
+}
+
+fn normalize_tool_arguments(tool: &str, value: &mut Value, chunks: &[&EvidenceChunk]) {
+    if tool != "emit_recommendations" {
+        return;
+    }
+    let Some(recommendations) = value
+        .get_mut("recommendations")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for recommendation in recommendations {
+        let Some(recommendation) = recommendation.as_object_mut() else {
+            continue;
+        };
+        let recommendation_id = recommendation
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        for key in ["population", "trigger", "completion", "failure_policy"] {
+            if let Some(item) = recommendation.get_mut(key).and_then(Value::as_object_mut) {
+                normalize_evidence_array(item, &recommendation_id, chunks);
+            }
+        }
+        for key in ["thresholds", "actions"] {
+            if let Some(items) = recommendation.get_mut(key).and_then(Value::as_array_mut) {
+                for item in items {
+                    if let Some(item) = item.as_object_mut() {
+                        normalize_evidence_array(item, &recommendation_id, chunks);
+                    }
+                }
+            }
+        }
+        normalize_evidence_array(recommendation, &recommendation_id, chunks);
+        if recommendation.get("evidence").is_some_and(Value::is_array) {
+            continue;
+        }
+        let mut evidence = Vec::new();
+        for key in ["population", "trigger", "completion", "failure_policy"] {
+            if let Some(items) = recommendation
+                .get(key)
+                .and_then(|item| item.get("evidence"))
+                .and_then(Value::as_array)
+            {
+                evidence.extend(items.iter().cloned());
+            }
+        }
+        for key in ["thresholds", "actions"] {
+            if let Some(items) = recommendation.get(key).and_then(Value::as_array) {
+                for item in items {
+                    if let Some(citations) = item.get("evidence").and_then(Value::as_array) {
+                        evidence.extend(citations.iter().cloned());
+                    }
+                }
+            }
+        }
+        let mut seen = BTreeSet::new();
+        evidence.retain(|citation| seen.insert(citation.to_string()));
+        recommendation.insert("evidence".into(), Value::Array(evidence));
+    }
+}
+
+fn normalize_evidence_array(
+    object: &mut serde_json::Map<String, Value>,
+    recommendation_id: &str,
+    chunks: &[&EvidenceChunk],
+) {
+    let Some(evidence) = object.get_mut("evidence") else {
+        return;
+    };
+    if evidence.is_object() {
+        let citation = evidence.take();
+        *evidence = Value::Array(vec![citation]);
+    }
+    let Some(citations) = evidence.as_array_mut() else {
+        return;
+    };
+    for citation in citations {
+        let Some(citation) = citation.as_object_mut() else {
+            continue;
+        };
+        let excerpt = citation
+            .get("chunk_id")
+            .and_then(Value::as_str)
+            .and_then(|chunk_id| chunks.iter().find(|chunk| chunk.chunk_id == chunk_id))
+            .map(|chunk| chunk.text.as_str())
+            .unwrap_or_default();
+        citation.insert("recommendation_id".into(), json!(recommendation_id));
+        citation.insert("excerpt".into(), json!(excerpt));
+    }
+}
+
 fn page_map(chunks: &[EvidenceChunk]) -> Vec<Value> {
     chunks
         .iter()
         .map(|chunk| {
+            let preview: String = chunk.text.chars().take(240).collect();
             json!({
                 "chunk_id":chunk.chunk_id,"page_start":chunk.page_start,"page_end":chunk.page_end,
-                "section_path":chunk.section_path
+                "section_path":chunk.section_path,"preview":preview
             })
         })
         .collect()
@@ -527,8 +780,162 @@ fn validate_reconciliation(
 fn delegation_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(DelegationPlan)).expect("static delegation schema")
 }
-fn worker_schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(WorkerEmission)).expect("static worker schema")
+fn worker_schema(catalogue: &CatalogueSnapshot, chunks: &[&EvidenceChunk]) -> Value {
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(WorkerEmission)).expect("static worker schema");
+    for definition in ["TriggerSpec", "Action"] {
+        distribute_variant_requirements(&mut schema, definition);
+    }
+    configure_evidence_contract(&mut schema, chunks);
+    for (property, components, field) in [
+        (
+            "anchor",
+            &["trigger.due", "trigger.recurring"][..],
+            "anchor",
+        ),
+        ("document_kind", &["trigger.document"][..], "document_kind"),
+        ("what", &["outreach.request"][..], "what"),
+        ("source", &["care_path.record"][..], "source"),
+        ("recipient", &["escalate.notify"][..], "to"),
+        ("urgency", &["escalate.notify"][..], "urgency"),
+    ] {
+        let options = catalogue_select_options(catalogue, components, field);
+        constrain_schema_property(&mut schema, property, &options);
+    }
+    schema
+}
+
+fn configure_evidence_contract(schema: &mut Value, chunks: &[&EvidenceChunk]) {
+    let Some(evidence) = schema
+        .get_mut("$defs")
+        .and_then(Value::as_object_mut)
+        .and_then(|definitions| definitions.get_mut("EvidenceRef"))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if let Some(properties) = evidence
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        properties.remove("excerpt");
+        properties.remove("recommendation_id");
+        if let Some(chunk_id) = properties
+            .get_mut("chunk_id")
+            .and_then(Value::as_object_mut)
+        {
+            chunk_id.insert(
+                "enum".into(),
+                Value::Array(chunks.iter().map(|chunk| json!(chunk.chunk_id)).collect()),
+            );
+        }
+    }
+    if let Some(required) = evidence.get_mut("required").and_then(Value::as_array_mut) {
+        required.retain(|field| field != "excerpt" && field != "recommendation_id");
+    }
+}
+
+fn catalogue_select_options(
+    catalogue: &CatalogueSnapshot,
+    components: &[&str],
+    field: &str,
+) -> Vec<Value> {
+    let mut options = BTreeSet::new();
+    for node in &catalogue.nodes {
+        if !components.contains(&node.id.as_str()) {
+            continue;
+        }
+        if let Some(definition) = node.fields.iter().find(|candidate| candidate.key == field) {
+            options.extend(
+                definition
+                    .options
+                    .iter()
+                    .filter_map(|option| option.get("id").and_then(Value::as_str))
+                    .map(str::to_owned),
+            );
+        }
+    }
+    options.into_iter().map(Value::String).collect()
+}
+
+fn constrain_schema_property(schema: &mut Value, property: &str, options: &[Value]) {
+    if options.is_empty() {
+        return;
+    }
+    match schema {
+        Value::Object(object) => {
+            if let Some(definition) = object
+                .get_mut("properties")
+                .and_then(Value::as_object_mut)
+                .and_then(|properties| properties.get_mut(property))
+                .and_then(Value::as_object_mut)
+            {
+                definition.insert("enum".into(), Value::Array(options.to_vec()));
+            }
+            for child in object.values_mut() {
+                constrain_schema_property(child, property, options);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                constrain_schema_property(item, property, options);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn distribute_variant_requirements(schema: &mut Value, definition: &str) {
+    let Some(definition) = schema
+        .get_mut("$defs")
+        .and_then(Value::as_object_mut)
+        .and_then(|definitions| definitions.get_mut(definition))
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if !definition.get("oneOf").is_some_and(Value::is_array) {
+        return;
+    }
+    let Some(properties) = definition
+        .remove("properties")
+        .and_then(|value| value.as_object().cloned())
+    else {
+        return;
+    };
+    let required = definition
+        .remove("required")
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default();
+    let variants = definition
+        .get_mut("oneOf")
+        .and_then(Value::as_array_mut)
+        .expect("checked oneOf array");
+    for variant in variants {
+        let Some(variant) = variant.as_object_mut() else {
+            continue;
+        };
+        let variant_properties = variant
+            .entry("properties")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .expect("generated object variant properties");
+        for (key, value) in &properties {
+            variant_properties
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+        let variant_required = variant
+            .entry("required")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .expect("generated object variant requirements");
+        for field in &required {
+            if !variant_required.contains(field) {
+                variant_required.push(field.clone());
+            }
+        }
+    }
 }
 fn reconciliation_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Reconciliation))

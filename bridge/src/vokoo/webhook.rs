@@ -37,7 +37,10 @@ pub async fn send(
     let url = expression::resolve_text(raw_url, scope).await;
     if !url.starts_with("http") {
         log::warn!("[webhook] no url, or one that is not http: {url:?}");
-        return ("failed".to_string(), json!({ "url": url, "problem": "not an http url" }));
+        return (
+            "failed".to_string(),
+            json!({ "url": url, "problem": "not an http url" }),
+        );
     }
     let url = url.as_str();
 
@@ -54,7 +57,10 @@ pub async fn send(
                 Ok(value) => value,
                 Err(problem) => {
                     log::warn!("[webhook] the body is not JSON once filled in: {problem}");
-                    return ("failed".to_string(), json!({ "url": url, "problem": format!("the body is not JSON once filled in: {problem}"), "filled": filled }));
+                    return (
+                        "failed".to_string(),
+                        json!({ "url": url, "problem": format!("the body is not JSON once filled in: {problem}"), "filled": filled }),
+                    );
                 }
             }
         }
@@ -73,7 +79,10 @@ pub async fn send(
         Ok(client) => client,
         Err(problem) => {
             log::warn!("[webhook] {problem}");
-            return ("failed".to_string(), json!({ "url": url, "problem": problem.to_string() }));
+            return (
+                "failed".to_string(),
+                json!({ "url": url, "problem": problem.to_string() }),
+            );
         }
     };
 
@@ -88,7 +97,10 @@ pub async fn send(
     // exactly the property an idempotency key needs.
     .header(
         "Idempotency-Key",
-        scope.vars.get("idempotency_key").and_then(Value::as_str)
+        scope
+            .vars
+            .get("idempotency_key")
+            .and_then(Value::as_str)
             .or_else(|| scope.call.get("call_id").and_then(Value::as_str))
             .unwrap_or_default(),
     )
@@ -102,7 +114,10 @@ pub async fn send(
             Some(secret) => request = request.header("Authorization", format!("Bearer {secret}")),
             None => {
                 log::warn!("[webhook] no {vendor} key is connected — sending nothing rather than sending it unauthenticated");
-                return ("failed".to_string(), json!({ "url": url, "problem": format!("no {vendor} key is connected") }));
+                return (
+                    "failed".to_string(),
+                    json!({ "url": url, "problem": format!("no {vendor} key is connected") }),
+                );
             }
         }
     }
@@ -134,15 +149,24 @@ pub async fn send(
                     "[webhook] {url} refused it ({status}) — the payload is wrong, so retrying will not help: {}",
                     detail.chars().take(400).collect::<String>()
                 );
-                ("refused".to_string(), json!({ "method": method, "url": url, "sent": body, "status": status.as_u16(), "detail": detail }))
+                (
+                    "refused".to_string(),
+                    json!({ "method": method, "url": url, "sent": body, "status": status.as_u16(), "detail": detail }),
+                )
             } else {
                 log::warn!("[webhook] {url} is unavailable ({status}) — worth trying again later");
-                ("unavailable".to_string(), json!({ "method": method, "url": url, "sent": body, "status": status.as_u16() }))
+                (
+                    "unavailable".to_string(),
+                    json!({ "method": method, "url": url, "sent": body, "status": status.as_u16() }),
+                )
             }
         }
         Err(problem) => {
             log::warn!("[webhook] could not reach {url}: {problem}");
-            ("failed".to_string(), json!({ "method": method, "url": url, "problem": problem.to_string() }))
+            (
+                "failed".to_string(),
+                json!({ "method": method, "url": url, "problem": problem.to_string() }),
+            )
         }
     }
 }
@@ -160,7 +184,10 @@ mod tests {
     #[tokio::test]
     async fn a_templated_body_still_parses_as_json() {
         let mut scope = Scope::for_integration(json!({ "caller": "+919949879837" }));
-        scope.record("Process call", json!({ "patient_name": "सात्या", "score": 8 }));
+        scope.record(
+            "Process call",
+            json!({ "patient_name": "सात्या", "score": 8 }),
+        );
 
         let template = r#"={"name": "{{ $json.patient_name }}", "score": {{ $json.score }}, "from": "{{ $call.caller }}"}"#;
         let filled = expression::resolve_text(template, &scope).await;

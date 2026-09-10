@@ -55,9 +55,13 @@ impl Histogram {
     }
 
     fn observe(&self, buckets: &[f64], value: f64) {
-        let index = buckets.iter().position(|b| value <= *b).unwrap_or(buckets.len());
+        let index = buckets
+            .iter()
+            .position(|b| value <= *b)
+            .unwrap_or(buckets.len());
         self.counts[index].fetch_add(1, Ordering::Relaxed);
-        self.sum_millis.fetch_add((value * 1000.0) as u64, Ordering::Relaxed);
+        self.sum_millis
+            .fetch_add((value * 1000.0) as u64, Ordering::Relaxed);
         self.total.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -108,7 +112,12 @@ fn labels(pairs: &[(&str, &str)]) -> String {
         // A label value with a quote or newline in it would produce a scrape
         // the collector cannot parse, which loses every series in the response
         // rather than just this one.
-        .map(|(k, v)| format!("{k}=\"{}\"", v.replace('\\', "").replace('"', "").replace('\n', " ")))
+        .map(|(k, v)| {
+            format!(
+                "{k}=\"{}\"",
+                v.replace('\\', "").replace('"', "").replace('\n', " ")
+            )
+        })
         .collect();
     format!("{{{}}}", inner.join(","))
 }
@@ -154,7 +163,10 @@ pub fn observe_call_duration(seconds: f64) {
 pub fn render() -> String {
     let mut out = String::with_capacity(4096);
 
-    let _ = writeln!(out, "# HELP sarvathra_build_info Version of the running bridge.");
+    let _ = writeln!(
+        out,
+        "# HELP sarvathra_build_info Version of the running bridge."
+    );
     let _ = writeln!(out, "# TYPE sarvathra_build_info gauge");
     let _ = writeln!(
         out,
@@ -200,7 +212,11 @@ pub fn render() -> String {
     }
     if let Some(h) = registry().call_duration.get() {
         let _ = writeln!(out, "# TYPE sarvathra_call_duration_seconds histogram");
-        h.render(&mut out, "sarvathra_call_duration_seconds", DURATION_BUCKETS);
+        h.render(
+            &mut out,
+            "sarvathra_call_duration_seconds",
+            DURATION_BUCKETS,
+        );
     }
 
     out
@@ -242,7 +258,10 @@ mod tests {
         count("sarvathra_test_total", &[("channel", "whatsapp")]);
         count("sarvathra_test_total", &[("channel", "whatsapp")]);
         let out = render();
-        assert!(out.contains("sarvathra_test_total{channel=\"whatsapp\"} 2"), "{out}");
+        assert!(
+            out.contains("sarvathra_test_total{channel=\"whatsapp\"} 2"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -263,7 +282,11 @@ mod tests {
         let out = render();
         let line = |le: &str| {
             out.lines()
-                .find(|l| l.starts_with(&format!("sarvathra_turn_latency_seconds_bucket{{le=\"{le}\"")))
+                .find(|l| {
+                    l.starts_with(&format!(
+                        "sarvathra_turn_latency_seconds_bucket{{le=\"{le}\""
+                    ))
+                })
                 .unwrap_or_default()
                 .rsplit(' ')
                 .next()
@@ -281,13 +304,20 @@ mod tests {
     fn a_label_cannot_break_the_scrape() {
         // One malformed line loses the whole response, not just its own series,
         // so a quote or a newline inside a value has to go.
-        count("sarvathra_test_quoted_total", &[("note", "he said \"hello\"\nand left")]);
+        count(
+            "sarvathra_test_quoted_total",
+            &[("note", "he said \"hello\"\nand left")],
+        );
         let out = render();
         let line = out
             .lines()
             .find(|l| l.starts_with("sarvathra_test_quoted_total"))
             .expect("the series is rendered");
-        assert_eq!(line.matches('"').count(), 2, "exactly the pair around the value: {line}");
+        assert_eq!(
+            line.matches('"').count(),
+            2,
+            "exactly the pair around the value: {line}"
+        );
         assert!(!line.contains('\n'));
         assert!(line.contains("he said hello and left"), "{line}");
     }

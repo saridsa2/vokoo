@@ -1,25 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import {
+    type DocumentLayoutItem,
+    type DocumentVersion,
+    type WorkspaceDocument,
+    clampDocumentInspectorWidth,
     documentProcessingLabel,
     documentUploadProblem,
-    normalizeDocumentEvidence,
-    normalizeCompilerRunReport,
     normalizeCompilerRecommendations,
+    normalizeCompilerRunReport,
+    normalizeDocumentEvidence,
     pdfPointBoxToViewport,
-    selectEvidenceLayout,
     selectDocument,
     selectDocumentVersion,
-    shouldPollDocumentJob,
+    selectEvidenceLayout,
     shouldPollCompilerRun,
+    shouldPollDocumentJob,
     validateHistoricalSearch,
-    type DocumentVersion,
-    type DocumentLayoutItem,
-    type WorkspaceDocument,
 } from "./document-workspace";
 
 const uuid = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+
+test("keeps the document inspector usable without crowding out the document", () => {
+    assert.equal(clampDocumentInspectorWidth(200, 1_600), 320);
+    assert.equal(clampDocumentInspectorWidth(520, 1_600), 520);
+    assert.equal(clampDocumentInspectorWidth(900, 1_600), 640);
+    assert.equal(clampDocumentInspectorWidth(520, 850), 320);
+});
 
 const layoutItem = (overrides: Partial<DocumentLayoutItem> = {}): DocumentLayoutItem => ({
     id: "layout-1",
@@ -32,12 +39,14 @@ const layoutItem = (overrides: Partial<DocumentLayoutItem> = {}): DocumentLayout
     section_path: ["Monitoring"],
     metadata: null,
     chunk_ids: ["chunk-1"],
-    spans: [{
-        page_number: 3,
-        bbox: { left: 72, top: 700, right: 300, bottom: 680, origin: "BOTTOMLEFT" },
-        char_start: 0,
-        char_end: 12,
-    }],
+    spans: [
+        {
+            page_number: 3,
+            bbox: { left: 72, top: 700, right: 300, bottom: 680, origin: "BOTTOMLEFT" },
+            char_start: 0,
+            char_end: 12,
+        },
+    ],
     ...overrides,
 });
 
@@ -55,12 +64,18 @@ test("converts bottom-left PDF points into top-left viewport rectangles", () => 
 test("evidence selects every linked box and navigates to the first linked page", () => {
     const selection = selectEvidenceLayout(
         [
-            layoutItem({ id: "later", ordinal: 4, spans: [{
-                page_number: 5,
-                bbox: { left: 10, top: 40, right: 30, bottom: 20, origin: "BOTTOMLEFT" },
-                char_start: 0,
-                char_end: 4,
-            }] }),
+            layoutItem({
+                id: "later",
+                ordinal: 4,
+                spans: [
+                    {
+                        page_number: 5,
+                        bbox: { left: 10, top: 40, right: 30, bottom: 20, origin: "BOTTOMLEFT" },
+                        char_start: 0,
+                        char_end: 4,
+                    },
+                ],
+            }),
             layoutItem(),
             layoutItem({ id: "unrelated", chunk_ids: ["chunk-2"] }),
         ],
@@ -70,7 +85,10 @@ test("evidence selects every linked box and navigates to the first linked page",
 
     assert.equal(selection.page, 3);
     assert.equal(selection.spans.length, 2);
-    assert.deepEqual(selection.spans.map((span) => span.item_id), ["layout-1", "later"]);
+    assert.deepEqual(
+        selection.spans.map((span) => span.item_id),
+        ["layout-1", "later"],
+    );
     assert.equal(selectEvidenceLayout([], "missing", 9).page, 9);
 });
 
@@ -96,14 +114,8 @@ test("selects the first document only when the current selection disappeared", (
 
 test("rejects files the document pipeline cannot safely inspect", () => {
     assert.equal(documentUploadProblem({ name: "guideline.pdf", type: "application/pdf", size: 2_000 }), null);
-    assert.match(
-        documentUploadProblem({ name: "scan.png", type: "image/png", size: 2_000 }) ?? "",
-        /PDF, Word, or plain text/,
-    );
-    assert.match(
-        documentUploadProblem({ name: "large.pdf", type: "application/pdf", size: 20 * 1024 * 1024 }) ?? "",
-        /15 MB/,
-    );
+    assert.match(documentUploadProblem({ name: "scan.png", type: "image/png", size: 2_000 }) ?? "", /PDF, Word, or plain text/);
+    assert.match(documentUploadProblem({ name: "large.pdf", type: "application/pdf", size: 20 * 1024 * 1024 }) ?? "", /15 MB/);
 });
 
 test("drops compiler recommendations outside the registered workspace catalogue", () => {
@@ -122,8 +134,39 @@ test("drops compiler recommendations outside the registered workspace catalogue"
         },
     ]);
 
-    assert.deepEqual(recommendations.map((item) => item.compiler_id), ["care_path"]);
+    assert.deepEqual(
+        recommendations.map((item) => item.compiler_id),
+        ["care_path"],
+    );
     assert.equal(recommendations[0].label, "Care path compiler");
+});
+
+test("merges duplicate recommendations for the same registered compiler", () => {
+    const recommendations = normalizeCompilerRecommendations([
+        {
+            compiler_id: "care_path",
+            confidence: 0.85,
+            reason: "A pediatric pathway is present.",
+            evidence: [{ page: 8, text: "Review children monthly." }],
+        },
+        {
+            compiler_id: "care_path",
+            confidence: 0.95,
+            reason: "The source defines a lifelong transplant pathway.",
+            evidence: [
+                { page: 90, text: "Lifelong follow-up is recommended." },
+                { page: 8, text: "Review children monthly." },
+            ],
+        },
+    ]);
+
+    assert.equal(recommendations.length, 1);
+    assert.equal(recommendations[0].confidence, 0.95);
+    assert.equal(recommendations[0].reason, "The source defines a lifelong transplant pathway.");
+    assert.deepEqual(
+        recommendations[0].evidence.map((item) => item.page),
+        [8, 90],
+    );
 });
 
 const version = (id: string, number: number): DocumentVersion => ({
@@ -233,30 +276,80 @@ test("normalizes compiler reports, sorts trace steps, and retains deleted artifa
             updated_at: "2026-09-08T00:00:03Z",
         },
         steps: [
-            { id: uuid("5"), sequence: 2, kind: "validate", status: "completed", task_key: "validation", result: { agent_count: 1 }, created_at: "2026-09-08T00:00:02Z" },
-            { id: uuid("4"), sequence: 1, kind: "plan", status: "completed", task_key: "supervisor", result: { summary: "Found monitoring guidance." }, created_at: "2026-09-08T00:00:01Z" },
+            {
+                id: uuid("5"),
+                sequence: 2,
+                kind: "validate",
+                status: "completed",
+                task_key: "validation",
+                result: { agent_count: 1 },
+                created_at: "2026-09-08T00:00:02Z",
+            },
+            {
+                id: uuid("4"),
+                sequence: 1,
+                kind: "plan",
+                status: "completed",
+                task_key: "supervisor",
+                result: { summary: "Found monitoring guidance." },
+                created_at: "2026-09-08T00:00:01Z",
+            },
         ],
-        gaps: [{
-            id: uuid("6"), step_id: null, code: "unsupported_action", severity: "warning",
-            recommendation_id: "NG28-1.6.1", explanation: "Medication prescribing is outside the catalogue.",
-            missing_capability: "prescribe.medication",
-            evidence: [{ chunk_id: uuid("10"), excerpt: "Consider treatment escalation.", role: "requirement" }],
-            review_status: "open", resolution_note: null,
-            created_at: "2026-09-08T00:00:02Z", updated_at: "2026-09-08T00:00:02Z",
-        }],
+        gaps: [
+            {
+                id: uuid("6"),
+                step_id: null,
+                code: "unsupported_action",
+                severity: "warning",
+                recommendation_id: "NG28-1.6.1",
+                explanation: "Medication prescribing is outside the catalogue.",
+                missing_capability: "prescribe.medication",
+                evidence: [{ chunk_id: uuid("10"), excerpt: "Consider treatment escalation.", role: "requirement" }],
+                review_status: "open",
+                resolution_note: null,
+                created_at: "2026-09-08T00:00:02Z",
+                updated_at: "2026-09-08T00:00:02Z",
+            },
+        ],
         artifacts: [
-            { id: uuid("7"), artifact_type: "flow", stable_key: "hba1c-monitoring", role: "care_path", agent_id: null, flow_id: uuid("8"), created_at: "2026-09-08T00:00:03Z" },
-            { id: uuid("9"), artifact_type: "agent", stable_key: "deleted-agent", role: "conversation", agent_id: null, flow_id: null, created_at: "2026-09-08T00:00:03Z" },
+            {
+                id: uuid("7"),
+                artifact_type: "flow",
+                stable_key: "hba1c-monitoring",
+                role: "care_path",
+                agent_id: null,
+                flow_id: uuid("8"),
+                created_at: "2026-09-08T00:00:03Z",
+            },
+            {
+                id: uuid("9"),
+                artifact_type: "agent",
+                stable_key: "deleted-agent",
+                role: "conversation",
+                agent_id: null,
+                flow_id: null,
+                created_at: "2026-09-08T00:00:03Z",
+            },
         ],
-        evidence: [{
-            id: uuid("11"), artifact_id: uuid("7"), target_path: "flow.nodes.request",
-            chunk_id: uuid("10"), excerpt: "Review HbA1c every three to six months.",
-            recommendation_id: "NG28-1.6.1", evidence_role: "timing", created_at: "2026-09-08T00:00:03Z",
-        }],
+        evidence: [
+            {
+                id: uuid("11"),
+                artifact_id: uuid("7"),
+                target_path: "flow.nodes.request",
+                chunk_id: uuid("10"),
+                excerpt: "Review HbA1c every three to six months.",
+                recommendation_id: "NG28-1.6.1",
+                evidence_role: "timing",
+                created_at: "2026-09-08T00:00:03Z",
+            },
+        ],
     });
 
     assert.ok(report);
-    assert.deepEqual(report.steps.map((step) => step.sequence), [1, 2]);
+    assert.deepEqual(
+        report.steps.map((step) => step.sequence),
+        [1, 2],
+    );
     assert.equal(report.gaps[0].severity, "warning");
     assert.equal(report.gaps[0].evidence[0].chunk_id, uuid("10"));
     assert.equal(report.artifacts[1].agent_id, null);
@@ -265,11 +358,22 @@ test("normalizes compiler reports, sorts trace steps, and retains deleted artifa
 
 test("rejects unknown compiler states and discards malformed nested report rows", () => {
     const base = {
-        id: uuid("1"), file_id: uuid("2"), file_version_id: uuid("3"), compiler_id: "care_path",
-        provider: "minimax", model: "MiniMax-M2.1", compiler_version: "care-path-v1",
-        prompt_version: "care-path-prompt-v1", attempt_count: 0, max_attempts: 3,
-        summary: null, coverage: {}, last_error_code: null,
-        created_at: "2026-09-08T00:00:00Z", started_at: null, completed_at: null,
+        id: uuid("1"),
+        file_id: uuid("2"),
+        file_version_id: uuid("3"),
+        compiler_id: "care_path",
+        provider: "minimax",
+        model: "MiniMax-M2.1",
+        compiler_version: "care-path-v1",
+        prompt_version: "care-path-prompt-v1",
+        attempt_count: 0,
+        max_attempts: 3,
+        summary: null,
+        coverage: {},
+        last_error_code: null,
+        created_at: "2026-09-08T00:00:00Z",
+        started_at: null,
+        completed_at: null,
         updated_at: "2026-09-08T00:00:00Z",
     };
     assert.equal(normalizeCompilerRunReport({ run: { ...base, status: "invented" }, steps: [], gaps: [], artifacts: [], evidence: [] }), null);
@@ -278,10 +382,28 @@ test("rejects unknown compiler states and discards malformed nested report rows"
         run: { ...base, status: "queued" },
         steps: [{ id: "not-a-uuid", sequence: 1, kind: "plan", status: "completed", result: {}, created_at: "now" }],
         gaps: [],
-        artifacts: [{ id: uuid("4"), artifact_type: "flow", stable_key: "bad", role: "care_path", flow_id: "javascript:alert(1)", agent_id: null, created_at: "now" }],
+        artifacts: [
+            { id: uuid("4"), artifact_type: "flow", stable_key: "bad", role: "care_path", flow_id: "javascript:alert(1)", agent_id: null, created_at: "now" },
+        ],
         evidence: [
-            { id: uuid("5"), artifact_id: uuid("4"), target_path: "<script>", chunk_id: uuid("6"), excerpt: "unsafe", evidence_role: "timing", created_at: "now" },
-            { id: uuid("7"), artifact_id: uuid("4"), target_path: "flow.nodes.safe", chunk_id: "bad", excerpt: "unsafe", evidence_role: "timing", created_at: "now" },
+            {
+                id: uuid("5"),
+                artifact_id: uuid("4"),
+                target_path: "<script>",
+                chunk_id: uuid("6"),
+                excerpt: "unsafe",
+                evidence_role: "timing",
+                created_at: "now",
+            },
+            {
+                id: uuid("7"),
+                artifact_id: uuid("4"),
+                target_path: "flow.nodes.safe",
+                chunk_id: "bad",
+                excerpt: "unsafe",
+                evidence_role: "timing",
+                created_at: "now",
+            },
         ],
     });
     assert.ok(report);

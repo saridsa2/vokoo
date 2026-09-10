@@ -26,6 +26,10 @@ pub use stt::core::{
 pub use llm::openai::{OpenAILLMConfig, OpenAILLMHandler};
 #[cfg(feature = "llm-sarvam")]
 pub use llm::sarvam::{SarvamLLMConfig, SarvamLLMHandler};
+pub use llm::FunctionRegistry;
+pub use realtime::gemini::{GeminiLiveConfig, GeminiLiveSession};
+pub use realtime::openai::{OpenAIRealtimeConfig, OpenAIRealtimeSession};
+pub use realtime::{RealtimeControls, RealtimeEvent, RealtimeProcessor, RealtimeSession};
 #[cfg(feature = "stt-deepgram")]
 pub use stt::deepgram::{DeepgramSttConfig, DeepgramSttHandler};
 #[cfg(feature = "stt-gnani")]
@@ -33,19 +37,12 @@ pub use stt::gnani::{GnaniSttConfig, GnaniSttHandler};
 #[cfg(feature = "stt-sarvam")]
 pub use stt::sarvam::{SarvamSttConfig, SarvamSttHandler};
 #[cfg(feature = "stt-60db")]
-pub use stt::sixtydb::{
-    SixtyDbEncoding,
-    SixtyDbSttConfig, SixtyDbSttHandler,
-};
-#[cfg(feature = "tts-sarvam")]
-pub use tts::sarvam::{SarvamTtsConfig, SarvamTtsHandler};
-#[cfg(feature = "tts-deepgram")]
-pub use tts::{DeepgramTtsConfig, DeepgramTtsHandler};
+pub use stt::sixtydb::{SixtyDbEncoding, SixtyDbSttConfig, SixtyDbSttHandler};
 #[cfg(feature = "tts-elevenlabs")]
 pub use tts::elevenlabs::{ElevenLabsTtsConfig, ElevenLabsTtsHandler};
 #[cfg(feature = "tts-piper")]
 pub use tts::piper::{PiperModel, PiperQuality, PiperTtsConfig, PiperTtsHandler};
-pub use realtime::gemini::{GeminiLiveConfig, GeminiLiveSession};
-pub use realtime::openai::{OpenAIRealtimeConfig, OpenAIRealtimeSession};
-pub use realtime::{RealtimeControls, RealtimeEvent, RealtimeProcessor, RealtimeSession};
-pub use llm::FunctionRegistry;
+#[cfg(feature = "tts-sarvam")]
+pub use tts::sarvam::{SarvamTtsConfig, SarvamTtsHandler};
+#[cfg(feature = "tts-deepgram")]
+pub use tts::{DeepgramTtsConfig, DeepgramTtsHandler};

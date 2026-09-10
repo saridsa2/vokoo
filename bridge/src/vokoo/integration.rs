@@ -42,7 +42,10 @@ pub fn contract_from_snapshot(snapshot: &Value) -> Result<InputContract, String>
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|node| node.get("implementation").and_then(Value::as_str) == Some("trigger.integration_invoked"))
+        .filter(|node| {
+            node.get("implementation").and_then(Value::as_str)
+                == Some("trigger.integration_invoked")
+        })
         .collect();
     if triggers.len() != 1 {
         return Err("an integration snapshot needs exactly one Integration invoked trigger".into());
@@ -69,7 +72,11 @@ pub fn contract_from_snapshot(snapshot: &Value) -> Result<InputContract, String>
 
 /// Clinical contracts use the vendored Rust models. Other workspace schemas
 /// use the JSON Schema subset authored by the console.
-pub fn validate_contract_payload(clinical_kind: Option<&str>, schema: &Value, input: &Value) -> Result<(), String> {
+pub fn validate_contract_payload(
+    clinical_kind: Option<&str>,
+    schema: &Value,
+    input: &Value,
+) -> Result<(), String> {
     validate_schema(schema, input)?;
     match clinical_kind {
         Some(kind) => super::clinical::validate_clinical_payload(kind, input),
@@ -171,7 +178,12 @@ fn validate_at(root: &Value, schema: &Value, input: &Value, path: &str) -> Resul
     Ok(())
 }
 
-fn enqueue_body(org_id: &str, source: &InvocationSource, prepared: &PreparedInvocation, target_version: i32) -> Value {
+fn enqueue_body(
+    org_id: &str,
+    source: &InvocationSource,
+    prepared: &PreparedInvocation,
+    target_version: i32,
+) -> Value {
     serde_json::json!({
         "p_org_id": org_id,
         "p_source_flow_id": source.flow_id,
@@ -203,7 +215,12 @@ async fn json_response(response: reqwest::Response, action: &str) -> Result<Valu
     serde_json::from_str(&body).map_err(|error| format!("{action} returned invalid JSON: {error}"))
 }
 
-async fn load_validated_target(base: &str, key: &str, org_id: &str, flow_id: &str) -> Result<ValidatedTarget, String> {
+async fn load_validated_target(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    flow_id: &str,
+) -> Result<ValidatedTarget, String> {
     let http = client()?;
     let flow_response = http
         .get(format!("{base}/rest/v1/flows"))
@@ -250,7 +267,10 @@ async fn load_validated_target(base: &str, key: &str, org_id: &str, flow_id: &st
         .and_then(|version| i32::try_from(version).ok())
         .filter(|version| *version > 0)
         .ok_or("published integration has an invalid version")?;
-    let contract = contract_from_snapshot(row.get("snapshot").ok_or("integration version has no snapshot")?)?;
+    let contract = contract_from_snapshot(
+        row.get("snapshot")
+            .ok_or("integration version has no snapshot")?,
+    )?;
 
     let schema_response = http
         .get(format!("{base}/rest/v1/structured_outputs"))
@@ -309,7 +329,12 @@ pub async fn enqueue(
 }
 
 /// Validate without writing, used by the editor's dry run.
-pub async fn validate(base: &str, key: &str, org_id: &str, prepared: &PreparedInvocation) -> Result<i32, String> {
+pub async fn validate(
+    base: &str,
+    key: &str,
+    org_id: &str,
+    prepared: &PreparedInvocation,
+) -> Result<i32, String> {
     let target = load_validated_target(base, key, org_id, &prepared.target_flow_id).await?;
     validate_contract_payload(
         target.contract.clinical_kind.as_deref(),
@@ -391,7 +416,12 @@ async fn append_event(
     .map(|_| ())
 }
 
-async fn execute_claimed(base: &str, key: &str, worker: &str, run: &ClaimedRun) -> Result<Value, RunFailure> {
+async fn execute_claimed(
+    base: &str,
+    key: &str,
+    worker: &str,
+    run: &ClaimedRun,
+) -> Result<Value, RunFailure> {
     let flow = super::graph::load_flow_version(
         base,
         key,
@@ -415,7 +445,12 @@ async fn execute_claimed(base: &str, key: &str, worker: &str, run: &ClaimedRun) 
     }
 
     let source_execution_id = run.source_execution_id.as_deref().unwrap_or_default();
-    let mut scope = Scope::for_invocation(run.input.clone(), &run.id, source_execution_id, run.attempt_count);
+    let mut scope = Scope::for_invocation(
+        run.input.clone(),
+        &run.id,
+        source_execution_id,
+        run.attempt_count,
+    );
     let invocation_input = run.input.clone();
     let mut current = Some(
         flow.entry_node(&super::graph::EntryPoint::new("integration.invoked"))
@@ -478,9 +513,13 @@ async fn execute_claimed(base: &str, key: &str, worker: &str, run: &ClaimedRun) 
             "code" => {
                 let source = node.config_str("source").unwrap_or_default();
                 if source.trim().is_empty() {
-                    ("failed".to_string(), serde_json::json!({ "problem": "nothing to run" }))
+                    (
+                        "failed".to_string(),
+                        serde_json::json!({ "problem": "nothing to run" }),
+                    )
                 } else {
-                    let value = super::expression::resolve(&format!("={{{{ {source} }}}}"), &scope).await;
+                    let value =
+                        super::expression::resolve(&format!("={{{{ {source} }}}}"), &scope).await;
                     if value.is_null() {
                         (
                             "failed".to_string(),
@@ -492,7 +531,9 @@ async fn execute_claimed(base: &str, key: &str, worker: &str, run: &ClaimedRun) 
                     }
                 }
             }
-            "http.request" => super::webhook::send(base, key, &flow.org_id, node, &scope, false).await,
+            "http.request" => {
+                super::webhook::send(base, key, &flow.org_id, node, &scope, false).await
+            }
             other => (
                 "failed".to_string(),
                 serde_json::json!({ "problem": format!("{other:?} is not integration-safe") }),
@@ -517,7 +558,12 @@ async fn execute_claimed(base: &str, key: &str, worker: &str, run: &ClaimedRun) 
         })?;
 
         let next = flow.next(&node_id, &outcome).map(str::to_owned);
-        if next.is_none() && matches!(outcome.as_str(), "failed" | "refused" | "unavailable" | "exhausted") {
+        if next.is_none()
+            && matches!(
+                outcome.as_str(),
+                "failed" | "refused" | "unavailable" | "exhausted"
+            )
+        {
             return Err(RunFailure {
                 message: output
                     .get("problem")
@@ -543,8 +589,8 @@ async fn work_once(base: &str, key: &str, worker: &str) -> Result<bool, String> 
     if claimed.is_null() {
         return Ok(false);
     }
-    let run: ClaimedRun =
-        serde_json::from_value(claimed).map_err(|error| format!("claim returned an invalid run: {error}"))?;
+    let run: ClaimedRun = serde_json::from_value(claimed)
+        .map_err(|error| format!("claim returned an invalid run: {error}"))?;
     let (stop_heartbeat, mut stopped) = tokio::sync::watch::channel(false);
     let heartbeat_base = base.to_owned();
     let heartbeat_key = key.to_owned();
@@ -633,15 +679,17 @@ pub async fn prepare(node: &FlowNode, scope: &Scope) -> Result<PreparedInvocatio
         .ok_or("Invoke integration has no target flow")?
         .to_owned();
 
-    let configured = node.config.get("input").ok_or("Invoke integration has no input")?;
+    let configured = node
+        .config
+        .get("input")
+        .ok_or("Invoke integration has no input")?;
     let resolved = match configured {
         Value::String(raw) => expression::resolve(raw, scope).await,
         value => value.clone(),
     };
     let input = match resolved {
-        Value::String(text) => {
-            serde_json::from_str(&text).map_err(|error| format!("Invoke integration input is not JSON: {error}"))?
-        }
+        Value::String(text) => serde_json::from_str(&text)
+            .map_err(|error| format!("Invoke integration input is not JSON: {error}"))?,
         value => value,
     };
 
@@ -749,13 +797,17 @@ mod tests {
     #[test]
     fn an_ambiguous_or_missing_invocation_trigger_is_rejected() {
         let missing = json!({ "graph": { "nodes": [] } });
-        assert!(contract_from_snapshot(&missing).unwrap_err().contains("exactly one"));
+        assert!(contract_from_snapshot(&missing)
+            .unwrap_err()
+            .contains("exactly one"));
 
         let duplicate = json!({ "graph": { "nodes": [
             { "implementation": "trigger.integration_invoked", "config": { "input_schema_id": "a" } },
             { "implementation": "trigger.integration_invoked", "config": { "input_schema_id": "b" } }
         ] } });
-        assert!(contract_from_snapshot(&duplicate).unwrap_err().contains("exactly one"));
+        assert!(contract_from_snapshot(&duplicate)
+            .unwrap_err()
+            .contains("exactly one"));
     }
 
     #[test]
@@ -770,16 +822,28 @@ mod tests {
             }
         });
 
-        validate_schema(&schema, &json!({ "name": "Mira", "priority": "urgent", "tags": ["lead"] })).expect("valid input");
-        assert!(validate_schema(&schema, &json!({ "name": "Mira", "tags": ["lead"] }))
-            .unwrap_err()
-            .contains("priority"));
-        assert!(validate_schema(&schema, &json!({ "name": 42, "priority": "later", "tags": ["lead"] }))
-            .unwrap_err()
-            .contains("name"));
-        assert!(validate_schema(&schema, &json!({ "name": "Mira", "priority": "urgent", "tags": [] }))
-            .unwrap_err()
-            .contains("at least 1"));
+        validate_schema(
+            &schema,
+            &json!({ "name": "Mira", "priority": "urgent", "tags": ["lead"] }),
+        )
+        .expect("valid input");
+        assert!(
+            validate_schema(&schema, &json!({ "name": "Mira", "tags": ["lead"] }))
+                .unwrap_err()
+                .contains("priority")
+        );
+        assert!(validate_schema(
+            &schema,
+            &json!({ "name": 42, "priority": "later", "tags": ["lead"] })
+        )
+        .unwrap_err()
+        .contains("name"));
+        assert!(validate_schema(
+            &schema,
+            &json!({ "name": "Mira", "priority": "urgent", "tags": [] })
+        )
+        .unwrap_err()
+        .contains("at least 1"));
     }
 
     #[test]

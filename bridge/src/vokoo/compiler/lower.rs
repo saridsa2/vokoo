@@ -20,7 +20,35 @@ pub fn lower(
     for recommendation in &program.recommendations {
         lower_recommendation(recommendation, &available, resources, &mut output);
     }
+    merge_gap_identities(&mut output.gaps);
     output
+}
+
+fn merge_gap_identities(gaps: &mut Vec<CompilerGap>) {
+    let mut merged = Vec::<CompilerGap>::new();
+    let mut indices = HashMap::<(String, String), usize>::new();
+    for gap in gaps.drain(..) {
+        let identity = (gap.code.clone(), gap.recommendation_id.clone());
+        if let Some(index) = indices.get(&identity).copied() {
+            let existing = &mut merged[index];
+            if existing.explanation != gap.explanation {
+                existing.explanation.push(' ');
+                existing.explanation.push_str(&gap.explanation);
+            }
+            if existing.missing_capability.is_none() {
+                existing.missing_capability = gap.missing_capability;
+            }
+            for evidence in gap.evidence {
+                if !existing.evidence.contains(&evidence) {
+                    existing.evidence.push(evidence);
+                }
+            }
+        } else {
+            indices.insert(identity, merged.len());
+            merged.push(gap);
+        }
+    }
+    *gaps = merged;
 }
 
 fn lower_recommendation(
@@ -52,10 +80,27 @@ fn lower_recommendation(
     let mut has_supported_action = false;
     for action in &recommendation.actions {
         match &action.operation {
-            ActionOperation::Request { .. } => {
+            ActionOperation::Request {
+                actor: RequestActor::Patient,
+                ..
+            } => {
                 required.push("outreach.request");
                 needs_escalation = true;
                 has_supported_action = true;
+            }
+            ActionOperation::Request { actor, .. } => {
+                output.gaps.push(CompilerGap {
+                    code: "unsupported_action_actor".into(),
+                    severity: GapSeverity::Blocking,
+                    recommendation_id: recommendation.id.clone(),
+                    explanation: format!(
+                        "A {}-directed request cannot be represented as patient outreach.",
+                        actor.as_str()
+                    ),
+                    missing_capability: Some("clinical.task".into()),
+                    evidence: action.evidence.clone(),
+                });
+                return;
             }
             ActionOperation::Conversation(_) => {
                 required.push("agent");
@@ -184,6 +229,7 @@ fn lower_recommendation(
         let action_id = stable_key(&action.key);
         let (component, config, success_outcome, agent_key) = match &action.operation {
             ActionOperation::Request {
+                actor: RequestActor::Patient,
                 what,
                 instructions,
                 expires_days,
@@ -202,6 +248,7 @@ fn lower_recommendation(
                     None,
                 )
             }
+            ActionOperation::Request { .. } => continue,
             ActionOperation::Conversation(conversation) => {
                 let key = format!("{recommendation_key}-{action_id}-agent");
                 output.agents.push(AgentDraft {

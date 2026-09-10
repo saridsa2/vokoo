@@ -35,8 +35,8 @@ use aisdk::core::tools::ToolExecute;
 use aisdk::core::{DynamicModel, LanguageModelRequest, Tool};
 use aisdk::providers::{Anthropic, OpenAI};
 use schemars::Schema;
-use serde_json::{json, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use super::graph::{vendor_secret, FlowNode};
 
@@ -126,10 +126,14 @@ pub struct DocumentInspection {
 /// JSON Schema constrains the normal path; this second boundary protects
 /// persisted or provider-mutated output before the console can act on it.
 pub fn bound_document_inspection(mut inspection: DocumentInspection) -> DocumentInspection {
-    inspection.recommendations.retain(|item| item.compiler_id == "care_path");
+    inspection
+        .recommendations
+        .retain(|item| item.compiler_id == "care_path");
     for recommendation in &mut inspection.recommendations {
         recommendation.confidence = recommendation.confidence.clamp(0.0, 1.0);
-        recommendation.evidence.retain(|item| !item.text.trim().is_empty());
+        recommendation
+            .evidence
+            .retain(|item| !item.text.trim().is_empty());
         recommendation.evidence.truncate(5);
     }
     inspection
@@ -156,7 +160,8 @@ pub async fn inspect_document(
         .as_str()
         .and_then(|value| value.strip_prefix("\\x"))
         .ok_or_else(|| "the document source was not returned as bytea".to_string())?;
-    let bytes = hex::decode(encoded).map_err(|error| format!("the document source is invalid: {error}"))?;
+    let bytes =
+        hex::decode(encoded).map_err(|error| format!("the document source is invalid: {error}"))?;
     let text = extract_document_text(mime_type, &bytes)?;
     if text.trim().is_empty() {
         return Err("the document contains no extractable text".into());
@@ -258,10 +263,15 @@ async fn load_document_version(
         .await
         .map_err(|error| format!("could not load the document: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!("could not load the document: answered {}", response.status()));
+        return Err(format!(
+            "could not load the document: answered {}",
+            response.status()
+        ));
     }
     let rows: Vec<Value> = response.json().await.map_err(|error| error.to_string())?;
-    rows.into_iter().next().ok_or_else(|| "the document version was not found".into())
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| "the document version was not found".into())
 }
 
 async fn ask_document(
@@ -304,7 +314,8 @@ async fn ask_document(
             },
             "gaps": {"type": "array", "items": {"type": "string"}}
         }
-    })).map_err(|error| format!("could not build the routing schema: {error}"))?;
+    }))
+    .map_err(|error| format!("could not build the routing schema: {error}"))?;
     let captured: Arc<Mutex<Option<DocumentInspection>>> = Arc::new(Mutex::new(None));
     let sink = Arc::clone(&captured);
     let tool = Tool::builder()
@@ -314,7 +325,9 @@ async fn ask_document(
         .execute(ToolExecute::from_sync(move |_context, value: Value| {
             let inspection = serde_json::from_value(value)
                 .map_err(|error| aisdk::error::Error::ToolCallError(error.to_string()))?;
-            *sink.lock().map_err(|_| aisdk::error::Error::ToolCallError("routing lock poisoned".into()))? = Some(inspection);
+            *sink.lock().map_err(|_| {
+                aisdk::error::Error::ToolCallError("routing lock poisoned".into())
+            })? = Some(inspection);
             Ok("routing recorded".to_string())
         }))
         .build()
@@ -329,16 +342,38 @@ async fn ask_document(
 
     if let Some(base_url) = anthropic_base(provider) {
         let chosen = Anthropic::<DynamicModel>::builder()
-            .model_name(model).api_key(secret).base_url(base_url).build()
+            .model_name(model)
+            .api_key(secret)
+            .base_url(base_url)
+            .build()
             .map_err(|error| format!("could not build the {provider} client: {error}"))?;
-        LanguageModelRequest::builder().model(chosen).system(system).prompt(prompt)
-            .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
+        LanguageModelRequest::builder()
+            .model(chosen)
+            .system(system)
+            .prompt(prompt)
+            .with_tool(tool)
+            .body(body)
+            .stop_when(|_| true)
+            .build()
+            .generate_text()
+            .await
             .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
     } else {
-        let chosen = OpenAI::<DynamicModel>::builder().model_name(model).api_key(secret).build()
+        let chosen = OpenAI::<DynamicModel>::builder()
+            .model_name(model)
+            .api_key(secret)
+            .build()
             .map_err(|error| format!("could not build the openai client: {error}"))?;
-        LanguageModelRequest::builder().model(chosen).system(system).prompt(prompt)
-            .with_tool(tool).body(body).stop_when(|_| true).build().generate_text().await
+        LanguageModelRequest::builder()
+            .model(chosen)
+            .system(system)
+            .prompt(prompt)
+            .with_tool(tool)
+            .body(body)
+            .stop_when(|_| true)
+            .build()
+            .generate_text()
+            .await
             .map_err(|error| format!("could not reach Workspace Intelligence: {error}"))?;
     }
     let result = captured
@@ -350,8 +385,7 @@ async fn ask_document(
 }
 
 fn numbered_document(text: &str) -> String {
-    text
-        .split('\u{000c}')
+    text.split('\u{000c}')
         .enumerate()
         .map(|(index, page)| format!("[physical page {}]\n{}", index + 1, page))
         .collect::<Vec<_>>()
@@ -373,23 +407,44 @@ async fn store_document_inspection(
     let client = http()?;
     let version_response = client
         .patch(format!("{base}/rest/v1/file_versions"))
-        .query(&[("org_id", format!("eq.{org_id}")), ("file_id", format!("eq.{document_id}")), ("version", format!("eq.{version}"))])
-        .header("apikey", key).header("Authorization", format!("Bearer {key}"))
+        .query(&[
+            ("org_id", format!("eq.{org_id}")),
+            ("file_id", format!("eq.{document_id}")),
+            ("version", format!("eq.{version}")),
+        ])
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
         .json(&json!({ "status": "analyzed", "extracted_text": text, "intelligence": inspection }))
-        .send().await.map_err(|error| error.to_string())?;
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
     if !version_response.status().is_success() {
-        return Err(format!("could not store the document analysis: answered {}", version_response.status()));
+        return Err(format!(
+            "could not store the document analysis: answered {}",
+            version_response.status()
+        ));
     }
     let file_response = client
         .patch(format!("{base}/rest/v1/files"))
-        .query(&[("org_id", format!("eq.{org_id}")), ("id", format!("eq.{document_id}"))])
-        .header("apikey", key).header("Authorization", format!("Bearer {key}"))
+        .query(&[
+            ("org_id", format!("eq.{org_id}")),
+            ("id", format!("eq.{document_id}")),
+        ])
+        .header("apikey", key)
+        .header("Authorization", format!("Bearer {key}"))
         .header("Content-Type", "application/json")
         .json(&json!({ "status": "analyzed", "intelligence": inspection }))
-        .send().await.map_err(|error| error.to_string())?;
-    if file_response.status().is_success() { Ok(()) } else {
-        Err(format!("could not update the document: answered {}", file_response.status()))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if file_response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "could not update the document: answered {}",
+            file_response.status()
+        ))
     }
 }
 
@@ -448,7 +503,9 @@ pub async fn run(
     };
     let (provider, model) = (provider.as_str(), model.as_str());
     if !is_reader(provider) {
-        log::warn!("[intelligence] {provider} cannot read a call — use anthropic, minimax or openai");
+        log::warn!(
+            "[intelligence] {provider} cannot read a call — use anthropic, minimax or openai"
+        );
         return ("failed".to_string(), None);
     }
 
@@ -460,7 +517,16 @@ pub async fn run(
         }
     };
 
-    let extracted = match ask(provider, &secret, model, &shape, context, node.config_str("instruction")).await {
+    let extracted = match ask(
+        provider,
+        &secret,
+        model,
+        &shape,
+        context,
+        node.config_str("instruction"),
+    )
+    .await
+    {
         Ok(value) => value,
         Err(problem) => {
             log::warn!("[intelligence] {provider}/{model}: {problem}");
@@ -491,8 +557,10 @@ pub async fn run(
         }
     }
 
-    log::info!("[intelligence] filled in {} field(s) from {lines} line(s)",
-        extracted.as_object().map(|o| o.len()).unwrap_or(0));
+    log::info!(
+        "[intelligence] filled in {} field(s) from {lines} line(s)",
+        extracted.as_object().map(|o| o.len()).unwrap_or(0)
+    );
     ("ok".to_string(), Some(extracted))
 }
 
@@ -528,7 +596,10 @@ async fn load_shape(base: &str, key: &str, shape_id: &str) -> Result<Value, Stri
     let client = http()?;
     let response = client
         .get(format!("{base}/rest/v1/structured_outputs"))
-        .query(&[("id", format!("eq.{shape_id}")), ("select", "name,description,schema".into())])
+        .query(&[
+            ("id", format!("eq.{shape_id}")),
+            ("select", "name,description,schema".into()),
+        ])
         .header("apikey", key)
         .header("Authorization", format!("Bearer {key}"))
         .send()
@@ -536,7 +607,9 @@ async fn load_shape(base: &str, key: &str, shape_id: &str) -> Result<Value, Stri
         .map_err(|e| format!("could not read the shape: {e}"))?;
 
     let rows: Vec<Value> = response.json().await.map_err(|e| e.to_string())?;
-    rows.into_iter().next().ok_or_else(|| format!("no shape with id {shape_id}"))
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| format!("no shape with id {shape_id}"))
 }
 
 /// One completion, with the shape enforced by a forced tool call.
@@ -578,10 +651,11 @@ async fn ask(
         })
         .unwrap_or_default();
 
-    let mut system = "Read the phone call and fill in the shape you have been given. Use only what \
+    let mut system =
+        "Read the phone call and fill in the shape you have been given. Use only what \
          the call actually says: leave a field out rather than guessing at it, because whatever \
          reads this cannot tell an invented value from an observed one."
-        .to_string();
+            .to_string();
     if let Some(extra) = instruction.filter(|extra| !extra.trim().is_empty()) {
         system.push_str("\n\n");
         system.push_str(extra);
@@ -598,7 +672,11 @@ async fn ask(
     let when = context
         .get("started_at")
         .and_then(Value::as_str)
-        .map(|at| format!("This call took place on {at}. Any date the caller gives is relative to that.\n\n"))
+        .map(|at| {
+            format!(
+                "This call took place on {at}. Any date the caller gives is relative to that.\n\n"
+            )
+        })
         .unwrap_or_default();
 
     let prompt = format!("{when}Call transcript:\n\n{transcript}");
@@ -614,8 +692,8 @@ async fn ask(
         .get("schema")
         .cloned()
         .unwrap_or_else(|| json!({ "type": "object" }));
-    let input_schema = Schema::try_from(raw)
-        .map_err(|e| format!("the shape is not a usable JSON Schema: {e}"))?;
+    let input_schema =
+        Schema::try_from(raw).map_err(|e| format!("the shape is not a usable JSON Schema: {e}"))?;
 
     // Where the arguments land. The tool's body is the only place they exist:
     // the crate hands them to `execute` and keeps no copy to read afterwards.
@@ -698,7 +776,12 @@ async fn ask(
             "the model answered without calling the tool it was required to call. It said: {}",
             // `text()` is an Option: a reply that was only a tool call carries
             // no prose at all, which is the successful case rather than a fault.
-            answered.text().unwrap_or_default().chars().take(200).collect::<String>()
+            answered
+                .text()
+                .unwrap_or_default()
+                .chars()
+                .take(200)
+                .collect::<String>()
         )
     })
 }
@@ -748,7 +831,13 @@ async fn meter(
     Err(format!(
         "the ledger answered {}: {}",
         response.status(),
-        response.text().await.unwrap_or_default().chars().take(200).collect::<String>()
+        response
+            .text()
+            .await
+            .unwrap_or_default()
+            .chars()
+            .take(200)
+            .collect::<String>()
     ))
 }
 
@@ -804,7 +893,9 @@ mod tests {
         let reading = reply["content"]
             .as_array()
             .and_then(|blocks| {
-                blocks.iter().find(|b| b["type"] == "tool_use" && b["name"] == RECORD_TOOL)
+                blocks
+                    .iter()
+                    .find(|b| b["type"] == "tool_use" && b["name"] == RECORD_TOOL)
             })
             .map(|block| block["input"].clone())
             .expect("the tool call carries the reading");
@@ -827,7 +918,10 @@ mod tests {
             .as_array()
             .and_then(|blocks| blocks.iter().find(|b| b["type"] == "tool_use"));
 
-        assert!(reading.is_none(), "prose must not be read as a filled-in shape");
+        assert!(
+            reading.is_none(),
+            "prose must not be read as a filled-in shape"
+        );
     }
 
     #[test]
@@ -911,7 +1005,10 @@ mod tests {
         let citation = &bounded.recommendations[0].evidence[0];
         assert_eq!(citation.page, Some(7));
         assert_eq!(citation.page_end, Some(8));
-        assert_eq!(citation.section_path, evidence.representative_chunks[0].section_path);
+        assert_eq!(
+            citation.section_path,
+            evidence.representative_chunks[0].section_path
+        );
     }
 
     #[test]

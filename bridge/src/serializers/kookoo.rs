@@ -200,8 +200,11 @@ impl CallCapture {
         };
 
         if let Ok(mut f) = self.file.lock() {
-            let _ = writeln!(f, r#"{{"n":{n},"media":{is_media},"raw":{}}}"#,
-                serde_json::Value::String(raw.to_string()));
+            let _ = writeln!(
+                f,
+                r#"{{"n":{n},"media":{is_media},"raw":{}}}"#,
+                serde_json::Value::String(raw.to_string())
+            );
             let _ = f.flush();
         }
     }
@@ -419,8 +422,8 @@ impl FrameSerializer for KooKooFrameSerializer {
         // Log before interpreting, so anything we fail to understand is still
         // on disk. Undocumented events would otherwise vanish silently.
         if let Some(c) = &self.capture {
-            let is_media = event == "media"
-                && msg.get("type").and_then(|v| v.as_str()) != Some("dtmf");
+            let is_media =
+                event == "media" && msg.get("type").and_then(|v| v.as_str()) != Some("dtmf");
             c.note(text, is_media);
         }
 
@@ -485,7 +488,10 @@ mod tests {
     fn serializer() -> KooKooFrameSerializer {
         KooKooFrameSerializer::new(
             "21275806501458167",
-            KooKooInputParams { auto_hang_up: false, ..Default::default() },
+            KooKooInputParams {
+                auto_hang_up: false,
+                ..Default::default()
+            },
         )
     }
 
@@ -551,11 +557,18 @@ mod tests {
         let mut s = serializer();
         s.setup(8000, 8000).await;
 
-        let pcm: Vec<u8> = vec![0i16; 80].iter().flat_map(|x| x.to_le_bytes()).collect();
-        s.serialize(&Frame::output_audio(pcm, 8000, 1)).await.unwrap();
+        let pcm: Vec<u8> = vec![0i16; 80]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        s.serialize(&Frame::output_audio(pcm, 8000, 1))
+            .await
+            .unwrap();
 
         let out = s.serialize(&Frame::interruption()).await.unwrap();
-        let SerializedOutput::Text(json) = out else { panic!("expected text") };
+        let SerializedOutput::Text(json) = out else {
+            panic!("expected text")
+        };
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["command"], "clearBuffer");
         assert_eq!(v["sessionId"], "21275806501458167");
@@ -571,9 +584,17 @@ mod tests {
 
         let mut seqids = Vec::new();
         for _ in 0..3 {
-            let pcm: Vec<u8> = vec![1234i16; 80].iter().flat_map(|x| x.to_le_bytes()).collect();
-            let out = s.serialize(&Frame::output_audio(pcm, 8000, 1)).await.unwrap();
-            let SerializedOutput::Text(json) = out else { panic!("expected text") };
+            let pcm: Vec<u8> = vec![1234i16; 80]
+                .iter()
+                .flat_map(|x| x.to_le_bytes())
+                .collect();
+            let out = s
+                .serialize(&Frame::output_audio(pcm, 8000, 1))
+                .await
+                .unwrap();
+            let SerializedOutput::Text(json) = out else {
+                panic!("expected text")
+            };
             let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
             assert_eq!(v["event"], "media");
@@ -593,13 +614,25 @@ mod tests {
         s.setup(8000, 8000).await;
 
         // 40 samples — half a packet. Must produce nothing rather than pad.
-        let pcm: Vec<u8> = vec![7i16; 40].iter().flat_map(|x| x.to_le_bytes()).collect();
-        assert!(s.serialize(&Frame::output_audio(pcm, 8000, 1)).await.is_none());
+        let pcm: Vec<u8> = vec![7i16; 40]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        assert!(s
+            .serialize(&Frame::output_audio(pcm, 8000, 1))
+            .await
+            .is_none());
         assert_eq!(s.out_pending.len(), 40);
 
         // Another 40 completes it.
-        let pcm: Vec<u8> = vec![7i16; 40].iter().flat_map(|x| x.to_le_bytes()).collect();
-        assert!(s.serialize(&Frame::output_audio(pcm, 8000, 1)).await.is_some());
+        let pcm: Vec<u8> = vec![7i16; 40]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        assert!(s
+            .serialize(&Frame::output_audio(pcm, 8000, 1))
+            .await
+            .is_some());
         assert!(s.out_pending.is_empty());
     }
 
@@ -640,7 +673,10 @@ mod tests {
     async fn audio_survives_8k_to_16k_and_back() {
         let mut s = serializer();
         s.setup(16_000, 16_000).await;
-        assert!(s.input_resampler.is_some(), "16k pipeline must resample inbound");
+        assert!(
+            s.input_resampler.is_some(),
+            "16k pipeline must resample inbound"
+        );
 
         let input = tone(8000, 1.0, 440.0, 0.5);
 
@@ -663,7 +699,11 @@ mod tests {
             if let Some(SerializedOutput::Text(t)) = s.serialize(&out).await {
                 let v: serde_json::Value = serde_json::from_str(&t).unwrap();
                 let arr = v["data"]["samples"].as_array().unwrap();
-                assert_eq!(arr.len(), KOOKOO_FRAME_SAMPLES, "every packet is 80 samples");
+                assert_eq!(
+                    arr.len(),
+                    KOOKOO_FRAME_SAMPLES,
+                    "every packet is 80 samples"
+                );
                 echoed.extend(arr.iter().map(|x| x.as_i64().unwrap() as i16));
             }
         }
@@ -726,7 +766,10 @@ mod tests {
                 run = 0;
             }
         }
-        assert!(worst < 20, "found {worst} consecutive zero samples — looks like frame padding");
+        assert!(
+            worst < 20,
+            "found {worst} consecutive zero samples — looks like frame padding"
+        );
     }
 
     #[tokio::test]
@@ -734,7 +777,9 @@ mod tests {
         let mut s = KooKooFrameSerializer::new("ucid-1", KooKooInputParams::default());
         s.setup(8000, 8000).await;
         let out = s.serialize(&Frame::end()).await.unwrap();
-        let SerializedOutput::Text(json) = out else { panic!("expected text") };
+        let SerializedOutput::Text(json) = out else {
+            panic!("expected text")
+        };
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["command"], "callDisconnect");
         assert_eq!(v["causeCode"], 200);

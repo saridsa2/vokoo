@@ -32,6 +32,13 @@ class ModalContractTests(unittest.TestCase):
         self.assertIn("[staged]/source.pdf: CUDA failed", diagnostic)
         self.assertLessEqual(len(diagnostic.encode("utf-8")), 2048)
 
+    def test_only_heading_hierarchy_unicode_panics_use_the_layout_fallback(self):
+        panic = "crates/docling-pdf/src/heading_hierarchy.rs:213: not a char boundary"
+
+        self.assertTrue(modal_contract.should_retry_without_heading_hierarchy(101, panic))
+        self.assertFalse(modal_contract.should_retry_without_heading_hierarchy(1, "invalid PDF"))
+        self.assertFalse(modal_contract.should_retry_without_heading_hierarchy(0, panic))
+
 
 if __name__ == "__main__":
     unittest.main()

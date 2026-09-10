@@ -177,7 +177,9 @@ impl<'a> VoicesService<'a> {
         let boundary = format!("----ElevenLabsSDK{}", uuid_v4_simple());
         let body = build_add_voice_multipart(&boundary, request, files);
         let content_type = format!("multipart/form-data; boundary={boundary}");
-        self.client.post_multipart("/v1/voices/add", body, &content_type).await
+        self.client
+            .post_multipart("/v1/voices/add", body, &content_type)
+            .await
     }
 
     /// Edits an existing voice.
@@ -401,7 +403,9 @@ impl<'a> VoicesService<'a> {
 
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
         let content_type = format!("multipart/form-data; boundary={boundary}");
-        self.client.post_multipart("/v1/similar-voices", body, &content_type).await
+        self.client
+            .post_multipart("/v1/similar-voices", body, &content_type)
+            .await
     }
 
     /// Lists voices using the v2 API with pagination.
@@ -462,7 +466,10 @@ impl<'a> VoicesService<'a> {
 /// does not collide with body content.
 pub(crate) fn uuid_v4_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     format!("{nanos:032x}")
 }
 
@@ -562,7 +569,6 @@ fn build_edit_voice_multipart(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
 
 // VENDOR CHANGE: the upstream crate's tests for this module were removed.
 // They construct the hpx-based ElevenLabsClient and import `config`/`types`,

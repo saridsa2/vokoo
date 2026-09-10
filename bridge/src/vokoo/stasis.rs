@@ -35,7 +35,7 @@ use std::sync::Arc;
 use futures::StreamExt;
 use tokio::sync::Mutex;
 
-use super::ari::{Ari, AriEvent, parse_event};
+use super::ari::{parse_event, Ari, AriEvent};
 
 /// What the dialplan calls this application.
 pub const APP: &str = "sarvathra";
@@ -73,7 +73,10 @@ impl Switchboard {
     }
 
     async fn insert(&self, uuid: &str, call: Switched) {
-        self.by_channel.lock().await.insert(call.caller.clone(), uuid.to_string());
+        self.by_channel
+            .lock()
+            .await
+            .insert(call.caller.clone(), uuid.to_string());
         self.inner.lock().await.insert(uuid.to_string(), call);
     }
 
@@ -109,14 +112,20 @@ impl Switchboard {
         if let Some(call) = self.inner.lock().await.get_mut(uuid) {
             call.human = Some(channel.to_string());
         }
-        self.by_channel.lock().await.insert(channel.to_string(), uuid.to_string());
+        self.by_channel
+            .lock()
+            .await
+            .insert(channel.to_string(), uuid.to_string());
     }
 
     async fn set_agent(&self, uuid: &str, channel: &str) {
         if let Some(call) = self.inner.lock().await.get_mut(uuid) {
             call.agent = Some(channel.to_string());
         }
-        self.by_channel.lock().await.insert(channel.to_string(), uuid.to_string());
+        self.by_channel
+            .lock()
+            .await
+            .insert(channel.to_string(), uuid.to_string());
     }
 
     async fn remove(&self, uuid: &str) -> Option<Switched> {
@@ -390,13 +399,16 @@ async fn on_start(
             };
 
             board
-                .insert(uuid, Switched {
-                    bridge: bridge.clone(),
-                    caller: channel.to_string(),
-                    agent: None,
-                    human: None,
-                    escalating: false,
-                })
+                .insert(
+                    uuid,
+                    Switched {
+                        bridge: bridge.clone(),
+                        caller: channel.to_string(),
+                        agent: None,
+                        human: None,
+                        escalating: false,
+                    },
+                )
                 .await;
 
             if let Err(e) = ari.add_to_bridge(&bridge, &[channel]).await {
@@ -411,7 +423,10 @@ async fn on_start(
             // announced under, so our AudioSocket server matches it to the
             // pending call without a second registry.
             let args = format!("agent,{uuid}");
-            match ari.originate_audiosocket(audiosocket, &agent_uuid, APP, &args, None).await {
+            match ari
+                .originate_audiosocket(audiosocket, &agent_uuid, APP, &args, None)
+                .await
+            {
                 Ok(agent) => {
                     log::info!("[stasis] {uuid} — caller {channel} bridged, agent {agent} dialing");
                     board.set_agent(uuid, &agent).await;
@@ -442,11 +457,17 @@ async fn on_start(
                 return;
             };
             if let Err(e) = ari.add_to_bridge(&call.bridge, &[channel]).await {
-                log::error!("[stasis] agent {channel} did not enter {}: {e}", call.bridge);
+                log::error!(
+                    "[stasis] agent {channel} did not enter {}: {e}",
+                    call.bridge
+                );
                 ari.hangup(channel).await;
                 return;
             }
-            log::info!("[stasis] {uuid} — agent {channel} in the bridge, {} call(s) up", board.len().await);
+            log::info!(
+                "[stasis] {uuid} — agent {channel} in the bridge, {} call(s) up",
+                board.len().await
+            );
         }
 
         // A supervisor who picked up. Everything happens now rather than at
@@ -457,9 +478,10 @@ async fn on_start(
         // `StasisEnd` look like a leg of the conversation leaving, which is how
         // `on_end` decides to hang up the caller.
         "supervisor" => {
-            let (Some(uuid), Some(mode)) =
-                (args.get(1), args.get(2).map(String::as_str).and_then(Monitor::parse))
-            else {
+            let (Some(uuid), Some(mode)) = (
+                args.get(1),
+                args.get(2).map(String::as_str).and_then(Monitor::parse),
+            ) else {
                 log::warn!("[stasis] supervisor {channel} carries no call or mode");
                 ari.hangup(channel).await;
                 return;
@@ -487,7 +509,10 @@ async fn on_start(
                         ),
                         _ => (call.caller.as_str(), "none"),
                     };
-                    match ari.snoop(target, "both", whisper, APP, &format!("snoop,{uuid}")).await {
+                    match ari
+                        .snoop(target, "both", whisper, APP, &format!("snoop,{uuid}"))
+                        .await
+                    {
                         // A bridge of their own, not the call's: a copy put
                         // back into the conversation it is a copy of would
                         // feed the call its own audio.
@@ -529,8 +554,12 @@ async fn on_start(
 /// caller is left in a bridge on their own, which is where an escalation would
 /// put a human instead.
 async fn on_end(ari: &Ari, board: &Switchboard, channel: &str) {
-    let Some(uuid) = board.uuid_for(channel).await else { return };
-    let Some(call) = board.get(&uuid).await else { return };
+    let Some(uuid) = board.uuid_for(channel).await else {
+        return;
+    };
+    let Some(call) = board.get(&uuid).await else {
+        return;
+    };
 
     if call.caller == channel {
         log::info!("[stasis] {uuid} — caller gone, tearing down");
@@ -575,13 +604,25 @@ mod tests {
         // back to the same uuid or a teardown finds nothing and leaks a bridge.
         let board = Switchboard::new();
         board
-            .insert("u1", Switched { bridge: "b1".into(), caller: "caller-1".into(), agent: None, human: None, escalating: false })
+            .insert(
+                "u1",
+                Switched {
+                    bridge: "b1".into(),
+                    caller: "caller-1".into(),
+                    agent: None,
+                    human: None,
+                    escalating: false,
+                },
+            )
             .await;
         board.set_agent("u1", "agent-1").await;
 
         assert_eq!(board.uuid_for("caller-1").await.as_deref(), Some("u1"));
         assert_eq!(board.uuid_for("agent-1").await.as_deref(), Some("u1"));
-        assert_eq!(board.get("u1").await.unwrap().agent.as_deref(), Some("agent-1"));
+        assert_eq!(
+            board.get("u1").await.unwrap().agent.as_deref(),
+            Some("agent-1")
+        );
     }
 
     #[tokio::test]
@@ -590,7 +631,16 @@ mod tests {
         // the leak this project already fixed once in PendingCalls.
         let board = Switchboard::new();
         board
-            .insert("u2", Switched { bridge: "b2".into(), caller: "c2".into(), agent: None, human: None, escalating: false })
+            .insert(
+                "u2",
+                Switched {
+                    bridge: "b2".into(),
+                    caller: "c2".into(),
+                    agent: None,
+                    human: None,
+                    escalating: false,
+                },
+            )
             .await;
         board.set_agent("u2", "a2").await;
 
@@ -608,21 +658,41 @@ mod tests {
         // is a leg whose hangup is either ignored or mistaken for the end.
         let board = Switchboard::new();
         board
-            .insert("u3", Switched { bridge: "b3".into(), caller: "c3".into(), agent: None, human: None, escalating: false })
+            .insert(
+                "u3",
+                Switched {
+                    bridge: "b3".into(),
+                    caller: "c3".into(),
+                    agent: None,
+                    human: None,
+                    escalating: false,
+                },
+            )
             .await;
         board.set_agent("u3", "ai-3").await;
         board.add_human("u3", "human-3").await;
 
         let call = board.get("u3").await.unwrap();
-        assert_eq!(call.agent.as_deref(), Some("ai-3"), "the AI stays after a handover");
+        assert_eq!(
+            call.agent.as_deref(),
+            Some("ai-3"),
+            "the AI stays after a handover"
+        );
         assert_eq!(call.human.as_deref(), Some("human-3"));
         for channel in ["c3", "ai-3", "human-3"] {
-            assert_eq!(board.uuid_for(channel).await.as_deref(), Some("u3"), "{channel}");
+            assert_eq!(
+                board.uuid_for(channel).await.as_deref(),
+                Some("u3"),
+                "{channel}"
+            );
         }
 
         board.remove("u3").await;
         for channel in ["c3", "ai-3", "human-3"] {
-            assert!(board.uuid_for(channel).await.is_none(), "{channel} forgotten");
+            assert!(
+                board.uuid_for(channel).await.is_none(),
+                "{channel} forgotten"
+            );
         }
     }
 

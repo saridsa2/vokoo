@@ -19,13 +19,20 @@ pub type Outcome = String;
 /// What the bridge should do next.
 pub enum NodeAction<'a> {
     /// Hand the caller to this agent and report how it finished.
-    RunAgent { node: &'a FlowNode, agent_id: String, timeout_seconds: u64 },
+    RunAgent {
+        node: &'a FlowNode,
+        agent_id: String,
+        timeout_seconds: u64,
+    },
     /// Stop talking and stay on the line, transcribing, until the call ends.
     ///
     /// Like [`RunAgent`](Self::RunAgent) this suspends the walk — but unlike it
     /// there is no outcome to wait for. The agent has nothing left to decide;
     /// the carrier decides when the call is over.
-    Monitor { node: &'a FlowNode, timeout_seconds: u64 },
+    Monitor {
+        node: &'a FlowNode,
+        timeout_seconds: u64,
+    },
     /// Ask the caller to press a key, and come back with which one.
     ///
     /// Unlike the two above, this suspends the walk *without* a pipeline: the
@@ -184,10 +191,18 @@ impl<'a> FlowRunner<'a> {
                 let agent_id = node.config_str("agent_id").unwrap_or_default().to_string();
                 let timeout = node
                     .config_i64("timeout_seconds")
-                    .or_else(|| self.flow.definition(node).and_then(|d| d.default_timeout_seconds))
+                    .or_else(|| {
+                        self.flow
+                            .definition(node)
+                            .and_then(|d| d.default_timeout_seconds)
+                    })
                     .unwrap_or(600)
                     .max(1) as u64;
-                return NodeAction::RunAgent { node, agent_id, timeout_seconds: timeout };
+                return NodeAction::RunAgent {
+                    node,
+                    agent_id,
+                    timeout_seconds: timeout,
+                };
             }
 
             if node.implementation == "agent.monitor" {
@@ -197,10 +212,17 @@ impl<'a> FlowRunner<'a> {
                 // as long as the process lives.
                 let timeout = node
                     .config_i64("timeout_seconds")
-                    .or_else(|| self.flow.definition(node).and_then(|d| d.default_timeout_seconds))
+                    .or_else(|| {
+                        self.flow
+                            .definition(node)
+                            .and_then(|d| d.default_timeout_seconds)
+                    })
                     .unwrap_or(7200)
                     .max(1) as u64;
-                return NodeAction::Monitor { node, timeout_seconds: timeout };
+                return NodeAction::Monitor {
+                    node,
+                    timeout_seconds: timeout,
+                };
             }
 
             if self.preview
@@ -275,7 +297,11 @@ impl<'a> FlowRunner<'a> {
 
                 let timeout = node
                     .config_i64("timeout_seconds")
-                    .or_else(|| self.flow.definition(node).and_then(|d| d.default_timeout_seconds))
+                    .or_else(|| {
+                        self.flow
+                            .definition(node)
+                            .and_then(|d| d.default_timeout_seconds)
+                    })
                     .unwrap_or(8)
                     .max(1) as u64;
 
@@ -338,7 +364,11 @@ impl<'a> FlowRunner<'a> {
     }
 
     fn record(&mut self, node: &FlowNode, outcome: &str) {
-        let name = if node.name.is_empty() { node.id.clone() } else { node.name.clone() };
+        let name = if node.name.is_empty() {
+            node.id.clone()
+        } else {
+            node.name.clone()
+        };
         log::info!("[flow] {name} -> {outcome}");
         self.trail.push(Step {
             node_id: node.id.clone(),
@@ -371,8 +401,15 @@ impl<'a> FlowRunner<'a> {
                     log::warn!("[flow] conference node has no number to dial");
                     return "failed".into();
                 };
-                let ok = self.control.conference(number, node.config_bool("play_ring", true)).await;
-                if ok { "ok".into() } else { "failed".into() }
+                let ok = self
+                    .control
+                    .conference(number, node.config_bool("play_ring", true))
+                    .await;
+                if ok {
+                    "ok".into()
+                } else {
+                    "failed".into()
+                }
             }
 
             // A cold hand-over: the caller goes to a person and our stream
@@ -398,7 +435,13 @@ impl<'a> FlowRunner<'a> {
                 }
             }
 
-            "kookoo.hold" => if self.control.hold().await { "ok".into() } else { "failed".into() },
+            "kookoo.hold" => {
+                if self.control.hold().await {
+                    "ok".into()
+                } else {
+                    "failed".into()
+                }
+            }
 
             "kookoo.pause_recording" => {
                 log::warn!("[flow] kookoo.pause_recording has no verified carrier API yet");
@@ -458,10 +501,9 @@ impl<'a> FlowRunner<'a> {
             // Matched by prefix so a new trigger type is a catalogue row and
             // nothing else. Without this arm a graph carrying one would reach
             // the catch-all below and fail the call on its first node.
-            trigger if trigger.starts_with("trigger.") => self
-                .started_by
-                .clone()
-                .unwrap_or_else(|| "started".into()),
+            trigger if trigger.starts_with("trigger.") => {
+                self.started_by.clone().unwrap_or_else(|| "started".into())
+            }
 
             // `condition`, `loop` and `code` all need an expression language,
             // and what an expression *is* has not been decided. Rather than
@@ -553,10 +595,14 @@ mod tests {
             String::new(),
             Handovers::new(),
         );
-        let mut runner = FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_ENDED)).unwrap();
+        let mut runner =
+            FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_ENDED)).unwrap();
 
         let _ = runner.advance().await;
 
-        assert_eq!(runner.trail.first().map(|step| step.node_id.as_str()), Some("ended"));
+        assert_eq!(
+            runner.trail.first().map(|step| step.node_id.as_str()),
+            Some("ended")
+        );
     }
 }

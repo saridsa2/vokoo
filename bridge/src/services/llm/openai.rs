@@ -34,9 +34,8 @@ use crate::billing::{BillingCollector, BillingEvent};
 use crate::context::{LLMContext, ToolCall};
 use crate::error::{PipecatError, Result};
 use crate::frames::{
-    ControlFrame, DataFrame, Frame, FrameDirection, FunctionCallData,
-    FunctionCallRawResultData, FunctionCallResultData, FrameHandler, FrameInner,
-    FrameProcessor, SystemFrame,
+    ControlFrame, DataFrame, Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor,
+    FunctionCallData, FunctionCallRawResultData, FunctionCallResultData, SystemFrame,
 };
 use crate::tools::BuiltinTool;
 
@@ -82,13 +81,27 @@ pub struct OpenAILLMConfig {
 fn default_context_tokens(model: &str) -> Option<usize> {
     let m = model.to_lowercase();
     let m = m.split('/').next_back().unwrap_or(&m);
-    if m.starts_with("gpt-4.1") { return Some(1_047_576); }
-    if m.starts_with("gpt-4o") { return Some(128_000); }
-    if m.starts_with("gpt-4-turbo") { return Some(128_000); }
-    if m.starts_with("gpt-3.5") { return Some(16_385); }
-    if m.starts_with("claude-opus-4") || m.starts_with("claude-sonnet-4") { return Some(1_048_576); }
-    if m.starts_with("claude-3") { return Some(200_000); }
-    if m.starts_with("gemini-2") || m.starts_with("gemini-1.5") { return Some(1_048_576); }
+    if m.starts_with("gpt-4.1") {
+        return Some(1_047_576);
+    }
+    if m.starts_with("gpt-4o") {
+        return Some(128_000);
+    }
+    if m.starts_with("gpt-4-turbo") {
+        return Some(128_000);
+    }
+    if m.starts_with("gpt-3.5") {
+        return Some(16_385);
+    }
+    if m.starts_with("claude-opus-4") || m.starts_with("claude-sonnet-4") {
+        return Some(1_048_576);
+    }
+    if m.starts_with("claude-3") {
+        return Some(200_000);
+    }
+    if m.starts_with("gemini-2") || m.starts_with("gemini-1.5") {
+        return Some(1_048_576);
+    }
     None
 }
 
@@ -96,7 +109,8 @@ impl OpenAILLMConfig {
     /// Returns the effective context window token limit for this config,
     /// preferring the explicit override then falling back to the model table.
     pub fn resolve_context_window_tokens(&self) -> Option<usize> {
-        self.context_window_tokens.or_else(|| default_context_tokens(&self.model))
+        self.context_window_tokens
+            .or_else(|| default_context_tokens(&self.model))
     }
 }
 
@@ -231,11 +245,11 @@ enum InferenceOutcome {
 /// of leaking revenue. A normal completion calls `commit_real` with the exact
 /// counts, which disarms the estimate.
 struct LlmBillingGuard {
-    billing:           Option<Arc<dyn BillingCollector>>,
-    model:             String,
-    est_input_tokens:  u32,
-    output_chars:      usize,
-    recorded:          bool,
+    billing: Option<Arc<dyn BillingCollector>>,
+    model: String,
+    est_input_tokens: u32,
+    output_chars: usize,
+    recorded: bool,
 }
 
 impl LlmBillingGuard {
@@ -244,7 +258,13 @@ impl LlmBillingGuard {
         model: String,
         est_input_tokens: u32,
     ) -> Self {
-        Self { billing, model, est_input_tokens, output_chars: 0, recorded: false }
+        Self {
+            billing,
+            model,
+            est_input_tokens,
+            output_chars: 0,
+            recorded: false,
+        }
     }
 
     fn add_output_chars(&mut self, n: usize) {
@@ -256,13 +276,13 @@ impl LlmBillingGuard {
     fn commit_real(&mut self, input_tokens: u32, output_tokens: u32) {
         if let Some(bc) = &self.billing {
             bc.record(BillingEvent::LlmUsage {
-                session_id:    bc.session_id(),
-                provider:      "openai".to_string(),
-                model:         self.model.clone(),
+                session_id: bc.session_id(),
+                provider: "openai".to_string(),
+                model: self.model.clone(),
                 input_tokens,
                 output_tokens,
-                estimated:     false,
-                occurred_at:   Utc::now(),
+                estimated: false,
+                occurred_at: Utc::now(),
             });
         }
         self.recorded = true;
@@ -281,13 +301,13 @@ impl Drop for LlmBillingGuard {
             return;
         }
         bc.record(BillingEvent::LlmUsage {
-            session_id:    bc.session_id(),
-            provider:      "openai".to_string(),
-            model:         self.model.clone(),
-            input_tokens:  self.est_input_tokens,
+            session_id: bc.session_id(),
+            provider: "openai".to_string(),
+            model: self.model.clone(),
+            input_tokens: self.est_input_tokens,
             output_tokens,
-            estimated:     true,
-            occurred_at:   Utc::now(),
+            estimated: true,
+            occurred_at: Utc::now(),
         });
     }
 }
@@ -372,9 +392,8 @@ impl OpenAILLMHandler {
         self
     }
 
-    
     pub fn set_transition_hook(&self, hook: TransitionHook) {
-    *self.transition_hook.write().unwrap() = Some(hook);
+        *self.transition_hook.write().unwrap() = Some(hook);
     }
 
     pub fn transition_hook_slot(&self) -> Arc<RwLock<Option<TransitionHook>>> {
@@ -425,10 +444,7 @@ impl OpenAILLMHandler {
                 let child = self.cancel_token.child_token();
                 log::info!("OpenAILLM: starting tool '{}'...", tool.name());
                 if let Err(e) = tool.on_start(child).await {
-                    log::error!(
-                        "OpenAILLM: tool '{}' failed to start: {}",
-                        tool.name(), e
-                    );
+                    log::error!("OpenAILLM: tool '{}' failed to start: {}", tool.name(), e);
                 }
             }
         }
@@ -439,10 +455,7 @@ impl OpenAILLMHandler {
         for tool in &self.tools {
             log::debug!("OpenAILLM: stopping tool '{}'...", tool.name());
             if let Err(e) = tool.on_stop().await {
-                log::error!(
-                    "OpenAILLM: tool '{}' failed to stop: {}",
-                    tool.name(), e
-                );
+                log::error!("OpenAILLM: tool '{}' failed to stop: {}", tool.name(), e);
             }
         }
     }
@@ -457,10 +470,7 @@ impl OpenAILLMHandler {
         for tool in &self.tools {
             log::debug!("OpenAILLM: cancelling tool '{}'...", tool.name());
             if let Err(e) = tool.on_cancel().await {
-                log::error!(
-                    "OpenAILLM: tool '{}' cancel failed: {}",
-                    tool.name(), e
-                );
+                log::error!("OpenAILLM: tool '{}' cancel failed: {}", tool.name(), e);
             }
         }
     }
@@ -479,8 +489,14 @@ impl OpenAILLMHandler {
             let ctx = context.lock().unwrap();
             let messages = ctx.to_api_messages();
             let converted = self.adapter.convert_messages(&messages);
-            let tools = ctx.tools.as_ref().map(|t| self.adapter.to_provider_tools_format(t));
-            let tool_choice = ctx.tool_choice.as_ref().map(|tc| self.adapter.to_provider_tool_choice(tc));
+            let tools = ctx
+                .tools
+                .as_ref()
+                .map(|t| self.adapter.to_provider_tools_format(t));
+            let tool_choice = ctx
+                .tool_choice
+                .as_ref()
+                .map(|tc| self.adapter.to_provider_tool_choice(tc));
             (converted, tools, tool_choice)
         };
 
@@ -499,7 +515,9 @@ impl OpenAILLMHandler {
         let url = format!("{}/chat/completions", self.config.base_url);
         log::info!(
             "OpenAILLM: {} messages -> {} (model={})",
-            api_messages.len(), url, self.config.model
+            api_messages.len(),
+            url,
+            self.config.model
         );
 
         let body = ChatRequest {
@@ -518,13 +536,16 @@ impl OpenAILLMHandler {
             tool_choice,
             // Request usage counts in the final streaming chunk.
             stream_options: if self.billing.is_some() {
-                Some(StreamOptions { include_usage: true })
+                Some(StreamOptions {
+                    include_usage: true,
+                })
             } else {
                 None
             },
         };
 
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .header("Content-Type", "application/json")
@@ -536,9 +557,10 @@ impl OpenAILLMHandler {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(PipecatError::pipeline(
-                format!("OpenAILLM: HTTP {} — {}", status, body),
-            ));
+            return Err(PipecatError::pipeline(format!(
+                "OpenAILLM: HTTP {} — {}",
+                status, body
+            )));
         }
 
         let mut stream = response.bytes_stream();
@@ -547,8 +569,11 @@ impl OpenAILLMHandler {
         let mut last_usage: Option<(u32, u32)> = None;
 
         // Records usage even if this task is aborted mid-stream by a barge-in.
-        let mut billing_guard =
-            LlmBillingGuard::new(self.billing.clone(), self.config.model.clone(), est_input_tokens);
+        let mut billing_guard = LlmBillingGuard::new(
+            self.billing.clone(),
+            self.config.model.clone(),
+            est_input_tokens,
+        );
 
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|e| {
@@ -579,7 +604,7 @@ impl OpenAILLMHandler {
                         // Capture token usage from the final usage-only chunk
                         // (sent when stream_options.include_usage = true).
                         if let Some(u) = &chunk.usage {
-                            let inp = u["prompt_tokens"    ].as_u64().unwrap_or(0) as u32;
+                            let inp = u["prompt_tokens"].as_u64().unwrap_or(0) as u32;
                             let out = u["completion_tokens"].as_u64().unwrap_or(0) as u32;
                             if inp + out > 0 {
                                 last_usage = Some((inp, out));
@@ -589,10 +614,12 @@ impl OpenAILLMHandler {
                             if let Some(content) = &choice.delta.content {
                                 if !content.is_empty() {
                                     billing_guard.add_output_chars(content.chars().count());
-                                    processor.push_frame(
-                                        Frame::llm_text(content.clone()),
-                                        FrameDirection::Downstream,
-                                    ).await?;
+                                    processor
+                                        .push_frame(
+                                            Frame::llm_text(content.clone()),
+                                            FrameDirection::Downstream,
+                                        )
+                                        .await?;
                                 }
                             }
                             if let Some(tool_calls) = &choice.delta.tool_calls {
@@ -632,9 +659,7 @@ impl OpenAILLMHandler {
         // way when the task is cancelled).
         match last_usage {
             Some((inp, out)) => billing_guard.commit_real(inp, out),
-            None => log::debug!(
-                "OpenAILLM: no usage chunk — billing will be estimated on drop"
-            ),
+            None => log::debug!("OpenAILLM: no usage chunk — billing will be estimated on drop"),
         }
 
         if tool_accum.is_empty() {
@@ -642,8 +667,10 @@ impl OpenAILLMHandler {
         } else {
             let mut calls: Vec<(u32, PartialToolCall)> = tool_accum.into_iter().collect();
             calls.sort_by_key(|(idx, _)| *idx);
-            let tool_calls: Vec<ToolCall> =
-                calls.into_iter().map(|(_, tc)| tc.into_tool_call()).collect();
+            let tool_calls: Vec<ToolCall> = calls
+                .into_iter()
+                .map(|(_, tc)| tc.into_tool_call())
+                .collect();
             log::info!(
                 "OpenAILLM: model requested {} tool call(s): [{}]",
                 tool_calls.len(),
@@ -726,7 +753,8 @@ impl OpenAILLMHandler {
                             Some(RegistryHandler::Simple(f)) => {
                                 log::info!(
                                     "OpenAILLM: executing simple '{}' (id={})",
-                                    tc.function_name, tc.id
+                                    tc.function_name,
+                                    tc.id
                                 );
                                 let result = f(tc.arguments.clone()).await;
                                 (result, None)
@@ -734,16 +762,14 @@ impl OpenAILLMHandler {
                             Some(RegistryHandler::Data(f)) => {
                                 log::info!(
                                     "OpenAILLM: executing data '{}' (id={})",
-                                    tc.function_name, tc.id
+                                    tc.function_name,
+                                    tc.id
                                 );
                                 let output = f(tc.arguments.clone()).await;
                                 (output.summary, output.full_data)
                             }
                             None => {
-                                log::warn!(
-                                    "OpenAILLM: no handler for '{}'",
-                                    tc.function_name
-                                );
+                                log::warn!("OpenAILLM: no handler for '{}'", tc.function_name);
                                 (
                                     format!(
                                         "{{\"error\": \"function '{}' is not registered\"}}",
@@ -849,20 +875,14 @@ impl FrameHandler for OpenAILLMHandler {
             FrameInner::Data(DataFrame::LLMContextFrame(context)) => {
                 let context = context.clone();
                 processor
-                    .push_frame(
-                        Frame::llm_full_response_start(),
-                        FrameDirection::Downstream,
-                    )
+                    .push_frame(Frame::llm_full_response_start(), FrameDirection::Downstream)
                     .await?;
                 if let Err(e) = self.run_inference(context, processor).await {
                     log::error!("OpenAILLM: inference error: {}", e);
                     processor.push_error(e.to_string(), false).await?;
                 }
                 processor
-                    .push_frame(
-                        Frame::llm_full_response_end(),
-                        FrameDirection::Downstream,
-                    )
+                    .push_frame(Frame::llm_full_response_end(), FrameDirection::Downstream)
                     .await?;
             }
 
@@ -895,15 +915,22 @@ mod tests {
     }
     impl MockCollector {
         fn new() -> Arc<Self> {
-            Arc::new(Self { events: Arc::new(StdMutex::new(Vec::new())), id: uuid::Uuid::new_v4() })
+            Arc::new(Self {
+                events: Arc::new(StdMutex::new(Vec::new())),
+                id: uuid::Uuid::new_v4(),
+            })
         }
         fn events(&self) -> Vec<BillingEvent> {
             self.events.lock().unwrap().clone()
         }
     }
     impl BillingCollector for MockCollector {
-        fn record(&self, e: BillingEvent) { self.events.lock().unwrap().push(e); }
-        fn session_id(&self) -> uuid::Uuid { self.id }
+        fn record(&self, e: BillingEvent) {
+            self.events.lock().unwrap().push(e);
+        }
+        fn session_id(&self) -> uuid::Uuid {
+            self.id
+        }
     }
 
     #[test]
@@ -917,7 +944,12 @@ mod tests {
         let events = mock.events();
         assert_eq!(events.len(), 1, "exactly one usage event");
         match &events[0] {
-            BillingEvent::LlmUsage { input_tokens, output_tokens, estimated, .. } => {
+            BillingEvent::LlmUsage {
+                input_tokens,
+                output_tokens,
+                estimated,
+                ..
+            } => {
                 assert_eq!(*input_tokens, 56);
                 assert_eq!(*output_tokens, 32);
                 assert!(!*estimated);
@@ -932,12 +964,17 @@ mod tests {
         {
             let mut g = LlmBillingGuard::new(Some(mock.clone()), "gpt-4o-mini".into(), 100);
             g.add_output_chars(40); // ~10 tokens
-            // no commit_real — simulates a barge-in abort mid-stream
+                                    // no commit_real — simulates a barge-in abort mid-stream
         }
         let events = mock.events();
         assert_eq!(events.len(), 1, "drop must record an estimated usage");
         match &events[0] {
-            BillingEvent::LlmUsage { input_tokens, output_tokens, estimated, .. } => {
+            BillingEvent::LlmUsage {
+                input_tokens,
+                output_tokens,
+                estimated,
+                ..
+            } => {
                 assert_eq!(*input_tokens, 100);
                 assert_eq!(*output_tokens, 10);
                 assert!(*estimated, "interrupted round must be flagged estimated");

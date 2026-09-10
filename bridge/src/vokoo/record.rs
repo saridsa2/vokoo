@@ -43,7 +43,10 @@ fn decode_started_call(value: Value) -> Option<StartedCall> {
         _ => return None,
     };
 
-    Some(StartedCall { call_id, pinned_flow })
+    Some(StartedCall {
+        call_id,
+        pinned_flow,
+    })
 }
 
 /// A call, as far as the database is concerned.
@@ -81,7 +84,13 @@ async fn rpc(base: &str, key: &str, function: &str, body: Value) -> Option<Value
         log::warn!(
             "[call-record] {function}: {} {}",
             response.status(),
-            response.text().await.unwrap_or_default().chars().take(160).collect::<String>()
+            response
+                .text()
+                .await
+                .unwrap_or_default()
+                .chars()
+                .take(160)
+                .collect::<String>()
         );
         return None;
     }
@@ -239,7 +248,9 @@ impl CallRecord {
         trigger: &str,
         detail: Value,
     ) {
-        let Some(call_id) = self.call_id.clone() else { return };
+        let Some(call_id) = self.call_id.clone() else {
+            return;
+        };
         let (base, key) = (self.supabase_url.clone(), self.service_key.clone());
         let body = json!({
             "p_call_id": call_id,
@@ -334,7 +345,10 @@ mod tests {
         assert_eq!(started.call_id, "call-1");
         assert_eq!(
             started.pinned_flow,
-            Some(PinnedFlow { flow_id: "flow-1".into(), version: 7 })
+            Some(PinnedFlow {
+                flow_id: "flow-1".into(),
+                version: 7
+            })
         );
     }
 

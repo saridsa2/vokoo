@@ -38,7 +38,7 @@ const FAMILIES = {
         trigger: "trigger.call_answered",
         triggerName: "Call answered",
         noun: "call flow",
-        empty: "A call flow decides what happens when a number rings — which questions are asked, when the caller reaches a person, and how the call ends.",
+        empty: "Create a call flow to handle incoming calls.",
     },
     post_call: {
         family: "integration",
@@ -46,7 +46,7 @@ const FAMILIES = {
         trigger: "trigger.integration_invoked",
         triggerName: "Integration invoked",
         noun: "integration",
-        empty: "An integration accepts a typed payload from a call, care path, message, or general flow and delivers it to another system.",
+        empty: "Create an integration workflow.",
     },
     care_path: CARE_PATH_WORKSPACE,
 } as const satisfies Record<Family, unknown>;
@@ -95,13 +95,6 @@ export function FlowsWorkspaceScreen({ family }: { family: Family }) {
         <>
             <ScreenHeader
                 title={family === "call" ? "Calls" : family === "post_call" ? "Integrations" : "Care Paths"}
-                description={
-                    family === "call"
-                        ? "What happens while somebody is on the line."
-                        : family === "post_call"
-                          ? "Reusable workflows invoked explicitly by call and care-path flows."
-                          : "Longitudinal journeys triggered by milestones, reports, documents, and recurrence."
-                }
                 search={
                     <div className="w-full md:w-64">
                         <Input

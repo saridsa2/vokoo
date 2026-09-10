@@ -548,6 +548,65 @@ needing a rule about NICE specifically.
 **Verify.** No citation begins with a rights notice, and `© NICE` appears in no
 chunk body.
 
+---
+
+## D11 — Re-indexing through Modal lost the answer from semantic results
+
+**Status:** open
+**Severity:** a regression. The correct recommendation left the top ten for a
+question a clinician would actually ask.
+
+**Found:** 8 September 2026. Same document, same probe, measured either side of
+the Modal/Docling re-index of NG28.
+
+```
+query: what HbA1c target should someone on a medicine that can cause
+       hypoglycaemia aim for
+
+before   the chunk carrying 48 mmol/mol and 53 mmol/mol   rank 2, pages 10-14
+after    not present in the ten results
+```
+
+**The content was not lost.** An exact-term search for `48 mmol/mol` on the
+re-indexed version returns it at rank 2, page 13. Extraction is fine; semantic
+ranking is what changed.
+
+**Root cause.**
+
+Chunk size fell — mean 2,391 characters against roughly 6,000 before, with the
+smallest at 584 — and the ten semantic results are now almost entirely NG28's
+back matter:
+
+```
+pages 86 · 6 · 3-6 · 99 · 89 · 78-79 · 93-94 · 83 · 75-76 · 90-91
+```
+
+Those are the rationale and committee-discussion sections. They *discuss*
+hypoglycaemia and HbA1c targets at length, in flowing prose that resembles a
+natural-language question far more closely than the recommendation does. The
+recommendation itself is terse — a number, a unit, a condition — and once it is
+a small chunk on its own it no longer out-embeds several pages of surrounding
+argument about it.
+
+Larger chunks masked this: the old chunk carried the recommendation *and* enough
+neighbouring text to compete on length. That is a bad reason for a right answer,
+which is why the fix is not to put the size back.
+
+Note the exact-term search has its own version of the same problem: its rank 1
+is the table of contents, pages 3-6, which matches on keywords and answers
+nothing.
+
+**Fix.** The same shape proposed in D9, now with evidence for it. Rank at one
+granularity and answer at another, or re-rank the top handful against the query
+after retrieval. Either keeps small structural chunks — which are right, and
+which fixed D10 — without letting prose volume decide the order. Excluding the
+table of contents and the rationale sections from the index is a cheaper partial
+step.
+
+**Verify.** The probe above returns the chunk containing `48 mmol/mol`, with the
+hypoglycaemia condition intact, in the top three. And KDIGO's EBV probe still
+returns its schedule at rank 1 or 2.
+
 ## Checked and not defects
 
 Recorded so nobody spends time rediscovering them.

@@ -98,11 +98,8 @@ export const RunsScreen = () => {
         // min-h-0 and a scroller of its own, anything past the fold is clipped
         // rather than reachable — the same shape `resource-list-screen` uses.
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6 lg:p-8">
-            <header className="flex flex-col gap-2">
+            <header>
                 <h1 className="text-display-xs font-semibold text-primary">Runs</h1>
-                <p className="max-w-3xl text-md text-tertiary">
-                    Every tool a call ran, with what it was asked and what it gave back.
-                </p>
             </header>
 
             <FunctionExecutions filter={filter} />

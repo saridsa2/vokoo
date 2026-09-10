@@ -102,7 +102,12 @@ pub struct LLMUserAggregator {
 
 impl LLMUserAggregator {
     pub fn new(context: Arc<Mutex<LLMContext>>) -> FrameProcessor {
-        Self::build(context, None, Arc::new(Mutex::new(None)), LateTranscriptPolicy::Defer)
+        Self::build(
+            context,
+            None,
+            Arc::new(Mutex::new(None)),
+            LateTranscriptPolicy::Defer,
+        )
     }
 
     pub fn new_with_policy(
@@ -120,7 +125,12 @@ impl LLMUserAggregator {
         billing: Arc<dyn BillingCollector>,
         active_user_turn_id: Arc<Mutex<Option<Uuid>>>,
     ) -> FrameProcessor {
-        Self::build(context, Some(billing), active_user_turn_id, LateTranscriptPolicy::Defer)
+        Self::build(
+            context,
+            Some(billing),
+            active_user_turn_id,
+            LateTranscriptPolicy::Defer,
+        )
     }
 
     pub fn with_billing_and_policy(
@@ -147,8 +157,8 @@ impl LLMUserAggregator {
                 policy,
                 state: Arc::new(Mutex::new(State {
                     aggregation: String::new(),
-                    deferred:    String::new(),
-                    turn_open:   false,
+                    deferred: String::new(),
+                    turn_open: false,
                 })),
             }),
             false,
@@ -199,12 +209,12 @@ impl LLMUserAggregator {
             }
 
             log::info!("LLMUserAggregator: nothing claimed the deferred transcript — answering it");
-            if let Err(problem) = flush_turn(&state, &context, &billing, &turn_id, &processor).await {
+            if let Err(problem) = flush_turn(&state, &context, &billing, &turn_id, &processor).await
+            {
                 log::warn!("LLMUserAggregator: deferred flush failed: {problem}");
             }
         });
     }
-
 }
 
 /// The flush itself, callable from the handler and from the watchdog.
@@ -243,7 +253,10 @@ async fn flush_turn(
     }
 
     if let Some(billing) = billing {
-        let turn_id = active_user_turn_id.lock().unwrap().unwrap_or_else(Uuid::new_v4);
+        let turn_id = active_user_turn_id
+            .lock()
+            .unwrap()
+            .unwrap_or_else(Uuid::new_v4);
         billing.record_transcript(TranscriptEntry {
             turn_id,
             session_id: billing.session_id(),
@@ -256,21 +269,23 @@ async fn flush_turn(
     }
 
     processor
-        .push_frame(Frame::llm_context(context.clone()), FrameDirection::Downstream)
+        .push_frame(
+            Frame::llm_context(context.clone()),
+            FrameDirection::Downstream,
+        )
         .await?;
 
     Ok(true)
 }
-
 
 /// Join deferred and current-turn text into one user utterance.
 fn combine(deferred: &str, aggregation: &str) -> String {
     let d = deferred.trim();
     let a = aggregation.trim();
     match (d.is_empty(), a.is_empty()) {
-        (true,  true)  => String::new(),
-        (false, true)  => d.to_string(),
-        (true,  false) => a.to_string(),
+        (true, true) => String::new(),
+        (false, true) => d.to_string(),
+        (true, false) => a.to_string(),
         (false, false) => format!("{} {}", d, a),
     }
 }
@@ -313,7 +328,10 @@ impl FrameHandler for LLMUserAggregator {
                     }
                     let was_open = state.turn_open;
                     state.turn_open = false;
-                    (was_open, !state.aggregation.is_empty() || !state.deferred.is_empty())
+                    (
+                        was_open,
+                        !state.aggregation.is_empty() || !state.deferred.is_empty(),
+                    )
                 };
 
                 // Forward first — frame still carries the transcript, so downstream
@@ -438,12 +456,18 @@ mod tests {
 
         // StartFrame so push_frame is not blocked by check_started.
         let _ = proc
-            .process_frame(Frame::start(StartFrameData::default()), FrameDirection::Downstream)
+            .process_frame(
+                Frame::start(StartFrameData::default()),
+                FrameDirection::Downstream,
+            )
             .await;
 
         // Open turn.
         let _ = proc
-            .process_frame(Frame::vad_user_started_speaking(0.0, 0.0), FrameDirection::Downstream)
+            .process_frame(
+                Frame::vad_user_started_speaking(0.0, 0.0),
+                FrameDirection::Downstream,
+            )
             .await;
 
         // Stop with bundled transcript — the gate's release path.
@@ -452,9 +476,9 @@ mod tests {
         let _ = proc.process_frame(stop, FrameDirection::Downstream).await;
 
         let frames = captured.lock().unwrap();
-        let has_context = frames.iter().any(|f| {
-            matches!(f.inner, FrameInner::Data(DataFrame::LLMContextFrame(_)))
-        });
+        let has_context = frames
+            .iter()
+            .any(|f| matches!(f.inner, FrameInner::Data(DataFrame::LLMContextFrame(_))));
         assert!(
             has_context,
             "expected LLMContextFrame after VadStop with bundled transcript"
@@ -476,10 +500,16 @@ mod tests {
         });
 
         let _ = proc
-            .process_frame(Frame::start(StartFrameData::default()), FrameDirection::Downstream)
+            .process_frame(
+                Frame::start(StartFrameData::default()),
+                FrameDirection::Downstream,
+            )
             .await;
         let _ = proc
-            .process_frame(Frame::vad_user_started_speaking(0.0, 0.0), FrameDirection::Downstream)
+            .process_frame(
+                Frame::vad_user_started_speaking(0.0, 0.0),
+                FrameDirection::Downstream,
+            )
             .await;
 
         // Three interim hypotheses, each a prefix of the next.

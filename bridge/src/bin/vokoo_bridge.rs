@@ -22,28 +22,27 @@
 //! Routes: GET /health · ANY /kookoo · GET /ws
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::{
-    Json, Router,
     extract::{
-        Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
     },
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::{any, get, post},
+    Json, Router,
 };
 
-use serde_json::json;
-use rustvani::error::Result;
-use rustvani::observer::{BaseObserver, FramePushed, FrameProcessed};
 use rustvani::billing::BillingCollector as _;
+use rustvani::error::Result;
 use rustvani::frames::{
     ControlFrame, Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor, SystemFrame,
 };
+use rustvani::observer::{BaseObserver, FrameProcessed, FramePushed};
 use rustvani::processors::{
     llm_assistant_aggregator::LLMAssistantAggregator, llm_user_aggregator::LLMUserAggregator,
 };
@@ -51,20 +50,20 @@ use rustvani::serializers::{
     AudioSocketFrameSerializer, CallCapture, KooKooFrameSerializer, KooKooInputParams, KooKooStart,
 };
 use rustvani::services::{
-    GeminiLiveConfig, GeminiLiveSession,
-    RealtimeControls, RealtimeEvent, RealtimeProcessor, RealtimeSession,
-    DeepgramSttConfig, DeepgramSttHandler, DeepgramTtsConfig, DeepgramTtsHandler, OpenAILLMConfig,
-    OpenAILLMHandler,
+    DeepgramSttConfig, DeepgramSttHandler, DeepgramTtsConfig, DeepgramTtsHandler, GeminiLiveConfig,
+    GeminiLiveSession, OpenAILLMConfig, OpenAILLMHandler, RealtimeControls, RealtimeEvent,
+    RealtimeProcessor, RealtimeSession,
 };
-use rustvani::transport::TransportParams;
 use rustvani::transport::audiosocket::{
-    AudioSocketHandshake, AudioSocketParams, AudioSocketTransport, UUID_WAIT, await_uuid,
+    await_uuid, AudioSocketHandshake, AudioSocketParams, AudioSocketTransport, UUID_WAIT,
 };
 use rustvani::transport::websocket::{WebSocketParams, WebSocketTransport};
+use rustvani::transport::TransportParams;
 use rustvani::{
-    FrameKind, PipelineParams, PipelineTask, SileroVadNative, VadParams, shared_context,
-    system_clock,
+    shared_context, system_clock, FrameKind, PipelineParams, PipelineTask, SileroVadNative,
+    VadParams,
 };
+use serde_json::json;
 
 /// VAD and STT both want 16 kHz; the serializer resamples to KooKoo's 8 kHz.
 const PIPELINE_SAMPLE_RATE: u32 = 16_000;
@@ -210,7 +209,9 @@ async fn start_listening(
         }
     };
 
-    let Some(mut events) = session.take_events() else { return false };
+    let Some(mut events) = session.take_events() else {
+        return false;
+    };
 
     // The tap carries audio already resampled to the conversational session's
     // input rate. Both Gemini models take 16 kHz, so it passes through — if that
@@ -440,7 +441,8 @@ impl BaseObserver for LatencyObserver {
                     s.t_stt = Some(ts);
                     log::info!(
                         "[call={call}][turn={}] t1 STT      +{:.3}s",
-                        s.turn, ts - s.t_vad
+                        s.turn,
+                        ts - s.t_vad
                     );
                 }
             }
@@ -450,7 +452,8 @@ impl BaseObserver for LatencyObserver {
                     let from = s.t_stt.unwrap_or(s.t_vad);
                     log::info!(
                         "[call={call}][turn={}] t2 LLM 1st  +{:.3}s",
-                        s.turn, ts - from
+                        s.turn,
+                        ts - from
                     );
                 }
             }
@@ -460,7 +463,8 @@ impl BaseObserver for LatencyObserver {
                     let from = s.t_llm_start.unwrap_or(s.t_vad);
                     log::info!(
                         "[call={call}][turn={}] t3 LLM end  +{:.3}s",
-                        s.turn, ts - from
+                        s.turn,
+                        ts - from
                     );
                 }
             }
@@ -470,7 +474,9 @@ impl BaseObserver for LatencyObserver {
                     let from = s.t_llm_end.unwrap_or(s.t_vad);
                     log::info!(
                         "[call={call}][turn={}] t4 TTS 1st  +{:.3}s   >>> TOTAL {:.3}s <<<",
-                        s.turn, ts - from, ts - s.t_vad
+                        s.turn,
+                        ts - from,
+                        ts - s.t_vad
                     );
                     s.in_turn = false;
                 }
@@ -747,7 +753,10 @@ async fn inspect_workspace_document(
         return (StatusCode::FORBIDDEN, Json(json!({ "error": "forbidden" })));
     }
     if request.version <= 0 || request.org_id.is_empty() || request.document_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "document version is required" })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "document version is required" })),
+        );
     }
 
     match rustvani::vokoo::intelligence::inspect_document(
@@ -762,7 +771,10 @@ async fn inspect_workspace_document(
         Ok(inspection) => (StatusCode::OK, Json(json!(inspection))),
         Err(problem) => {
             log::warn!("[workspace-intelligence] document inspection failed: {problem}");
-            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": problem })))
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": problem })),
+            )
         }
     }
 }
@@ -789,7 +801,10 @@ async fn flow_dry_run(
     .await
     {
         Ok(steps) => (StatusCode::OK, Json(json!({ "ok": true, "steps": steps }))),
-        Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+        Err(problem) => (
+            StatusCode::OK,
+            Json(json!({ "ok": false, "error": problem })),
+        ),
     }
 }
 
@@ -850,7 +865,10 @@ async fn live_events(
             }
         }
         let frame = Event::default().data(operations(&state, &org_id).await.to_string());
-        Some((Ok::<_, std::convert::Infallible>(frame), (state, org_id, watch, false)))
+        Some((
+            Ok::<_, std::convert::Infallible>(frame),
+            (state, org_id, watch, false),
+        ))
     });
 
     // A comment every fifteen seconds. Not a poll — nothing is recomputed and
@@ -885,9 +903,11 @@ async fn operations(state: &AppState, org_id: &str) -> serde_json::Value {
     .unwrap_or_default()
     .iter()
     .map(|row| {
-        let endpoint = row.get("endpoint").and_then(serde_json::Value::as_str).unwrap_or_default();
-        let suspended =
-            row.get("status").and_then(serde_json::Value::as_str) == Some("suspended");
+        let endpoint = row
+            .get("endpoint")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let suspended = row.get("status").and_then(serde_json::Value::as_str) == Some("suspended");
         json!({
             "name":      row.get("display_name"),
             "extension": row.get("extension"),
@@ -956,7 +976,10 @@ async fn call_monitor(
     }
 
     let Some(mode) = rustvani::vokoo::stasis::Monitor::parse(&request.mode) else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "unknown mode" })));
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "unknown mode" })),
+        );
     };
 
     // Whispering to the AI is text, and needs no channel at all.
@@ -981,14 +1004,21 @@ async fn call_monitor(
             );
         };
         return match controls.steer(&note).await {
-            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true, "delivered": "text" }))),
-            Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+            Ok(()) => (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "delivered": "text" })),
+            ),
+            Err(problem) => (
+                StatusCode::OK,
+                Json(json!({ "ok": false, "error": problem })),
+            ),
         };
     }
 
-    let (Some(ari), Some(endpoint)) =
-        (state.ari.as_ref(), request.endpoint.filter(|e| !e.is_empty()))
-    else {
+    let (Some(ari), Some(endpoint)) = (
+        state.ari.as_ref(),
+        request.endpoint.filter(|e| !e.is_empty()),
+    ) else {
         return (
             StatusCode::OK,
             Json(json!({ "ok": false, "error": "no supervisor endpoint to ring" })),
@@ -1000,8 +1030,14 @@ async fn call_monitor(
         .monitor(ari, &request.call_id, mode, &endpoint, Some("Monitor"))
         .await
     {
-        Ok(channel) => (StatusCode::OK, Json(json!({ "ok": true, "channel": channel }))),
-        Err(problem) => (StatusCode::OK, Json(json!({ "ok": false, "error": problem }))),
+        Ok(channel) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "channel": channel })),
+        ),
+        Err(problem) => (
+            StatusCode::OK,
+            Json(json!({ "ok": false, "error": problem })),
+        ),
     }
 }
 
@@ -1027,7 +1063,10 @@ async fn engine_preflight(
     )
     .await
     else {
-        return (StatusCode::NOT_FOUND, Json(json!({ "error": "no such engine" })));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "no such engine" })),
+        );
     };
 
     let ctx = rustvani::vokoo::StageContext {
@@ -1051,7 +1090,10 @@ async fn engine_preflight(
         if ok { "ready" } else { "not ready" }
     );
 
-    (StatusCode::OK, Json(json!({ "engine": engine.name, "mode": engine.mode, "ok": ok, "steps": steps })))
+    (
+        StatusCode::OK,
+        Json(json!({ "engine": engine.name, "mode": engine.mode, "ok": ok, "steps": steps })),
+    )
 }
 
 #[derive(serde::Deserialize)]
@@ -1101,13 +1143,17 @@ struct RefreshRequest {
 /// the caller of this should hand back the stream.
 async fn next_menu_xml(state: &AppState, params: &BTreeMap<String, String>) -> Option<String> {
     let ucid = params.get("sid").map(String::as_str).unwrap_or_default();
-    let did = params.get("called_number").map(String::as_str).unwrap_or_default();
+    let did = params
+        .get("called_number")
+        .map(String::as_str)
+        .unwrap_or_default();
     if ucid.is_empty() || did.is_empty() {
         return None;
     }
 
     let cfg = &state.cfg;
-    let flow = rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, did).await?;
+    let flow =
+        rustvani::vokoo::graph::resolve_for_did(&cfg.supabase_url, &cfg.service_key, did).await?;
     let control = rustvani::vokoo::CallControl::new(
         rustvani::vokoo::CallHandle {
             ucid: ucid.to_string(),
@@ -1125,20 +1171,28 @@ async fn next_menu_xml(state: &AppState, params: &BTreeMap<String, String>) -> O
         &control,
         rustvani::vokoo::EntryPoint::new(rustvani::vokoo::graph::TRIGGER_ANSWERED),
     )
-        .ok()?
-        .preview()
-        .already_answered(state.keypresses.all(ucid));
+    .ok()?
+    .preview()
+    .already_answered(state.keypresses.all(ucid));
 
     match runner.advance().await {
         rustvani::vokoo::NodeAction::CollectDigits {
-            node, prompt, language, keys, timeout_seconds, ..
+            node,
+            prompt,
+            language,
+            keys,
+            timeout_seconds,
+            ..
         } => {
             state.keypresses.asking(ucid, &node.id);
             log::info!(
                 "[IVR] ucid={ucid} asking {} ({} key(s): {})",
                 node.name,
                 keys.len(),
-                keys.iter().map(|(k, l)| format!("{k}={l}")).collect::<Vec<_>>().join(", ")
+                keys.iter()
+                    .map(|(k, l)| format!("{k}={l}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             Some(collect_digits_xml(&prompt, &language, timeout_seconds))
         }
@@ -1204,10 +1258,13 @@ async fn kookoo_webhook(
     // seconds in.
     //
     // The marker is still read first, in case a future firmware carries one.
-    let awaiting = params.get("sid").and_then(|ucid| state.keypresses.awaiting(ucid));
-    let menu_node = params.get("vokoo_menu").cloned().or_else(|| {
-        (event == "GotDTMF").then_some(awaiting).flatten()
-    });
+    let awaiting = params
+        .get("sid")
+        .and_then(|ucid| state.keypresses.awaiting(ucid));
+    let menu_node = params
+        .get("vokoo_menu")
+        .cloned()
+        .or_else(|| (event == "GotDTMF").then_some(awaiting).flatten());
     if let Some(node_id) = menu_node.as_deref() {
         let ucid = params.get("sid").map(String::as_str).unwrap_or_default();
         match collected_key(&params) {
@@ -1230,8 +1287,13 @@ async fn kookoo_webhook(
         // Another menu, or on with the call.
         return match next_menu_xml(&state, &params).await {
             Some(menu) => xml(menu).into_response(),
-            None => xml(new_call_xml(&params, &state.ws_url, &state.sip_number, &state.is_sip))
-                .into_response(),
+            None => xml(new_call_xml(
+                &params,
+                &state.ws_url,
+                &state.sip_number,
+                &state.is_sip,
+            ))
+            .into_response(),
         };
     }
 
@@ -1417,7 +1479,10 @@ enum Incoming {
 /// KooKoo path exactly as it was — same type, same calls — rather than making
 /// a thousand lines of working call handling generic over a wire.
 enum CallWire {
-    Kookoo { transport: WebSocketTransport, socket: WebSocket },
+    Kookoo {
+        transport: WebSocketTransport,
+        socket: WebSocket,
+    },
     Asterisk {
         transport: AudioSocketTransport,
         stream: tokio::net::TcpStream,
@@ -1466,9 +1531,11 @@ impl CallWire {
     async fn run(self, push_tx: tokio::sync::mpsc::Sender<(Frame, FrameDirection)>) {
         match self {
             Self::Kookoo { transport, socket } => transport.run_socket(socket, push_tx).await,
-            Self::Asterisk { transport, stream, handshake } => {
-                transport.run_socket(stream, handshake, push_tx).await
-            }
+            Self::Asterisk {
+                transport,
+                stream,
+                handshake,
+            } => transport.run_socket(stream, handshake, push_tx).await,
         }
     }
 }
@@ -1509,7 +1576,11 @@ async fn asterisk_incoming(
         uuid: form.uuid.clone(),
         did: form.to.clone(),
         caller: form.from.clone(),
-        channel: if form.channel.is_empty() { "asterisk".into() } else { form.channel.clone() },
+        channel: if form.channel.is_empty() {
+            "asterisk".into()
+        } else {
+            form.channel.clone()
+        },
         wacid: form.wacid.filter(|w| !w.is_empty()),
         // A WhatsApp leg *is* the call; there is no carrier id behind it.
         carrier_call_id: None,
@@ -1520,7 +1591,10 @@ async fn asterisk_incoming(
 
     log::info!(
         "[asterisk] {} call to {} from {} — uuid {}",
-        call.channel, call.did, call.caller, call.uuid,
+        call.channel,
+        call.did,
+        call.caller,
+        call.uuid,
     );
     state.pending.announce(call);
 
@@ -1599,18 +1673,24 @@ async fn realtime_agents(
     axum::extract::Path((family, op)): axum::extract::Path<(String, String)>,
     axum::extract::Form(form): axum::extract::Form<std::collections::BTreeMap<String, String>>,
 ) -> impl IntoResponse {
-    use rustvani::vokoo::realtime_agents::{Agent, Family, render, wanted_id};
+    use rustvani::vokoo::realtime_agents::{render, wanted_id, Agent, Family};
 
     let Some(family) = Family::parse(&family) else {
         // A family we do not serve is not an error: Asterisk asks about
         // several, and answering 404 for the ones we leave in memory would
         // fill its log with failures that are working as intended.
-        return ([(axum::http::header::CONTENT_TYPE, "text/html")], String::new());
+        return (
+            [(axum::http::header::CONTENT_TYPE, "text/html")],
+            String::new(),
+        );
     };
 
     let wanted = wanted_id(&form);
     let mut query: Vec<(&str, String)> = vec![
-        ("select", "endpoint,sip_password,display_name,extension".into()),
+        (
+            "select",
+            "endpoint,sip_password,display_name,extension".into(),
+        ),
         // A suspended agent keeps their row, their history and their number
         // and stops being an endpoint. Filtering here rather than in Asterisk
         // means somebody who has left cannot register at all.
@@ -1648,7 +1728,9 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 async fn await_kookoo_start(socket: &mut WebSocket) -> Option<(KooKooStart, String)> {
     let deadline = tokio::time::Instant::now() + HANDSHAKE_TIMEOUT;
     loop {
-        let msg = tokio::time::timeout_at(deadline, socket.recv()).await.ok()??;
+        let msg = tokio::time::timeout_at(deadline, socket.recv())
+            .await
+            .ok()??;
         match msg {
             Ok(Message::Text(text)) => {
                 if let Some(start) = KooKooStart::parse(&text) {
@@ -1670,8 +1752,14 @@ async fn await_kookoo_start(socket: &mut WebSocket) -> Option<(KooKooStart, Stri
 /// is built — which is several hundred lines later, after the flow has decided
 /// what kind of pipeline this call needs.
 enum Wire {
-    Kookoo { socket: WebSocket, serializer: KooKooFrameSerializer },
-    Asterisk { stream: tokio::net::TcpStream, handshake: AudioSocketHandshake },
+    Kookoo {
+        socket: WebSocket,
+        serializer: KooKooFrameSerializer,
+    },
+    Asterisk {
+        stream: tokio::net::TcpStream,
+        handshake: AudioSocketHandshake,
+    },
 }
 
 /// Pipe a KooKoo caller onto an Asterisk channel.
@@ -1831,7 +1919,6 @@ async fn relay_audiosocket(
         }
     }
 
-
     loop {
         tokio::select! {
             read = rx.read(&mut buffer) => {
@@ -1949,10 +2036,17 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             let arrival = Arrival {
                 // The carrier's id when there is one, so hangup, the call
                 // record and any post-call flow all name the same call.
-                id: pending.carrier_call_id.clone().unwrap_or_else(|| pending.uuid.clone()),
+                id: pending
+                    .carrier_call_id
+                    .clone()
+                    .unwrap_or_else(|| pending.uuid.clone()),
                 did: pending.did.clone(),
                 caller: pending.caller.clone(),
-                channel: if pending.channel == "kookoo" { "kookoo" } else { "whatsapp" },
+                channel: if pending.channel == "kookoo" {
+                    "kookoo"
+                } else {
+                    "whatsapp"
+                },
                 headers: json!({
                     "channel": pending.channel,
                     "wacid":   pending.wacid,
@@ -1970,8 +2064,16 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         "[call={call}] {} id={} did={} caller={} {}",
         arrival.channel,
         arrival.id,
-        if arrival.did.is_empty() { "-" } else { &arrival.did },
-        if arrival.caller.is_empty() { "-" } else { &arrival.caller },
+        if arrival.did.is_empty() {
+            "-"
+        } else {
+            &arrival.did
+        },
+        if arrival.caller.is_empty() {
+            "-"
+        } else {
+            &arrival.caller
+        },
         arrival.headers,
     );
 
@@ -1980,11 +2082,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // `?`, a panic — takes it off again. The organisation and the agent are not
     // known yet; they are filled in below, because a call that dies while its
     // flow is still walking is still a call that was happening.
-    let _live = state.live.register(&arrival.id, rustvani::vokoo::live::arriving(
-        &arrival.did,
-        &arrival.caller,
-        arrival.channel,
-    ));
+    let _live = state.live.register(
+        &arrival.id,
+        rustvani::vokoo::live::arriving(&arrival.did, &arrival.caller, arrival.channel),
+    );
 
     let t0 = std::time::Instant::now();
     rustvani::vokoo::telemetry::count("sarvathra_calls_total", &[("channel", arrival.channel)]);
@@ -2000,33 +2101,39 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // The database resolves the number, chooses the latest published snapshot
     // and records both ids in one statement. Doing those as bridge requests
     // would leave a publish race between resolution and persistence.
-    let record = Arc::new(rustvani::vokoo::CallRecord::open(
-        &cfg.supabase_url,
-        &cfg.service_key,
-        &arrival.id,
-        &did,
-        &caller,
-    )
-    .await);
+    let record = Arc::new(
+        rustvani::vokoo::CallRecord::open(
+            &cfg.supabase_url,
+            &cfg.service_key,
+            &arrival.id,
+            &did,
+            &caller,
+        )
+        .await,
+    );
 
     // Load exactly what start_call pinned. If recording failed or the number
     // has no published snapshot, the existing agent fallback handles the call;
     // a mutable graph is never substituted for an unpinned call.
     let flow = match record.pinned_flow() {
-        Some(pin) => rustvani::vokoo::graph::load_flow_version(
-            &cfg.supabase_url,
-            &cfg.service_key,
-            &pin.flow_id,
-            pin.version,
-            rustvani::vokoo::graph::TRIGGER_ANSWERED,
-        )
-        .await,
+        Some(pin) => {
+            rustvani::vokoo::graph::load_flow_version(
+                &cfg.supabase_url,
+                &cfg.service_key,
+                &pin.flow_id,
+                pin.version,
+                rustvani::vokoo::graph::TRIGGER_ANSWERED,
+            )
+            .await
+        }
         None => None,
     };
 
     // Attribute only from the immutable snapshot. A guessed organisation here
     // would expose one tenant's caller id on another tenant's live dashboard.
-    state.live.attribute(&arrival.id, flow.as_ref().map(|f| f.org_id.clone()), None);
+    state
+        .live
+        .attribute(&arrival.id, flow.as_ref().map(|f| f.org_id.clone()), None);
 
     let control = flow.as_ref().map(|f| {
         rustvani::vokoo::CallControl::new(
@@ -2051,9 +2158,7 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             match rustvani::vokoo::FlowRunner::for_entry(
                 f,
                 c,
-                rustvani::vokoo::EntryPoint::new(
-                    rustvani::vokoo::graph::TRIGGER_ANSWERED,
-                ),
+                rustvani::vokoo::EntryPoint::new(rustvani::vokoo::graph::TRIGGER_ANSWERED),
             ) {
                 Ok(runner) => Some(runner.already_answered(state.keypresses.all(&arrival.id))),
                 Err(error) => {
@@ -2123,10 +2228,15 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             rustvani::vokoo::NodeAction::CollectDigits { node, .. } => {
                 log::error!("[call={call}] menu {} survived the loop above", node.name);
             }
-            rustvani::vokoo::NodeAction::RunAgent { node, agent_id, timeout_seconds } => {
+            rustvani::vokoo::NodeAction::RunAgent {
+                node,
+                agent_id,
+                timeout_seconds,
+            } => {
                 log::info!(
                     "[call={call}] flow reached agent node {} (timeout {}s)",
-                    node.name, timeout_seconds
+                    node.name,
+                    timeout_seconds
                 );
                 agent_node_id = Some(node.id.clone());
                 // The node's own name — "Reception", "After hours" — which is
@@ -2134,7 +2244,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 // has a name too, and using it would need a second lookup to
                 // say something less specific: two numbers can point at one
                 // agent through differently named nodes.
-                state.live.attribute(&arrival.id, None, Some(node.name.clone()));
+                state
+                    .live
+                    .attribute(&arrival.id, None, Some(node.name.clone()));
                 // Kept for billing: which agent ran is a dimension a cost
                 // report needs, and by the time the pipeline is built the
                 // flow walk has moved on.
@@ -2261,7 +2373,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                         ),
                     }
                 }
-                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
+                write_trail(
+                    &record,
+                    r,
+                    &mut trail_written,
+                    rustvani::vokoo::graph::TRIGGER_ANSWERED,
+                );
             }
             // Listening before anyone has spoken. The tap the listener drinks
             // from belongs to the conversational pipeline, and there is no
@@ -2273,7 +2390,12 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                     "[call={call}] flow starts at {} — listening before a conversation is not supported yet",
                     node.name
                 );
-                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
+                write_trail(
+                    &record,
+                    r,
+                    &mut trail_written,
+                    rustvani::vokoo::graph::TRIGGER_ANSWERED,
+                );
                 record
                     .close(Some("monitor_first"), None, None, serde_json::json!({}))
                     .await;
@@ -2281,8 +2403,15 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             }
             rustvani::vokoo::NodeAction::Finished(reason) => {
                 log::info!("[call={call}] flow ended before any conversation: {reason}");
-                write_trail(&record, r, &mut trail_written, rustvani::vokoo::graph::TRIGGER_ANSWERED);
-                record.close(Some(&reason), None, None, serde_json::json!({})).await;
+                write_trail(
+                    &record,
+                    r,
+                    &mut trail_written,
+                    rustvani::vokoo::graph::TRIGGER_ANSWERED,
+                );
+                record
+                    .close(Some(&reason), None, None, serde_json::json!({}))
+                    .await;
                 return;
             }
         }
@@ -2358,7 +2487,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         Wire::Kookoo { socket, serializer } => {
             let transport = WebSocketTransport::new(
                 &format!("KooKooTransport-{call}"),
-                WebSocketParams { transport: audio_params(AUDIO_OUT_10MS_CHUNKS) },
+                WebSocketParams {
+                    transport: audio_params(AUDIO_OUT_10MS_CHUNKS),
+                },
             );
             transport.set_serializer(Box::new(serializer));
             CallWire::Kookoo { transport, socket }
@@ -2382,7 +2513,11 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 },
             );
             transport.set_serializer(Box::new(AudioSocketFrameSerializer::at(wire_rate)));
-            CallWire::Asterisk { transport, stream, handshake }
+            CallWire::Asterisk {
+                transport,
+                stream,
+                handshake,
+            }
         }
     };
 
@@ -2398,8 +2533,7 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // Where the agent node reports how it finished. Bounded at one: the first
     // outcome ends the node, and anything after it is about a call that is
     // already moving on.
-    let (outcome_tx, mut outcome_rx) =
-        tokio::sync::mpsc::channel::<(String, serde_json::Value)>(1);
+    let (outcome_tx, mut outcome_rx) = tokio::sync::mpsc::channel::<(String, serde_json::Value)>(1);
 
     // What this call consumes, and where it is written down.
     //
@@ -2418,7 +2552,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     ) = match record.id().and_then(|id| uuid::Uuid::parse_str(id).ok()) {
         Some(session_id) => {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("org_id".to_string(), flow.as_ref().map(|f| f.org_id.clone()).unwrap_or_default());
+            metadata.insert(
+                "org_id".to_string(),
+                flow.as_ref().map(|f| f.org_id.clone()).unwrap_or_default(),
+            );
             metadata.insert("did".to_string(), did.clone());
             metadata.insert("ucid".to_string(), arrival.id.clone());
             if let Some(id) = billed_agent_id.as_ref() {
@@ -2439,7 +2576,8 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 cfg.service_key.clone(),
                 metadata.clone(),
             ));
-            let (collector, drain) = rustvani::billing::SessionBilling::new(session_id, storage, 256);
+            let (collector, drain) =
+                rustvani::billing::SessionBilling::new(session_id, storage, 256);
             collector.record(rustvani::billing::BillingEvent::SessionStart {
                 session_id,
                 started_at: chrono::Utc::now(),
@@ -2450,7 +2588,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         }
         None => {
             log::warn!("[call={call}] no call record — usage will not be attributed");
-            (std::sync::Arc::new(rustvani::billing::NoopBillingCollector), None)
+            (
+                std::sync::Arc::new(rustvani::billing::NoopBillingCollector),
+                None,
+            )
         }
     };
 
@@ -2515,8 +2656,7 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         // a relay's transcript lands in `calls.transcript` like any other. It
         // did not before: a 127-second call recorded zero lines while every
         // turn of it sat in the log.
-        let (transcript_tx, mut transcript_rx) =
-            tokio::sync::mpsc::channel::<(String, String)>(64);
+        let (transcript_tx, mut transcript_rx) = tokio::sync::mpsc::channel::<(String, String)>(64);
         {
             let record = record.clone();
             tokio::spawn(async move {
@@ -2539,7 +2679,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
             Err(problem) => {
                 // Named rather than swallowed: every one of these is something
                 // somebody can fix — a step left empty, a key not connected.
-                log::error!("[call={call}] engine '{}' cannot run: {problem}", engine.name);
+                log::error!(
+                    "[call={call}] engine '{}' cannot run: {problem}",
+                    engine.name
+                );
                 // And the caller is sent to a person rather than left on a line
                 // that will never speak. Returning here is what a caller heard
                 // as silence when a relay was published on a retired model.
@@ -2572,7 +2715,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
 
         let task = PipelineTask::new(
             processors,
-            PipelineParams { allow_interruptions: true, ..PipelineParams::default() },
+            PipelineParams {
+                allow_interruptions: true,
+                ..PipelineParams::default()
+            },
         );
         (task, Some(relay.context))
     } else if realtime_mode {
@@ -2583,70 +2729,68 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         // builder in `realtime_probe` that knew only Gemini. Two
         // implementations of one thing, which is how a pre-flight passes an
         // engine a call cannot run.
-        let session: Box<dyn RealtimeSession> = match relay_engine
-            .as_ref()
-            .or(agent_engine.as_ref())
-        {
-            Some(engine) => {
-                let stage_ctx = rustvani::vokoo::StageContext {
-                    supabase_url: &cfg.supabase_url,
-                    service_key: &cfg.service_key,
-                    org_id: control.as_ref().map(|c| c.service().org_id).unwrap_or(""),
-                    sample_rate: PIPELINE_SAMPLE_RATE,
-                    billing: billing.clone(),
-                };
-                let fallback = if realtime_provider == "openai" {
-                    cfg.realtime_key.clone()
-                } else {
-                    cfg.llm_key.clone()
-                };
-                match rustvani::vokoo::build_realtime(
-                    engine,
-                    &stage_ctx,
-                    rustvani::vokoo::RealtimeRequest {
-                        instructions: &instructions,
-                        functions: agent_functions.clone(),
-                        // Only a call that reached a flow has an outcome to
-                        // report, and only then is `finish_call` declared.
-                        declare_outcome: flow.is_some(),
-                        // Let the caller choose. Safe here and nowhere else:
-                        // one realtime session hears and speaks, so a language
-                        // change is an instruction rather than a reconnect.
-                        // A WhatsApp call has no other way to be asked — the
-                        // media socket is open from the dialplan's first line,
-                        // so `<collectdtmf>` never gets a chance.
-                        offer_language: true,
-                        language_codes: cfg.transcript_languages.clone(),
-                        fallback_key: Some(fallback),
-                        probe: false,
-                    },
-                )
-                .await
-                {
-                    Ok(session) => session,
-                    Err(problem) => {
-                        log::error!("[call={call}] realtime engine cannot run: {problem}");
-                        rustvani::vokoo::escalate(
-                            &cfg.supabase_url,
-                            &cfg.service_key,
-                            &state.handovers,
-                            &arrival.id,
-                            &did,
-                            &caller,
-                            rustvani::vokoo::Cause::EngineFailed,
-                        )
-                        .await;
-                        return;
+        let session: Box<dyn RealtimeSession> =
+            match relay_engine.as_ref().or(agent_engine.as_ref()) {
+                Some(engine) => {
+                    let stage_ctx = rustvani::vokoo::StageContext {
+                        supabase_url: &cfg.supabase_url,
+                        service_key: &cfg.service_key,
+                        org_id: control.as_ref().map(|c| c.service().org_id).unwrap_or(""),
+                        sample_rate: PIPELINE_SAMPLE_RATE,
+                        billing: billing.clone(),
+                    };
+                    let fallback = if realtime_provider == "openai" {
+                        cfg.realtime_key.clone()
+                    } else {
+                        cfg.llm_key.clone()
+                    };
+                    match rustvani::vokoo::build_realtime(
+                        engine,
+                        &stage_ctx,
+                        rustvani::vokoo::RealtimeRequest {
+                            instructions: &instructions,
+                            functions: agent_functions.clone(),
+                            // Only a call that reached a flow has an outcome to
+                            // report, and only then is `finish_call` declared.
+                            declare_outcome: flow.is_some(),
+                            // Let the caller choose. Safe here and nowhere else:
+                            // one realtime session hears and speaks, so a language
+                            // change is an instruction rather than a reconnect.
+                            // A WhatsApp call has no other way to be asked — the
+                            // media socket is open from the dialplan's first line,
+                            // so `<collectdtmf>` never gets a chance.
+                            offer_language: true,
+                            language_codes: cfg.transcript_languages.clone(),
+                            fallback_key: Some(fallback),
+                            probe: false,
+                        },
+                    )
+                    .await
+                    {
+                        Ok(session) => session,
+                        Err(problem) => {
+                            log::error!("[call={call}] realtime engine cannot run: {problem}");
+                            rustvani::vokoo::escalate(
+                                &cfg.supabase_url,
+                                &cfg.service_key,
+                                &state.handovers,
+                                &arrival.id,
+                                &did,
+                                &caller,
+                                rustvani::vokoo::Cause::EngineFailed,
+                            )
+                            .await;
+                            return;
+                        }
                     }
                 }
-            }
-            // No engine row at all: a call that never reached a flow, running
-            // on the environment. Nothing to build from, so nothing is built.
-            None => {
-                log::error!("[call={call}] realtime mode with no engine to build from");
-                return;
-            }
-        };
+                // No engine row at all: a call that never reached a flow, running
+                // on the environment. Nothing to build from, so nothing is built.
+                None => {
+                    log::error!("[call={call}] realtime mode with no engine to build from");
+                    return;
+                }
+            };
         // Every conversation until now went unrecorded: `transcript_line` was
         // only ever called on the listen-only path, so `calls.transcript` has
         // been empty on every call this system has taken. The realtime layer
@@ -2709,13 +2853,18 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         let realtime = rt.into_processor();
         let task = PipelineTask::new(
             vec![transport.input(), primer, realtime, transport.output()],
-            PipelineParams { allow_interruptions: true, ..PipelineParams::default() },
+            PipelineParams {
+                allow_interruptions: true,
+                ..PipelineParams::default()
+            },
         );
         (task, None)
     } else if agent_mode {
         log::info!(
             "[call={call}] agent mode — stt=deepgram/{} llm={} tts={}",
-            cfg.stt_language, cfg.llm_model, cfg.tts_voice
+            cfg.stt_language,
+            cfg.llm_model,
+            cfg.tts_voice
         );
         let context = shared_context(Some(cfg.system_prompt.clone()));
 
@@ -2764,7 +2913,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
                 tts,
                 transport.output(),
             ],
-            PipelineParams { allow_interruptions: true, ..PipelineParams::default() },
+            PipelineParams {
+                allow_interruptions: true,
+                ..PipelineParams::default()
+            },
         );
         (task, Some(context))
     } else {
@@ -2772,7 +2924,10 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         let echo = FrameProcessor::new("Echo", Box::new(EchoHandler), false);
         let task = PipelineTask::new(
             vec![transport.input(), primer, echo, transport.output()],
-            PipelineParams { allow_interruptions: false, ..PipelineParams::default() },
+            PipelineParams {
+                allow_interruptions: false,
+                ..PipelineParams::default()
+            },
         );
         (task, None)
     };
@@ -2815,8 +2970,9 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // ended the channel. A completed future must never be polled again.
     let mut socket_done = false;
     let socket_fut = transport.run(push_tx);
-    let observer: Option<Arc<dyn BaseObserver>> = (agent_mode || realtime_mode || relay_engine.is_some())
-        .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
+    let observer: Option<Arc<dyn BaseObserver>> =
+        (agent_mode || realtime_mode || relay_engine.is_some())
+            .then(|| Arc::new(LatencyObserver::new(call)) as Arc<dyn BaseObserver>);
     let task_fut = task.run(system_clock(), observer);
 
     // The conversation ends when the caller hangs up, the pipeline stops, or
@@ -2851,9 +3007,8 @@ async fn handle_call(incoming: Incoming, state: AppState) {
     // `gone_quiet` rather than `failed`, because that is what actually
     // happened from the flow's point of view, and a flow that routes it can
     // still hand the caller to a person.
-    let idle_limit = std::time::Duration::from_secs(
-        env_or("AGENT_IDLE_SECONDS", "20").parse().unwrap_or(20),
-    );
+    let idle_limit =
+        std::time::Duration::from_secs(env_or("AGENT_IDLE_SECONDS", "20").parse().unwrap_or(20));
 
     // Set by whichever arm below decided the call could not be served.
     let mut fault: Option<rustvani::vokoo::Cause> = None;
@@ -3161,7 +3316,11 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         billing.record(rustvani::billing::BillingEvent::SessionEnd {
             session_id: billing.session_id(),
             ended_at: chrono::Utc::now(),
-            finish_reason: if fault.is_some() { "cancel".to_string() } else { "end".to_string() },
+            finish_reason: if fault.is_some() {
+                "cancel".to_string()
+            } else {
+                "end".to_string()
+            },
         });
         drop(billing);
         match tokio::time::timeout(std::time::Duration::from_secs(10), drain).await {
@@ -3197,15 +3356,18 @@ async fn handle_call(incoming: Incoming, state: AppState) {
         &[
             ("channel", arrival.channel),
             ("outcome", agent_outcome.as_deref().unwrap_or("none")),
-            ("mode", if relay_engine.is_some() {
-                "relay"
-            } else if realtime_mode {
-                "realtime"
-            } else if agent_mode {
-                "agent"
-            } else {
-                "echo"
-            }),
+            (
+                "mode",
+                if relay_engine.is_some() {
+                    "relay"
+                } else if realtime_mode {
+                    "realtime"
+                } else if agent_mode {
+                    "agent"
+                } else {
+                    "echo"
+                },
+            ),
         ],
     );
     if let Some(cause) = fault_seen.as_deref() {
@@ -3269,7 +3431,10 @@ async fn main() {
         live: rustvani::vokoo::live::LiveCalls::new(),
         presence: rustvani::vokoo::live::Presence::new(),
     };
-    let port: u16 = std::env::var("PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8080);
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8080);
 
     let app = Router::new()
         .route("/health", get(|| async { "ok" }))
@@ -3281,7 +3446,10 @@ async fn main() {
             "/metrics",
             get(|| async {
                 (
-                    [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4",
+                    )],
                     rustvani::vokoo::telemetry::render(),
                 )
             }),
@@ -3290,7 +3458,10 @@ async fn main() {
         .route("/call/monitor", post(call_monitor))
         .route("/engine/preflight", post(engine_preflight))
         .route("/flow/dryrun", post(flow_dry_run))
-        .route("/workspace/intelligence/documents", post(inspect_workspace_document))
+        .route(
+            "/workspace/intelligence/documents",
+            post(inspect_workspace_document),
+        )
         .route("/catalogue/refresh", post(catalogue_refresh))
         .route("/kookoo", any(kookoo_webhook))
         .route("/asterisk/incoming", post(asterisk_incoming))
@@ -3300,13 +3471,19 @@ async fn main() {
 
     log::info!(
         "vokoo-bridge on 0.0.0.0:{port} — ws_url={} sip={} is_sip={} ivr={} pipeline={} keys_ok={}",
-        state.ws_url, state.sip_number, state.is_sip, state.ivr_mode,
-        cfg.pipeline_mode, cfg.agent_ready()
+        state.ws_url,
+        state.sip_number,
+        state.is_sip,
+        state.ivr_mode,
+        cfg.pipeline_mode,
+        cfg.agent_ready()
     );
 
     // Keep the engine catalogue honest without anybody pressing a button. The
     // hand-typed list is what put a retired Sarvam model in front of a caller.
-    let refresh_hours: u64 = env_or("CATALOGUE_REFRESH_HOURS", "12").parse().unwrap_or(12);
+    let refresh_hours: u64 = env_or("CATALOGUE_REFRESH_HOURS", "12")
+        .parse()
+        .unwrap_or(12);
     if refresh_hours > 0 {
         rustvani::vokoo::discovery::schedule(
             cfg.supabase_url.clone(),
@@ -3327,7 +3504,10 @@ async fn main() {
     // must never cross a network — which is the reason Asterisk runs on this
     // machine rather than beside the rest of the telephony.
     let audiosocket_bind = env_or("AUDIOSOCKET_BIND", "127.0.0.1:9092");
-    tokio::spawn(audiosocket_listener(audiosocket_bind.clone(), state.clone()));
+    tokio::spawn(audiosocket_listener(
+        audiosocket_bind.clone(),
+        state.clone(),
+    ));
 
     // The switch. Absent ARI configuration the bridge behaves exactly as it
     // did — a call reaches the pipeline directly — so this is additive rather
@@ -3335,7 +3515,10 @@ async fn main() {
     match rustvani::vokoo::ari::Ari::from_env() {
         Some(ari) => match ari.ping().await {
             Ok(entity) => {
-                log::info!("[stasis] ari ok ({entity}) — running {}", rustvani::vokoo::stasis::APP);
+                log::info!(
+                    "[stasis] ari ok ({entity}) — running {}",
+                    rustvani::vokoo::stasis::APP
+                );
                 let board = state.switchboard.clone();
                 let presence = state.presence.clone();
                 tokio::spawn(async move {
@@ -3363,7 +3546,9 @@ async fn main() {
         None => log::info!("[stasis] no ARI_URL — calls go straight to the pipeline"),
     }
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await.expect("bind");
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .expect("bind");
     axum::serve(listener, app).await.expect("serve");
 }
 
@@ -3372,14 +3557,20 @@ mod tests {
     use super::*;
 
     fn params(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn new_call_xml_carries_every_param_in_x_uui() {
         let p = params(&[
-            ("event", "NewCall"), ("sid", "212758065"), ("cid", "919704665032"),
-            ("operator", "Airtel"), ("circle", "ANDHRA PRADESH"),
+            ("event", "NewCall"),
+            ("sid", "212758065"),
+            ("cid", "919704665032"),
+            ("operator", "Airtel"),
+            ("circle", "ANDHRA PRADESH"),
         ]);
         let xml = new_call_xml(&p, "wss://vokoo.vayuveda.ai/ws", "524431", "true");
         assert!(xml.contains(r#"url="wss://vokoo.vayuveda.ai/ws""#));
@@ -3394,7 +3585,12 @@ mod tests {
 
     #[test]
     fn single_quotes_in_params_are_escaped() {
-        let p = params(&[("event", "NewCall"), ("sid", "1"), ("cid", "2"), ("name", "O'Brien")]);
+        let p = params(&[
+            ("event", "NewCall"),
+            ("sid", "1"),
+            ("cid", "2"),
+            ("name", "O'Brien"),
+        ]);
         let xml = new_call_xml(&p, "wss://h/ws", "5", "true");
         assert!(!xml.contains("O'Brien"));
         assert!(xml.contains("O&apos;Brien"));

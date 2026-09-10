@@ -31,19 +31,13 @@
 /// All entries lowercase — comparison is case-insensitive.
 pub const ABBREVIATIONS: &[&str] = &[
     // Titles
-    "mr", "mrs", "ms", "dr", "prof", "rev", "sr", "jr",
-    // Indian honorifics
-    "sh", "smt", "km", "adv",
-    // Military / government ranks
-    "lt", "col", "gen", "maj", "capt", "sgt", "cpl", "pvt",
-    "dept", "govt", "min",
+    "mr", "mrs", "ms", "dr", "prof", "rev", "sr", "jr", // Indian honorifics
+    "sh", "smt", "km", "adv", // Military / government ranks
+    "lt", "col", "gen", "maj", "capt", "sgt", "cpl", "pvt", "dept", "govt", "min",
     // Academic / publishing
-    "vol", "no", "fig", "ed", "pp", "ch",
-    // Common shorthand
-    "vs", "etc", "approx", "est", "cont", "misc", "ref",
-    // Geographic
-    "st", "ave", "blvd", "rd",
-    // Legal (IPC, CrPC, POCSO context)
+    "vol", "no", "fig", "ed", "pp", "ch", // Common shorthand
+    "vs", "etc", "approx", "est", "cont", "misc", "ref", // Geographic
+    "st", "ave", "blvd", "rd", // Legal (IPC, CrPC, POCSO context)
     "sec", "art", "cl", "sub",
 ];
 
@@ -54,7 +48,9 @@ pub const ABBREVIATIONS: &[&str] = &[
 /// Extract the word immediately before byte position `pos` in `text`.
 fn word_before(text: &str, pos: usize) -> &str {
     let before = &text[..pos];
-    let end = before.trim_end_matches(|c: char| !c.is_alphanumeric()).len();
+    let end = before
+        .trim_end_matches(|c: char| !c.is_alphanumeric())
+        .len();
     let slice = &before[..end];
     let start = slice
         .rfind(|c: char| !c.is_alphanumeric() && c != '\'')
@@ -139,10 +135,10 @@ pub fn find_sentence_end(text: &str) -> Option<usize> {
     while i < bytes.len() {
         let ch = match text[i..].chars().next() {
             Some(c) => c,
-            None    => break,
+            None => break,
         };
-        let ch_len  = ch.len_utf8();
-        let last    = i + ch_len - 1; // inclusive last byte of this char
+        let ch_len = ch.len_utf8();
+        let last = i + ch_len - 1; // inclusive last byte of this char
 
         match ch {
             // ---- Unambiguous ASCII boundaries -------------------------
@@ -186,8 +182,7 @@ pub fn find_sentence_end(text: &str) -> Option<usize> {
 
                 // Rule 2: must be followed by whitespace or end-of-string
                 let next = text[i + 1..].chars().next();
-                let followed_by_ws =
-                    next.is_none() || next.map_or(false, |n| n.is_whitespace());
+                let followed_by_ws = next.is_none() || next.map_or(false, |n| n.is_whitespace());
 
                 if followed_by_ws && !is_abbreviation_dot(text, i) {
                     return Some(last);
@@ -233,17 +228,17 @@ fn floor_char_boundary(text: &str, index: usize) -> usize {
 /// are identified correctly.
 pub fn find_sentence_boundary_before(text: &str, max_len: usize) -> Option<usize> {
     let search = &text[..floor_char_boundary(text, max_len)];
-    let bytes  = search.as_bytes();
+    let bytes = search.as_bytes();
     let mut last: Option<usize> = None;
     let mut i = 0;
 
     while i < search.len() {
         let ch = match search[i..].chars().next() {
             Some(c) => c,
-            None    => break,
+            None => break,
         };
-        let ch_len     = ch.len_utf8();
-        let excl_end   = i + ch_len; // exclusive end for drain
+        let ch_len = ch.len_utf8();
+        let excl_end = i + ch_len; // exclusive end for drain
 
         match ch {
             '?' | '!' => {
@@ -273,8 +268,7 @@ pub fn find_sentence_boundary_before(text: &str, max_len: usize) -> Option<usize
                 }
 
                 let next = search[i + 1..].chars().next();
-                let followed_by_ws =
-                    next.is_none() || next.map_or(false, |n| n.is_whitespace());
+                let followed_by_ws = next.is_none() || next.map_or(false, |n| n.is_whitespace());
 
                 if followed_by_ws && !is_abbreviation_dot(text, i) {
                     last = Some(excl_end);
@@ -364,7 +358,8 @@ mod tests {
 
     #[test]
     fn a_byte_limit_inside_a_devanagari_character_does_not_panic() {
-        let hindi = "मैं अपॉइंटमेंट बुक या रद्द कर सकती हूँ, और क्लिनिक का समय और पता बता सकती हूँ। आप क्या करना चाहेंगे?";
+        let hindi =
+            "मैं अपॉइंटमेंट बुक या रद्द कर सकती हूँ, और क्लिनिक का समय और पता बता सकती हूँ। आप क्या करना चाहेंगे?";
         // Every limit, not a lucky one: two in three land inside a character.
         for limit in 0..=hindi.len() + 4 {
             let _ = find_sentence_boundary_before(hindi, limit);
@@ -387,8 +382,14 @@ mod tests {
         assert!(!chunks.is_empty(), "must make progress rather than spin");
         let rebuilt: String = chunks.join("") + &buffer;
         assert_eq!(
-            rebuilt.chars().filter(|c| !c.is_whitespace()).collect::<String>(),
-            hindi.chars().filter(|c| !c.is_whitespace()).collect::<String>(),
+            rebuilt
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
+            hindi
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>(),
             "a hard split must not lose or corrupt a character",
         );
     }
@@ -578,8 +579,7 @@ mod tests {
 
     #[test]
     fn test_extract_ellipsis_not_split() {
-        let mut buf =
-            "So basically… हम India की हर language को voice देते हैं। अगला।".to_string();
+        let mut buf = "So basically… हम India की हर language को voice देते हैं। अगला।".to_string();
         let chunks = extract_sentences(&mut buf, 400);
         // First chunk should run from "So basically" all the way to first danda
         assert!(chunks[0].starts_with("So basically"));

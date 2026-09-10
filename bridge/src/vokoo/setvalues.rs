@@ -34,7 +34,11 @@ pub async fn run(node: &FlowNode, scope: &Scope) -> (String, Value) {
 
     let mut built = Map::new();
     for row in rows {
-        let Some(name) = row.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty())
+        let Some(name) = row
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
         else {
             continue;
         };
@@ -72,8 +76,12 @@ mod tests {
     }
 
     fn scope() -> Scope {
-        let mut scope = Scope::for_integration(json!({ "caller": "+919949879837", "duration_secs": 90 }));
-        scope.record("Process call", json!({ "patient_name": "सात्या", "doctor": "cardiologist", "score": 8 }));
+        let mut scope =
+            Scope::for_integration(json!({ "caller": "+919949879837", "duration_secs": 90 }));
+        scope.record(
+            "Process call",
+            json!({ "patient_name": "सात्या", "doctor": "cardiologist", "score": 8 }),
+        );
         scope
     }
 

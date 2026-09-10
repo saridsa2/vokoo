@@ -134,7 +134,7 @@ ssh vokoo 'sudo install -d -m 0700 /opt/vokoo/document-extractor/tmp && sudo chm
 ssh vokoo '/opt/vokoo/rustvani/deploy/document-extractor/docling-vps --version'
 ```
 
-Install or update the unit only after all document and compiler migrations through 0129
+Install or update the unit only after all document and compiler migrations through 0130
 succeed:
 
 ```bash
@@ -180,10 +180,51 @@ configuration above.
 
 The compiler shares the single off-call document worker process, but uses its
 own durable queue and lease. Keep `VOKOO_COMPILER_ENABLED=false` while deploying
-or rolling back binaries. After migrations 0127-0129 and the worker health check
+or rolling back binaries. After migrations 0127-0130 and the worker health check
 pass, set it to `true` in the systemd override and restart the unit. The health
 response reports `compiler_enabled`; only one worker process is supported for
 the initial acceptance run.
+
+Enable it only after those checks by installing the reviewed override:
+
+```bash
+rsync -az deploy/vokoo-document-worker-compiler-enabled.conf \
+  vokoo:/opt/vokoo/rustvani/deploy/
+ssh vokoo 'sudo install -D -m 0644 \
+  /opt/vokoo/rustvani/deploy/vokoo-document-worker-compiler-enabled.conf \
+  /etc/systemd/system/vokoo-document-worker.service.d/compiler-enabled.conf && \
+  sudo systemctl daemon-reload && sudo systemctl restart vokoo-document-worker'
+```
+
+To disable it, remove only that drop-in, reload systemd, and restart the worker;
+the base unit remains `VOKOO_COMPILER_ENABLED=false`.
+
+Migration `0130_compiler_materialization_recovery.sql` is part of the compiler
+release, not an optional follow-up. It lets an expired `materializing` lease be
+reclaimed so a retry can replay the idempotent materialization transaction. Take
+and verify a fresh backup before applying it:
+
+```bash
+ssh vokoo 'test ! -e /opt/vokoo/backups/compiler-pre-0130.dump && \
+  docker exec supabase-db pg_dump -U postgres -Fc postgres > /opt/vokoo/backups/compiler-pre-0130.dump && \
+  test -s /opt/vokoo/backups/compiler-pre-0130.dump && \
+  docker exec -i supabase-db pg_restore --list < /opt/vokoo/backups/compiler-pre-0130.dump >/dev/null'
+
+ssh vokoo 'docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1' \
+  < supabase/migrations/0130_compiler_materialization_recovery.sql
+ssh vokoo 'docker exec -i supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1' \
+  < supabase/tests/0130_compiler_materialization_recovery.sql
+```
+
+Run the `0127`, `0128`, and `0129` SQL tests again after `0130`; every test is
+transactional and must end in `ROLLBACK`. Then reload PostgREST and verify the
+disabled worker before enabling compilation:
+
+```bash
+ssh vokoo 'docker exec supabase-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -c "notify pgrst, '\''reload schema'\''"'
+ssh vokoo 'curl --fail --silent http://127.0.0.1:8082/health'
+```
 
 The provider and model are frozen when a run is enqueued. Credentials are not
 environment variables or browser inputs: the worker resolves the organization's

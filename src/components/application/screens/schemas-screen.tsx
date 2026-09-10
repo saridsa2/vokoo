@@ -152,7 +152,6 @@ export function SchemasScreen() {
         <>
             <ScreenHeader
                 title="Schemas"
-                description="Named shapes — what a tool takes, and what a call gets read into."
                 search={
                     <div className="w-full md:w-64">
                         <Input
@@ -178,8 +177,7 @@ export function SchemasScreen() {
                             {shapes.length === 0 ? "No schemas yet" : "No schemas match that"}
                         </p>
                         <p className="mx-auto mt-1 max-w-md text-sm text-tertiary">
-                            A schema is a named shape: what a tool takes as its input, or what a finished call
-                            gets read into. Tools bring their own; the rest are written here.
+                            Create a schema for structured input or output.
                         </p>
                     </div>
                 ) : (

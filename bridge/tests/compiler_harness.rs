@@ -1,12 +1,14 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use rustvani::vokoo::compiler::{
-    Action, ActionOperation, AisdkCompilerModel, CatalogueNode, CatalogueOutcome,
+    Action, ActionOperation, AisdkCompilerModel, CatalogueField, CatalogueNode, CatalogueOutcome,
     CatalogueSnapshot, CompilerError, CompilerHarness, CompilerInput, CompilerModel, EvidenceRef,
     EvidenceRole, FailurePolicy, ModelRequest, ModelResponse, Population, Recommendation,
-    TokenUsage, TraceEvent, TraceSink, TriggerOperation, TriggerSpec, WorkspaceResources,
+    RequestActor, TokenUsage, TraceEvent, TraceSink, TriggerOperation, TriggerSpec,
+    WorkspaceResources,
 };
 use rustvani::vokoo::documents::{DocumentEvidence, EvidenceChunk};
 use serde_json::{json, Value};
@@ -43,6 +45,22 @@ impl CompilerModel for ScriptedModel {
                 output_tokens: Some(5),
             },
         })
+    }
+}
+
+struct MissingWorkerToolOnce {
+    inner: ScriptedModel,
+    missed: AtomicBool,
+}
+
+#[async_trait]
+impl CompilerModel for MissingWorkerToolOnce {
+    async fn call(&self, request: ModelRequest) -> Result<ModelResponse, CompilerError> {
+        if request.tool_name == "emit_recommendations" && !self.missed.swap(true, Ordering::SeqCst)
+        {
+            return Err(CompilerError::model("required_tool_not_called"));
+        }
+        self.inner.call(request).await
     }
 }
 
@@ -87,7 +105,54 @@ async fn runs_bounded_non_overlapping_workers_and_emits_source_safe_trace() {
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests.len(), 5);
     assert_eq!(requests[0].tool_name, "delegate_section");
+    assert!(requests[0]
+        .tool_description
+        .contains("maximize longitudinal care-path coverage"));
+    assert_eq!(
+        requests[0].payload["page_map"][0]["preview"],
+        "Review HbA1c every 90 days"
+    );
     assert_eq!(requests[1].tool_name, "emit_recommendations");
+    assert!(requests[1]
+        .tool_description
+        .contains("Trigger is flattened"));
+    assert!(requests[1]
+        .tool_description
+        .contains("Evidence entries contain only chunk_id and role"));
+    for definition in ["TriggerSpec", "Action"] {
+        let variants = requests[1].schema["$defs"][definition]["oneOf"]
+            .as_array()
+            .unwrap();
+        assert!(variants.iter().all(|variant| {
+            let required = variant["required"].as_array().unwrap();
+            required.iter().any(|field| field == "key")
+                && required.iter().any(|field| field == "evidence")
+                && variant["properties"].get("evidence").is_some()
+        }));
+    }
+    for (property, expected) in [
+        ("anchor", "enrolment"),
+        ("document_kind", "lab_report"),
+        ("what", "test"),
+        ("source", "patient"),
+        ("recipient", "primary_team"),
+        ("urgency", "soon"),
+    ] {
+        let mut enums = Vec::new();
+        collect_property_enums(&requests[1].schema, property, &mut enums);
+        assert!(
+            enums
+                .iter()
+                .any(|values| values.iter().any(|value| value == expected)),
+            "worker schema must constrain {property} to frozen catalogue options"
+        );
+    }
+    assert!(requests[1].schema["$defs"]["RequestActor"]["enum"]
+        .as_array()
+        .is_some_and(|values| values.iter().any(|value| value == "patient")
+            && values.iter().any(|value| value == "clinician")
+            && values.iter().any(|value| value == "care_team")
+            && values.iter().any(|value| value == "system")));
     assert_eq!(requests[3].tool_name, "emit_reconciliation");
     assert_eq!(requests[4].tool_name, "finish_compilation");
     assert!(requests.iter().all(|request| request.correction.is_none()));
@@ -101,8 +166,157 @@ async fn runs_bounded_non_overlapping_workers_and_emits_source_safe_trace() {
     assert!(!encoded.contains("HbA1c monitoring"));
 }
 
+fn collect_property_enums<'a>(value: &'a Value, property: &str, output: &mut Vec<&'a Vec<Value>>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(values) = object
+                .get("properties")
+                .and_then(|properties| properties.get(property))
+                .and_then(|property| property.get("enum"))
+                .and_then(Value::as_array)
+            {
+                output.push(values);
+            }
+            for child in object.values() {
+                collect_property_enums(child, property, output);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_property_enums(item, property, output);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[tokio::test]
-async fn rejects_out_of_scope_evidence_and_retries_invalid_output_once() {
+async fn normalizes_existing_citations_without_inventing_evidence() {
+    let mut item = serde_json::to_value(recommendation("hba1c-monitoring", "chunk-1")).unwrap();
+    strip_citation_payload_fields(&mut item);
+    item.as_object_mut().unwrap().remove("evidence");
+    let trigger_citation = item["trigger"]["evidence"][0].take();
+    item["trigger"]["evidence"] = trigger_citation;
+    let model = ScriptedModel::new(vec![
+        json!({
+            "tasks": [{"id":"task-1","heading":"HbA1c monitoring","page_start":1,"page_end":2,"chunk_ids":["chunk-1"]}],
+            "excluded_sections": []
+        }),
+        json!({"task_id":"task-1","recommendations":[item]}),
+        json!({
+            "title":"Type 2 diabetes care path",
+            "selections":[{"task_id":"task-1","recommendation_id":"hba1c-monitoring"}]
+        }),
+        json!({"accepted_recommendations":1,"gap_count":0}),
+    ]);
+    let trace = RecordingTrace::default();
+
+    let output = CompilerHarness::new(&model, &trace)
+        .compile(input())
+        .await
+        .unwrap();
+
+    assert_eq!(output.flows.len(), 1);
+    assert!(output.evidence.iter().all(|citation| {
+        citation.recommendation_id == "hba1c-monitoring"
+            && citation.excerpt == "Review HbA1c every 90 days"
+    }));
+    let requests = model.requests.lock().unwrap();
+    let citation_schema = &requests[1].schema["$defs"]["EvidenceRef"];
+    let required = citation_schema["required"].as_array().unwrap();
+    assert!(!required.iter().any(|field| field == "excerpt"));
+    assert!(!required.iter().any(|field| field == "recommendation_id"));
+    assert_eq!(
+        citation_schema["properties"]["chunk_id"]["enum"],
+        json!(["chunk-1"])
+    );
+    assert!(trace
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|event| event.status == "accepted"));
+}
+
+fn strip_citation_payload_fields(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            if object.contains_key("chunk_id") && object.contains_key("role") {
+                object.remove("excerpt");
+                object.remove("recommendation_id");
+            }
+            for child in object.values_mut() {
+                strip_citation_payload_fields(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                strip_citation_payload_fields(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn missing_trigger_citations_remain_a_hard_failure() {
+    let mut item = serde_json::to_value(recommendation("hba1c-monitoring", "chunk-1")).unwrap();
+    item["trigger"].as_object_mut().unwrap().remove("evidence");
+    let emission = json!({"task_id":"task-1","recommendations":[item]});
+    let model = ScriptedModel::new(vec![
+        json!({
+            "tasks": [{"id":"task-1","heading":"HbA1c monitoring","page_start":1,"page_end":2,"chunk_ids":["chunk-1"]}],
+            "excluded_sections": []
+        }),
+        emission.clone(),
+        emission.clone(),
+        emission,
+    ]);
+    let trace = RecordingTrace::default();
+
+    let error = CompilerHarness::new(&model, &trace)
+        .compile(input())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "invalid_tool_output_trigger_evidence");
+}
+
+#[tokio::test]
+async fn retries_a_missing_required_worker_tool_within_the_same_bound() {
+    let model = MissingWorkerToolOnce {
+        inner: ScriptedModel::new(vec![
+            json!({
+                "tasks": [{"id":"task-1","heading":"HbA1c monitoring","page_start":1,"page_end":2,"chunk_ids":["chunk-1"]}],
+                "excluded_sections": []
+            }),
+            json!({"task_id":"task-1","recommendations":[recommendation("hba1c-monitoring", "chunk-1")]}),
+            json!({
+                "title":"Type 2 diabetes care path",
+                "selections":[{"task_id":"task-1","recommendation_id":"hba1c-monitoring"}]
+            }),
+            json!({"accepted_recommendations":1,"gap_count":0}),
+        ]),
+        missed: AtomicBool::new(false),
+    };
+    let trace = RecordingTrace::default();
+
+    let output = CompilerHarness::new(&model, &trace)
+        .compile(input())
+        .await
+        .unwrap();
+
+    assert_eq!(output.flows.len(), 1);
+    let events = trace.0.lock().unwrap();
+    assert_eq!(
+        events[1].error_code.as_deref(),
+        Some("required_tool_not_called")
+    );
+    assert_eq!(events[2].status, "accepted");
+}
+
+#[tokio::test]
+async fn rejects_out_of_scope_evidence_after_bounded_worker_corrections() {
     let model = ScriptedModel::new(vec![
         json!({"tasks":"not-an-array"}),
         json!({
@@ -111,6 +325,7 @@ async fn rejects_out_of_scope_evidence_and_retries_invalid_output_once() {
         }),
         json!({"task_id":"task-1","recommendations":[recommendation("bad", "chunk-2")]}),
         json!({"task_id":"task-1","recommendations":[recommendation("still-bad", "chunk-2")]}),
+        json!({"task_id":"task-1","recommendations":[recommendation("final-bad", "chunk-2")]}),
     ]);
     let trace = RecordingTrace::default();
     let harness = CompilerHarness::new(&model, &trace);
@@ -119,7 +334,7 @@ async fn rejects_out_of_scope_evidence_and_retries_invalid_output_once() {
 
     assert_eq!(error.code(), "evidence_out_of_scope");
     let requests = model.requests.lock().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 5);
     assert!(requests[0].correction.is_none());
     assert_eq!(
         requests[1].correction.as_deref(),
@@ -130,6 +345,69 @@ async fn rejects_out_of_scope_evidence_and_retries_invalid_output_once() {
         requests[3].correction.as_deref(),
         Some("evidence_out_of_scope")
     );
+}
+
+#[tokio::test]
+async fn reports_source_safe_shape_code_for_nested_trigger_operation() {
+    let nested = json!({
+        "task_id":"task-1",
+        "recommendations":[{
+            "id":"monitoring",
+            "title":"Monitoring",
+            "population":{"description":"Adults","inclusions":[],"exclusions":[],"evidence":[]},
+            "trigger":{"key":"due","operation":{"kind":"due","anchor":"start","offset_days":0,"window_days":7},"evidence":[]},
+            "thresholds":[],
+            "actions":[],
+            "completion":null,
+            "failure_policy":null,
+            "evidence":[]
+        }]
+    });
+    let model = ScriptedModel::new(vec![
+        json!({
+            "tasks":[{"id":"task-1","heading":"Monitoring","page_start":1,"page_end":2,"chunk_ids":["chunk-1"]}],
+            "excluded_sections":[]
+        }),
+        nested.clone(),
+        nested.clone(),
+        nested,
+    ]);
+    let trace = RecordingTrace::default();
+
+    let error = CompilerHarness::new(&model, &trace)
+        .compile(input())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "invalid_tool_output_trigger_operation_nested");
+    assert_eq!(
+        model.requests.lock().unwrap()[2].correction.as_deref(),
+        Some("invalid_tool_output_trigger_operation_nested")
+    );
+}
+
+#[tokio::test]
+async fn reports_source_safe_shape_code_for_missing_request_actor() {
+    let mut item = serde_json::to_value(recommendation("monitoring", "chunk-1")).unwrap();
+    item["actions"][0].as_object_mut().unwrap().remove("actor");
+    let emission = json!({"task_id":"task-1","recommendations":[item]});
+    let model = ScriptedModel::new(vec![
+        json!({
+            "tasks":[{"id":"task-1","heading":"Monitoring","page_start":1,"page_end":2,"chunk_ids":["chunk-1"]}],
+            "excluded_sections":[]
+        }),
+        emission.clone(),
+        emission.clone(),
+        emission,
+    ]);
+    let trace = RecordingTrace::default();
+
+    let error = CompilerHarness::new(&model, &trace)
+        .compile(input())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "invalid_tool_output_request_actor");
 }
 
 #[tokio::test]
@@ -157,7 +435,7 @@ async fn reconciliation_can_only_select_worker_recommendations() {
 }
 
 #[tokio::test]
-async fn rejects_overlapping_supervisor_tasks_after_one_correction() {
+async fn rejects_overlapping_supervisor_tasks_after_two_corrections() {
     let overlapping = json!({
         "tasks":[
             {"id":"one","heading":"One","page_start":1,"page_end":3,"chunk_ids":["chunk-1"]},
@@ -165,7 +443,7 @@ async fn rejects_overlapping_supervisor_tasks_after_one_correction() {
         ],
         "excluded_sections":[]
     });
-    let model = ScriptedModel::new(vec![overlapping.clone(), overlapping]);
+    let model = ScriptedModel::new(vec![overlapping.clone(), overlapping.clone(), overlapping]);
     let trace = RecordingTrace::default();
 
     let error = CompilerHarness::new(&model, &trace)
@@ -174,7 +452,7 @@ async fn rejects_overlapping_supervisor_tasks_after_one_correction() {
         .unwrap_err();
 
     assert_eq!(error.code(), "overlapping_section_tasks");
-    assert_eq!(model.requests.lock().unwrap().len(), 2);
+    assert_eq!(model.requests.lock().unwrap().len(), 3);
 }
 
 #[test]
@@ -241,7 +519,7 @@ fn recommendation(id: &str, chunk_id: &str) -> Recommendation {
         trigger: TriggerSpec {
             key: "hba1c-due".into(),
             operation: TriggerOperation::Recurring {
-                anchor: "last_hba1c".into(),
+                anchor: "enrolment".into(),
                 every_days: 90,
             },
             evidence: evidence.clone(),
@@ -250,7 +528,8 @@ fn recommendation(id: &str, chunk_id: &str) -> Recommendation {
         actions: vec![Action {
             key: "request-hba1c".into(),
             operation: ActionOperation::Request {
-                what: "HbA1c result".into(),
+                actor: RequestActor::Patient,
+                what: "test".into(),
                 instructions: "Ask the patient to arrange a review".into(),
                 expires_days: 14,
             },
@@ -258,7 +537,7 @@ fn recommendation(id: &str, chunk_id: &str) -> Recommendation {
         }],
         completion: None,
         failure_policy: Some(FailurePolicy {
-            recipient: "care_team".into(),
+            recipient: "primary_team".into(),
             urgency: "routine".into(),
             note: "Follow up manually".into(),
             evidence: evidence.clone(),
@@ -268,7 +547,14 @@ fn recommendation(id: &str, chunk_id: &str) -> Recommendation {
 }
 
 fn catalogue() -> CatalogueSnapshot {
-    let node = |id: &str, outcomes: &[&str]| CatalogueNode {
+    let field = |key: &str, options: &[&str]| CatalogueField {
+        key: key.into(),
+        field_type: "select".into(),
+        required: true,
+        default: None,
+        options: options.iter().map(|id| json!({"id": id})).collect(),
+    };
+    let node = |id: &str, outcomes: &[&str], fields: Vec<CatalogueField>| CatalogueNode {
         id: id.into(),
         node_type: id.into(),
         families: vec!["care_path".into()],
@@ -276,7 +562,7 @@ fn catalogue() -> CatalogueSnapshot {
             .iter()
             .map(|id| CatalogueOutcome { id: (*id).into() })
             .collect(),
-        fields: vec![],
+        fields,
         outcomes_from: None,
         output: String::new(),
         suspends: false,
@@ -285,12 +571,68 @@ fn catalogue() -> CatalogueSnapshot {
     CatalogueSnapshot {
         digest: "catalogue-1".into(),
         nodes: vec![
-            node("trigger.recurring", &["due"]),
+            node(
+                "trigger.recurring",
+                &["due"],
+                vec![field(
+                    "anchor",
+                    &[
+                        "enrolment",
+                        "birth",
+                        "transfer_of_care",
+                        "discharge",
+                        "treatment_start",
+                    ],
+                )],
+            ),
+            node(
+                "trigger.document",
+                &["received"],
+                vec![field(
+                    "document_kind",
+                    &[
+                        "lab_report",
+                        "imaging_report",
+                        "discharge_summary",
+                        "referral",
+                        "other",
+                    ],
+                )],
+            ),
             node(
                 "outreach.request",
                 &["fulfilled", "declined", "expired", "failed"],
+                vec![field(
+                    "what",
+                    &[
+                        "attendance",
+                        "lab_report",
+                        "imaging_report",
+                        "test",
+                        "medication_review",
+                        "other",
+                    ],
+                )],
             ),
-            node("escalate.notify", &["created", "failed"]),
+            node(
+                "care_path.record",
+                &["recorded", "failed"],
+                vec![field(
+                    "source",
+                    &["patient", "practitioner", "document", "workflow"],
+                )],
+            ),
+            node(
+                "escalate.notify",
+                &["created", "failed"],
+                vec![
+                    field(
+                        "to",
+                        &["primary_team", "on_call", "clinician", "coordinator"],
+                    ),
+                    field("urgency", &["routine", "soon", "urgent", "immediate"]),
+                ],
+            ),
         ],
     }
 }

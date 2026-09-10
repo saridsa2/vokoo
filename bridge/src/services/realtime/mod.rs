@@ -62,7 +62,11 @@ pub enum RealtimeEvent {
     /// The model called a function. A flow declares one so the agent can say
     /// how it finished — asked for a person, out of its depth, done — instead
     /// of the bridge guessing from keywords.
-    ToolCall { id: String, name: String, args: serde_json::Value },
+    ToolCall {
+        id: String,
+        name: String,
+        args: serde_json::Value,
+    },
     Error(String),
     Closed(String),
 }
@@ -165,9 +169,7 @@ pub trait RealtimeSession: Send {
 // ---------------------------------------------------------------------------
 
 use crate::audio_process::resamplers::{ResamplerQuality, StreamResampler};
-use crate::frames::{
-    Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor, SystemFrame,
-};
+use crate::frames::{Frame, FrameDirection, FrameHandler, FrameInner, FrameProcessor, SystemFrame};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -342,7 +344,9 @@ impl RealtimeProcessor {
             let mut replied = true;
 
             loop {
-                let Some(event) = events.recv().await else { break };
+                let Some(event) = events.recv().await else {
+                    break;
+                };
                 // Any traffic at all counts: caller speech, agent speech, a
                 // turn ending. Idle means the conversation has stopped, not
                 // that the agent has stopped.
@@ -522,7 +526,11 @@ impl RealtimeProcessor {
                     }
                 };
 
-                if processor.push_frame(frame, FrameDirection::Downstream).await.is_err() {
+                if processor
+                    .push_frame(frame, FrameDirection::Downstream)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -622,7 +630,8 @@ impl RealtimeControls {
         *self.tap.lock().await = Some(tap);
         // Order matters: the flag goes up before the session goes down, so
         // there is no window where audio is sent to a closing session.
-        self.listening.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.listening
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.session.lock().await.close().await;
         log::info!("[realtime] agent is listening only — outbound audio is off");
     }

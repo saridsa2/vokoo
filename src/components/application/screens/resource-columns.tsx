@@ -34,7 +34,7 @@ export type ResourceView = {
      */
     detailHref?: (row: Row) => string;
     title: string;
-    description: string;
+    description?: string;
     resource: string;
     columns: ColumnDef[];
     /** Shown when the API returns no rows. */
@@ -104,12 +104,10 @@ const dayOfPath = (row: Row) => {
 export const RESOURCE_VIEWS: Record<string, ResourceView> = {
     patients: {
         title: "Patients",
-        description: "The people a care path is followed for.",
         resource: "patients",
         createLabel: "Add Patient",
         emptyTitle: "No patients yet",
-        emptyBody:
-            "A patient is a person, not an enrolment. Somebody can be on a GLP-1 path and postpartum at the same time, so they are one record here and enrolled on each cohort separately.",
+        emptyBody: "Add a patient to enrol them in a care path.",
         columns: [
             { id: "full_name", label: "Name", render: text("full_name") },
             { id: "phone", label: "Phone", render: (row) => phoneNumber(row.phone as string) },
@@ -123,12 +121,10 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     cohorts: {
         title: "Cohorts",
-        description: "One care path, and the patients on it.",
         resource: "cohorts",
         createLabel: "Create Cohort",
         emptyTitle: "No cohorts yet",
-        emptyBody:
-            "A cohort is one care path and the patients following it. Every patient on it gets their own agent, running their own dates rather than a shared schedule.",
+        emptyBody: "Create a cohort and assign its care path.",
         columns: [
             { id: "name", label: "Name", render: text("name") },
             // The care path itself, by name. A cohort is *defined* by its path,
@@ -143,12 +139,10 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     enrolments: {
         title: "Enrolments",
-        description: "Who is on which path, and how far along.",
         resource: "enrolments",
         createLabel: "Enrol Patient",
         emptyTitle: "No enrolments yet",
-        emptyBody:
-            "Enrolling a patient on a cohort sets the day their path begins. Every contact the path asks for is counted from that day, so two patients enrolled a week apart are never at the same point.",
+        emptyBody: "Enrol a patient in a cohort to begin their care path.",
         columns: [
             { id: "patient", label: "Patient", render: embedded("patients", "full_name") },
             { id: "cohort", label: "Cohort", render: embedded("cohorts", "name") },
@@ -184,13 +178,11 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     skills: {
         title: "Skills",
-        description: "What an agent can do, and the tools each one grants.",
         resource: "skills",
         createLabel: "Create Skill",
         detailHref: (row) => `/skills/${row.id}`,
         emptyTitle: "No skills yet",
-        emptyBody:
-            "A skill is one thing an agent can do — book an appointment, cancel one. It holds the wording the agent uses and the tools it may call.",
+        emptyBody: "Create a skill to group instructions and tools for an agent.",
         columns: [
             { id: "name", label: "Name", render: text("name") },
             { id: "description", label: "Description", render: text("description") },
@@ -201,12 +193,11 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     tools: {
         title: "Tools",
-        description: "Functions and integrations your agents can call.",
         resource: "tools",
         createLabel: "Create Tool",
         detailHref: (row) => `/tools/${row.id}`,
         emptyTitle: "No tools yet",
-        emptyBody: "Tools let an agent do something during a call — look up a booking, transfer to a human, end the call.",
+        emptyBody: "Create a tool an agent can call.",
         // `kind`, not `type`, and there is no `status` column on this table —
         // both were read from fields that do not exist, so every row showed a
         // name and two dashes. `current_version` is the useful third fact: it
@@ -228,7 +219,6 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     "phone-numbers": {
         title: "Phone Numbers",
-        description: "KooKoo/Ozonetel numbers and the agent each one routes to.",
         resource: "phone-numbers",
         detailHref: (row) => `/phone-numbers/${row.id}`,
         createLabel: "Connect Number",
@@ -439,7 +429,6 @@ export const RESOURCE_VIEWS: Record<string, ResourceView> = {
 
     "call-logs": {
         title: "Call Logs",
-        description: "Every call, with transcript and recording.",
         resource: "call-logs",
         detailHref: (row) => `/call-logs/${row.id}`,
         emptyTitle: "No calls recorded yet",

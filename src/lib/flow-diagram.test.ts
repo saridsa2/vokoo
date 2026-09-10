@@ -63,6 +63,15 @@ test("carries the stored flow family through canvas metadata", () => {
     assert.equal(JSON.parse(diagram.context).family, "call");
 });
 
+test("uses the catalogue label when a stored node has no name", () => {
+    const flow = callFlow();
+    delete (flow.graph?.nodes[0] as Partial<NonNullable<Flow["graph"]>["nodes"][number]>).name;
+
+    const diagram = flowToDiagram(flow);
+
+    assert.equal(diagram.graph.nodes[0].name, "Call answered");
+});
+
 test("round-trips every trigger without writing a singleton v3 start", () => {
     const flow = callFlow();
     const graph = diagramToFlowGraph(flowToDiagram(flow), flow.graph);

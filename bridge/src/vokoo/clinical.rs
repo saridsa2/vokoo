@@ -16,15 +16,9 @@ pub fn validate_clinical_payload(kind: &str, value: &Value) -> Result<(), String
     match kind {
         "person" => decode::<vokoo_clinical_schemas::health::Person>(value),
         "lab_report" => decode::<vokoo_clinical_schemas::lab_report::LabReport>(value),
-        "imaging_report" => {
-            decode::<vokoo_clinical_schemas::imaging_report::ImagingReport>(value)
-        }
-        "medication" => {
-            decode::<vokoo_clinical_schemas::medication::MedicationRecord>(value)
-        }
-        "family_health" => {
-            decode::<vokoo_clinical_schemas::family_health::FamilyHealthTree>(value)
-        }
+        "imaging_report" => decode::<vokoo_clinical_schemas::imaging_report::ImagingReport>(value),
+        "medication" => decode::<vokoo_clinical_schemas::medication::MedicationRecord>(value),
+        "family_health" => decode::<vokoo_clinical_schemas::family_health::FamilyHealthTree>(value),
         _ => Err(format!("unknown clinical payload kind {kind:?}")),
     }
 }
@@ -48,14 +42,23 @@ mod tests {
 
     #[test]
     fn vendored_examples_are_the_runtime_contract() {
-        for kind in ["person", "lab_report", "imaging_report", "medication", "family_health"] {
-            validate_clinical_payload(kind, &example(kind)).unwrap_or_else(|error| panic!("{kind}: {error}"));
+        for kind in [
+            "person",
+            "lab_report",
+            "imaging_report",
+            "medication",
+            "family_health",
+        ] {
+            validate_clinical_payload(kind, &example(kind))
+                .unwrap_or_else(|error| panic!("{kind}: {error}"));
         }
     }
 
     #[test]
     fn a_payload_missing_required_clinical_identity_is_rejected() {
-        assert!(validate_clinical_payload("lab_report", &serde_json::json!({ "results": [] })).is_err());
+        assert!(
+            validate_clinical_payload("lab_report", &serde_json::json!({ "results": [] })).is_err()
+        );
     }
 
     #[test]

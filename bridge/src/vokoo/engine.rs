@@ -14,19 +14,19 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::adapters::schemas::FunctionSchema;
 use crate::frames::processor::FrameProcessor;
 use crate::processors::{
     llm_assistant_aggregator::LLMAssistantAggregator, llm_user_aggregator::LLMUserAggregator,
 };
-use crate::adapters::schemas::FunctionSchema;
-use crate::LLMContext;
 use crate::services::{
-    DeepgramSttConfig, DeepgramSttHandler, DeepgramTtsConfig, DeepgramTtsHandler, GnaniSttConfig,
-    GnaniSttHandler, OpenAILLMConfig, OpenAILLMHandler, PiperTtsConfig, PiperTtsHandler,
-    SarvamLLMConfig, SarvamLLMHandler, SarvamSttConfig, SarvamSttHandler, SarvamTtsConfig,
-    ElevenLabsTtsConfig, ElevenLabsTtsHandler, SarvamTtsHandler, SixtyDbSttConfig,
+    DeepgramSttConfig, DeepgramSttHandler, DeepgramTtsConfig, DeepgramTtsHandler,
+    ElevenLabsTtsConfig, ElevenLabsTtsHandler, GnaniSttConfig, GnaniSttHandler, OpenAILLMConfig,
+    OpenAILLMHandler, PiperTtsConfig, PiperTtsHandler, SarvamLLMConfig, SarvamLLMHandler,
+    SarvamSttConfig, SarvamSttHandler, SarvamTtsConfig, SarvamTtsHandler, SixtyDbSttConfig,
     SixtyDbSttHandler,
 };
+use crate::LLMContext;
 
 use super::graph::{vendor_secret, Engine};
 
@@ -70,12 +70,18 @@ fn stage<'a>(engine: &'a Engine, name: &str) -> Result<&'a Value, String> {
 }
 
 fn field<'a>(stage: &'a Value, name: &str) -> Option<&'a str> {
-    stage.get(name)?.as_str().map(str::trim).filter(|s| !s.is_empty())
+    stage
+        .get(name)?
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
 }
 
 fn number(stage: &Value, name: &str) -> Option<f64> {
     let value = stage.get(name)?;
-    value.as_f64().or_else(|| value.as_str()?.trim().parse().ok())
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.trim().parse().ok())
 }
 
 /// The language a stage should work in.
@@ -192,45 +198,48 @@ pub async fn thinking(
         // sessions of a working engine recording nothing. The handler carries a
         // billing guard that even survives a barge-in; it was simply never
         // given a collector to report to.
-        "openai" => ThinkingStage::OpenAI(Box::new(OpenAILLMHandler::with_registry(
-            OpenAILLMConfig {
-                api_key: ctx.key_for("openai").await?,
-                model: field(stage, "model").unwrap_or("gpt-4.1-mini").to_string(),
-                // An engine may point at any OpenAI-compatible endpoint, which
-                // is how a model on your own hardware is reached.
-                base_url: field(stage, "base_url")
-                    .unwrap_or("https://api.openai.com/v1")
-                    .to_string(),
-                temperature,
-                max_completion_tokens: max_tokens,
-                // **A cost budget, not the model's capacity.**
-                //
-                // `resolve_context_window_tokens` falls back to a table of what
-                // each model *can* take — 1,047,576 for gpt-4.1-mini — and
-                // trims at 80% of it. A phone call never gets near that, so the
-                // trimmer that exists and works had never once fired.
-                //
-                // It needed to. Every turn resends the whole conversation and
-                // all eight tool schemas, so input tokens grow with the square
-                // of the call length: measured at 7,100 for a 3-turn call and
-                // 22,585 for a 6-turn one, which projects to 315,000 for five
-                // minutes. We charge by the minute and were paying by the
-                // minute squared.
-                //
-                // 12,000 keeps roughly the last ten turns on a clinic call —
-                // well past what answering the current question needs, and it
-                // caps the worst case instead of letting it compound. The
-                // trimmer drops whole conversation groups, so a tool call and
-                // its result are never separated.
-                context_window_tokens: Some(
-                    number(stage, "context_window_tokens")
-                        .map(|v| v as usize)
-                        .unwrap_or(12_000),
-                ),
-                ..OpenAILLMConfig::default()
-            },
-            registry,
-        ).with_billing(ctx.billing.clone()))),
+        "openai" => ThinkingStage::OpenAI(Box::new(
+            OpenAILLMHandler::with_registry(
+                OpenAILLMConfig {
+                    api_key: ctx.key_for("openai").await?,
+                    model: field(stage, "model").unwrap_or("gpt-4.1-mini").to_string(),
+                    // An engine may point at any OpenAI-compatible endpoint, which
+                    // is how a model on your own hardware is reached.
+                    base_url: field(stage, "base_url")
+                        .unwrap_or("https://api.openai.com/v1")
+                        .to_string(),
+                    temperature,
+                    max_completion_tokens: max_tokens,
+                    // **A cost budget, not the model's capacity.**
+                    //
+                    // `resolve_context_window_tokens` falls back to a table of what
+                    // each model *can* take — 1,047,576 for gpt-4.1-mini — and
+                    // trims at 80% of it. A phone call never gets near that, so the
+                    // trimmer that exists and works had never once fired.
+                    //
+                    // It needed to. Every turn resends the whole conversation and
+                    // all eight tool schemas, so input tokens grow with the square
+                    // of the call length: measured at 7,100 for a 3-turn call and
+                    // 22,585 for a 6-turn one, which projects to 315,000 for five
+                    // minutes. We charge by the minute and were paying by the
+                    // minute squared.
+                    //
+                    // 12,000 keeps roughly the last ten turns on a clinic call —
+                    // well past what answering the current question needs, and it
+                    // caps the worst case instead of letting it compound. The
+                    // trimmer drops whole conversation groups, so a tool call and
+                    // its result are never separated.
+                    context_window_tokens: Some(
+                        number(stage, "context_window_tokens")
+                            .map(|v| v as usize)
+                            .unwrap_or(12_000),
+                    ),
+                    ..OpenAILLMConfig::default()
+                },
+                registry,
+            )
+            .with_billing(ctx.billing.clone()),
+        )),
 
         // Withdrawn from the catalogue in migration 0045: `SarvamLLMHandler`
         // carries no `FunctionRegistry`, so every tool the agent's skills grant
@@ -283,7 +292,9 @@ pub async fn speaking(engine: &Engine, ctx: &StageContext<'_>) -> Result<FramePr
     Ok(match provider {
         "deepgram" => DeepgramTtsHandler::new(DeepgramTtsConfig {
             api_key: ctx.key_for("deepgram").await?,
-            voice: field(stage, "voice").unwrap_or("aura-2-helena-en").to_string(),
+            voice: field(stage, "voice")
+                .unwrap_or("aura-2-helena-en")
+                .to_string(),
             sample_rate: ctx.sample_rate,
             ..DeepgramTtsConfig::default()
         })
@@ -308,7 +319,9 @@ pub async fn speaking(engine: &Engine, ctx: &StageContext<'_>) -> Result<FramePr
             // The voice id, not its name: the id is what the URL takes, and
             // ElevenLabs names are not unique.
             voice: field(stage, "voice").unwrap_or_default().to_string(),
-            model: field(stage, "model").unwrap_or("eleven_turbo_v2_5").to_string(),
+            model: field(stage, "model")
+                .unwrap_or("eleven_turbo_v2_5")
+                .to_string(),
             sample_rate: ctx.sample_rate,
             stability: number(stage, "stability"),
             similarity_boost: number(stage, "similarity_boost"),
@@ -373,8 +386,16 @@ pub struct TranscriptTap {
 impl TranscriptTap {
     pub fn new(side: Side, to: tokio::sync::mpsc::Sender<(String, String)>) -> FrameProcessor {
         FrameProcessor::new(
-            if side == Side::Caller { "TranscriptTapCaller" } else { "TranscriptTapAgent" },
-            Box::new(Self { side, to, partial: std::sync::Mutex::new(String::new()) }),
+            if side == Side::Caller {
+                "TranscriptTapCaller"
+            } else {
+                "TranscriptTapAgent"
+            },
+            Box::new(Self {
+                side,
+                to,
+                partial: std::sync::Mutex::new(String::new()),
+            }),
             false,
         )
     }
@@ -411,10 +432,13 @@ impl crate::frames::FrameHandler for TranscriptTap {
             // moment a user turn is complete and in the context.
             (FrameInner::Data(DataFrame::LLMContextFrame(context)), Side::Caller) => {
                 let latest = context.lock().ok().and_then(|held| {
-                    held.messages.iter().rev().find_map(|message| match message {
-                        crate::context::Message::User { content } => Some(content.clone()),
-                        _ => None,
-                    })
+                    held.messages
+                        .iter()
+                        .rev()
+                        .find_map(|message| match message {
+                            crate::context::Message::User { content } => Some(content.clone()),
+                            _ => None,
+                        })
                 });
 
                 if let Some(text) = latest {
@@ -660,7 +684,8 @@ pub fn registry(
     registry.register("finish_call", move |args: String| {
         let tx = outcome_tx.clone();
         async move {
-            let parsed: Value = serde_json::from_str(&args).unwrap_or_else(|_| serde_json::json!({}));
+            let parsed: Value =
+                serde_json::from_str(&args).unwrap_or_else(|_| serde_json::json!({}));
             let outcome = parsed
                 .get("outcome")
                 .and_then(Value::as_str)
@@ -748,7 +773,12 @@ pub async fn preflight(engine: &Engine, ctx: &StageContext<'_>) -> Vec<StepRepor
         // provider's own refusal.
         let provider = engine.get("realtime", "provider").unwrap_or("").to_string();
         reports.push(match realtime_probe(engine, ctx).await {
-            Ok(()) => StepReport { stage: "realtime".into(), provider, ok: true, error: None },
+            Ok(()) => StepReport {
+                stage: "realtime".into(),
+                provider,
+                ok: true,
+                error: None,
+            },
             Err(problem) => StepReport {
                 stage: "realtime".into(),
                 provider,
@@ -770,7 +800,14 @@ pub async fn preflight(engine: &Engine, ctx: &StageContext<'_>) -> Vec<StepRepor
     let stages = [("stt", "Stt"), ("llm", "LLM"), ("tts", "Tts")];
 
     let context = crate::context::shared_context(Some("Say nothing.".into()));
-    let relay = match build_relay(engine, ctx, context, crate::services::FunctionRegistry::new(), None).await
+    let relay = match build_relay(
+        engine,
+        ctx,
+        context,
+        crate::services::FunctionRegistry::new(),
+        None,
+    )
+    .await
     {
         Ok(relay) => relay,
         Err(problem) => {
@@ -791,7 +828,10 @@ pub async fn preflight(engine: &Engine, ctx: &StageContext<'_>) -> Vec<StepRepor
     let failures: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::default();
     let task = crate::pipeline::PipelineTask::new(
         relay.processors,
-        crate::pipeline::PipelineParams { allow_interruptions: true, ..Default::default() },
+        crate::pipeline::PipelineParams {
+            allow_interruptions: true,
+            ..Default::default()
+        },
     );
 
     let collected = failures.clone();
@@ -810,7 +850,12 @@ pub async fn preflight(engine: &Engine, ctx: &StageContext<'_>) -> Vec<StepRepor
     let sender = task.push_sender();
     let running = tokio::spawn(async move { task.run(crate::clock::system_clock(), None).await });
     tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
-    let _ = sender.send((crate::frames::Frame::cancel(), crate::frames::FrameDirection::Downstream)).await;
+    let _ = sender
+        .send((
+            crate::frames::Frame::cancel(),
+            crate::frames::FrameDirection::Downstream,
+        ))
+        .await;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), running).await;
 
     let raised = failures.lock().map(|held| held.clone()).unwrap_or_default();
@@ -847,7 +892,6 @@ enum StageKind {
 // needs. These turn the same row into Gemini's. They lived in the binary,
 // which meant the two halves of one adapter sat in different files and only
 // one of them was findable from the other.
-
 
 /// How an agent node reports the way it finished.
 ///
@@ -967,7 +1011,9 @@ pub fn gemini_language() -> gemini_live::FunctionDeclaration {
     gemini_live::FunctionDeclaration {
         name: schema.name,
         description: schema.description.unwrap_or_default(),
-        parameters: schema.parameters.unwrap_or(serde_json::json!({ "type": "object" })),
+        parameters: schema
+            .parameters
+            .unwrap_or(serde_json::json!({ "type": "object" })),
         scheduling: None,
         behavior: None,
     }
@@ -1077,7 +1123,11 @@ pub async fn build_realtime(
     // A probe must not talk to anybody: it opens what a call opens and closes
     // it. Passing the real instructions would have it compose a greeting for a
     // caller who is not there.
-    let instructions = if request.probe { "Say nothing." } else { request.instructions };
+    let instructions = if request.probe {
+        "Say nothing."
+    } else {
+        request.instructions
+    };
 
     match provider {
         "gemini" => Ok(Box::new(
@@ -1094,8 +1144,11 @@ pub async fn build_realtime(
                 } else {
                     // The outcome function first: the flow waits on it, and it
                     // exists whether or not the agent has any tools of its own.
-                    let mut declared =
-                        if request.declare_outcome { vec![gemini_outcome()] } else { Vec::new() };
+                    let mut declared = if request.declare_outcome {
+                        vec![gemini_outcome()]
+                    } else {
+                        Vec::new()
+                    };
                     if request.offer_language {
                         declared.push(gemini_language());
                     }
@@ -1155,7 +1208,10 @@ pub async fn build_realtime(
                             declared.push(openai_realtime_language());
                         }
                         declared.extend(
-                            request.functions.iter().filter_map(openai_realtime_declaration),
+                            request
+                                .functions
+                                .iter()
+                                .filter_map(openai_realtime_declaration),
                         );
                         declared
                     },
@@ -1183,8 +1239,15 @@ pub async fn build_realtime(
 /// instructions, transcribe-only. Everything a caller would hit — the key, the
 /// catalogue lookup, the model id, the voice, the connection — is the same.
 async fn realtime_probe(engine: &Engine, ctx: &StageContext<'_>) -> Result<(), String> {
-    let mut session =
-        build_realtime(engine, ctx, RealtimeRequest { probe: true, ..Default::default() }).await?;
+    let mut session = build_realtime(
+        engine,
+        ctx,
+        RealtimeRequest {
+            probe: true,
+            ..Default::default()
+        },
+    )
+    .await?;
     // Through the box: `close` takes `&mut self` on the trait, and a
     // `Box<dyn Trait>` does not itself implement the trait.
     crate::services::RealtimeSession::close(session.as_mut()).await;

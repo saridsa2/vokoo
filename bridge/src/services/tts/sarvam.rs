@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use chrono::Utc;
 use futures::{SinkExt, StreamExt};
 use log;
@@ -65,54 +65,53 @@ const V2_SPEAKERS: &[&str] = &[
 ];
 
 const V3_SPEAKERS: &[&str] = &[
-    "aditya", "ritu", "priya", "neha", "rahul", "pooja", "rohan", "simran",
-    "kavya", "amit", "dev", "ishita", "shreya", "ratan", "varun", "manan",
-    "sumit", "roopa", "kabir", "aayan", "shubh", "ashutosh", "advait",
-    "amelia", "sophia",
+    "aditya", "ritu", "priya", "neha", "rahul", "pooja", "rohan", "simran", "kavya", "amit", "dev",
+    "ishita", "shreya", "ratan", "varun", "manan", "sumit", "roopa", "kabir", "aayan", "shubh",
+    "ashutosh", "advait", "amelia", "sophia",
 ];
 
 pub const MODEL_BULBUL_V2: TtsModelConfig = TtsModelConfig {
-    supports_pitch:                true,
-    supports_loudness:             true,
-    supports_temperature:          false,
-    default_sample_rate:           22050,
-    default_speaker:               "anushka",
-    pace_min:                      0.3,
-    pace_max:                      3.0,
-    preprocessing_always_enabled:  false,
-    speakers:                      V2_SPEAKERS,
+    supports_pitch: true,
+    supports_loudness: true,
+    supports_temperature: false,
+    default_sample_rate: 22050,
+    default_speaker: "anushka",
+    pace_min: 0.3,
+    pace_max: 3.0,
+    preprocessing_always_enabled: false,
+    speakers: V2_SPEAKERS,
 };
 
 pub const MODEL_BULBUL_V3_BETA: TtsModelConfig = TtsModelConfig {
-    supports_pitch:                false,
-    supports_loudness:             false,
-    supports_temperature:          true,
-    default_sample_rate:           24000,
-    default_speaker:               "shubh",
-    pace_min:                      0.5,
-    pace_max:                      2.0,
-    preprocessing_always_enabled:  true,
-    speakers:                      V3_SPEAKERS,
+    supports_pitch: false,
+    supports_loudness: false,
+    supports_temperature: true,
+    default_sample_rate: 24000,
+    default_speaker: "shubh",
+    pace_min: 0.5,
+    pace_max: 2.0,
+    preprocessing_always_enabled: true,
+    speakers: V3_SPEAKERS,
 };
 
 pub const MODEL_BULBUL_V3: TtsModelConfig = TtsModelConfig {
-    supports_pitch:                false,
-    supports_loudness:             false,
-    supports_temperature:          true,
-    default_sample_rate:           24000,
-    default_speaker:               "shubh",
-    pace_min:                      0.5,
-    pace_max:                      2.0,
-    preprocessing_always_enabled:  true,
-    speakers:                      V3_SPEAKERS,
+    supports_pitch: false,
+    supports_loudness: false,
+    supports_temperature: true,
+    default_sample_rate: 24000,
+    default_speaker: "shubh",
+    pace_min: 0.5,
+    pace_max: 2.0,
+    preprocessing_always_enabled: true,
+    speakers: V3_SPEAKERS,
 };
 
 pub fn get_model_config(model: &str) -> Option<&'static TtsModelConfig> {
     match model {
-        "bulbul:v2"      => Some(&MODEL_BULBUL_V2),
+        "bulbul:v2" => Some(&MODEL_BULBUL_V2),
         "bulbul:v3-beta" => Some(&MODEL_BULBUL_V3_BETA),
-        "bulbul:v3"      => Some(&MODEL_BULBUL_V3),
-        _                => None,
+        "bulbul:v3" => Some(&MODEL_BULBUL_V3),
+        _ => None,
     }
 }
 
@@ -140,19 +139,19 @@ pub struct SarvamTtsConfig {
 impl Default for SarvamTtsConfig {
     fn default() -> Self {
         Self {
-            api_key:              String::new(),
-            model:                "bulbul:v2".to_string(),
-            voice:                String::new(),
-            language:             "en-IN".to_string(),
-            sample_rate:          None,
-            pace:                 1.0,
-            pitch:                None,
-            loudness:             None,
-            temperature:          None,
+            api_key: String::new(),
+            model: "bulbul:v2".to_string(),
+            voice: String::new(),
+            language: "en-IN".to_string(),
+            sample_rate: None,
+            pace: 1.0,
+            pitch: None,
+            loudness: None,
+            temperature: None,
             enable_preprocessing: false,
-            min_buffer_size:      50,
-            max_chunk_length:     150,
-            url:                  "wss://api.sarvam.ai/text-to-speech/ws".to_string(),
+            min_buffer_size: 50,
+            max_chunk_length: 150,
+            url: "wss://api.sarvam.ai/text-to-speech/ws".to_string(),
         }
     }
 }
@@ -173,14 +172,14 @@ struct SarvamTtsMessage {
 // ---------------------------------------------------------------------------
 
 struct TtsState {
-    ws_tx:          Option<mpsc::Sender<String>>,
-    text_buffer:    String,
-    bot_speaking:   bool,
-    send_task:      Option<JoinHandle<()>>,
-    receive_task:   Option<JoinHandle<()>>,
+    ws_tx: Option<mpsc::Sender<String>>,
+    text_buffer: String,
+    bot_speaking: bool,
+    send_task: Option<JoinHandle<()>>,
+    receive_task: Option<JoinHandle<()>>,
     keepalive_task: Option<JoinHandle<()>>,
     /// Timestamp when the last flush was sent — for measuring TTS API latency.
-    flush_sent_at:  Option<f64>,
+    flush_sent_at: Option<f64>,
     /// True once first audio has arrived after a flush — reset each flush.
     first_audio_logged: bool,
     /// Accumulated character count since last "done" confirmation.
@@ -190,15 +189,15 @@ struct TtsState {
 impl TtsState {
     fn new() -> Self {
         Self {
-            ws_tx:              None,
-            text_buffer:        String::new(),
-            bot_speaking:       false,
-            send_task:          None,
-            receive_task:       None,
-            keepalive_task:     None,
-            flush_sent_at:      None,
+            ws_tx: None,
+            text_buffer: String::new(),
+            bot_speaking: false,
+            send_task: None,
+            receive_task: None,
+            keepalive_task: None,
+            flush_sent_at: None,
             first_audio_logged: true,
-            pending_chars:      0,
+            pending_chars: 0,
         }
     }
 }
@@ -208,12 +207,12 @@ impl TtsState {
 // ---------------------------------------------------------------------------
 
 pub struct SarvamTtsHandler {
-    config:       SarvamTtsConfig,
+    config: SarvamTtsConfig,
     model_config: &'static TtsModelConfig,
-    sample_rate:  u32,
-    state:        Arc<Mutex<TtsState>>,
+    sample_rate: u32,
+    state: Arc<Mutex<TtsState>>,
     /// Optional billing collector — records char counts per synthesis cycle.
-    billing:      Option<Arc<dyn BillingCollector>>,
+    billing: Option<Arc<dyn BillingCollector>>,
 }
 
 impl SarvamTtsHandler {
@@ -221,7 +220,8 @@ impl SarvamTtsHandler {
         let model_config = get_model_config(&config.model)
             .ok_or_else(|| format!("Unsupported TTS model: '{}'", config.model))?;
 
-        let sample_rate = config.sample_rate
+        let sample_rate = config
+            .sample_rate
             .unwrap_or(model_config.default_sample_rate);
 
         if config.voice.is_empty() {
@@ -231,9 +231,14 @@ impl SarvamTtsHandler {
         if config.pace < model_config.pace_min || config.pace > model_config.pace_max {
             log::warn!(
                 "SarvamTts: pace {:.2} outside range ({:.1}–{:.1}) for {} — clamping",
-                config.pace, model_config.pace_min, model_config.pace_max, config.model
+                config.pace,
+                model_config.pace_min,
+                model_config.pace_max,
+                config.model
             );
-            config.pace = config.pace.clamp(model_config.pace_min, model_config.pace_max);
+            config.pace = config
+                .pace
+                .clamp(model_config.pace_min, model_config.pace_max);
         }
 
         if model_config.preprocessing_always_enabled {
@@ -241,15 +246,24 @@ impl SarvamTtsHandler {
         }
 
         if !model_config.supports_pitch && config.pitch.is_some() {
-            log::warn!("SarvamTts: pitch not supported for {} — ignoring", config.model);
+            log::warn!(
+                "SarvamTts: pitch not supported for {} — ignoring",
+                config.model
+            );
             config.pitch = None;
         }
         if !model_config.supports_loudness && config.loudness.is_some() {
-            log::warn!("SarvamTts: loudness not supported for {} — ignoring", config.model);
+            log::warn!(
+                "SarvamTts: loudness not supported for {} — ignoring",
+                config.model
+            );
             config.loudness = None;
         }
         if !model_config.supports_temperature && config.temperature.is_some() {
-            log::warn!("SarvamTts: temperature not supported for {} — ignoring", config.model);
+            log::warn!(
+                "SarvamTts: temperature not supported for {} — ignoring",
+                config.model
+            );
             config.temperature = None;
         }
 
@@ -316,17 +330,21 @@ impl SarvamTtsHandler {
         let (sink, stream) = ws_stream.split();
         let (ws_tx, ws_rx) = mpsc::channel::<String>(64);
 
-        let send_task      = tokio::spawn(run_tts_send_task(sink, ws_rx));
-        let receive_task   = tokio::spawn(run_tts_receive_task(
-            stream, processor.clone(), self.sample_rate, self.state.clone(),
-            self.billing.clone(), self.config.voice.clone(),
+        let send_task = tokio::spawn(run_tts_send_task(sink, ws_rx));
+        let receive_task = tokio::spawn(run_tts_receive_task(
+            stream,
+            processor.clone(),
+            self.sample_rate,
+            self.state.clone(),
+            self.billing.clone(),
+            self.config.voice.clone(),
         ));
         let keepalive_task = tokio::spawn(run_tts_keepalive_task(ws_tx.clone()));
 
         {
-            let mut state      = self.state.lock().await;
-            state.ws_tx        = Some(ws_tx.clone());
-            state.send_task    = Some(send_task);
+            let mut state = self.state.lock().await;
+            state.ws_tx = Some(ws_tx.clone());
+            state.send_task = Some(send_task);
             state.receive_task = Some(receive_task);
             state.keepalive_task = Some(keepalive_task);
         }
@@ -337,9 +355,15 @@ impl SarvamTtsHandler {
 
     async fn disconnect(&self) {
         let mut state = self.state.lock().await;
-        if let Some(h) = state.send_task.take()      { h.abort(); }
-        if let Some(h) = state.receive_task.take()   { h.abort(); }
-        if let Some(h) = state.keepalive_task.take() { h.abort(); }
+        if let Some(h) = state.send_task.take() {
+            h.abort();
+        }
+        if let Some(h) = state.receive_task.take() {
+            h.abort();
+        }
+        if let Some(h) = state.keepalive_task.take() {
+            h.abort();
+        }
         state.ws_tx = None;
         log::info!("SarvamTts: disconnected");
     }
@@ -360,9 +384,15 @@ impl SarvamTtsHandler {
             "model":                self.config.model,
         });
 
-        if let Some(v) = self.config.pitch       { config_data["pitch"]       = v.into(); }
-        if let Some(v) = self.config.loudness    { config_data["loudness"]    = v.into(); }
-        if let Some(v) = self.config.temperature { config_data["temperature"] = v.into(); }
+        if let Some(v) = self.config.pitch {
+            config_data["pitch"] = v.into();
+        }
+        if let Some(v) = self.config.loudness {
+            config_data["loudness"] = v.into();
+        }
+        if let Some(v) = self.config.temperature {
+            config_data["temperature"] = v.into();
+        }
 
         let msg = serde_json::json!({ "type": "config", "data": config_data });
         let _ = ws_tx.send(msg.to_string()).await;
@@ -394,16 +424,21 @@ impl SarvamTtsHandler {
         // arrived.
         if let Some(bc) = &self.billing {
             bc.record(BillingEvent::TtsUsage {
-                session_id:  bc.session_id(),
-                provider:    "sarvam".to_string(),
-                voice:       self.config.voice.clone(),
-                char_count:  chars,
+                session_id: bc.session_id(),
+                provider: "sarvam".to_string(),
+                voice: self.config.voice.clone(),
+                char_count: chars,
                 occurred_at: Utc::now(),
             });
         }
         if let Some(tx) = tx {
             let ts = now();
-            println!("[{:.3}] [tts] send_text_chunk  ({} chars): {:?}", ts, text.len(), text);
+            println!(
+                "[{:.3}] [tts] send_text_chunk  ({} chars): {:?}",
+                ts,
+                text.len(),
+                text
+            );
             let msg = serde_json::json!({
                 "type": "text",
                 "data": { "text": text }
@@ -420,7 +455,7 @@ impl SarvamTtsHandler {
             // Record flush time and reset first-audio flag
             {
                 let mut state = self.state.lock().await;
-                state.flush_sent_at      = Some(ts);
+                state.flush_sent_at = Some(ts);
                 state.first_audio_logged = false;
             }
             let msg = serde_json::json!({ "type": "flush" });
@@ -453,7 +488,7 @@ impl FrameHandler for SarvamTtsHandler {
 
             FrameInner::Data(DataFrame::LLMText(text)) => {
                 let text = text.clone();
-                let min_buffer_size  = self.config.min_buffer_size;
+                let min_buffer_size = self.config.min_buffer_size;
                 let max_chunk_length = self.config.max_chunk_length;
 
                 let chunks = {
@@ -538,16 +573,12 @@ impl FrameHandler for SarvamTtsHandler {
 // ---------------------------------------------------------------------------
 
 type WsSink = futures::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
 
 type WsStream = futures::stream::SplitStream<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
 // ---------------------------------------------------------------------------
@@ -566,16 +597,16 @@ async fn run_tts_send_task(mut sink: WsSink, mut rx: mpsc::Receiver<String>) {
 }
 
 async fn run_tts_receive_task(
-    mut stream:  WsStream,
-    processor:   FrameProcessor,
+    mut stream: WsStream,
+    processor: FrameProcessor,
     sample_rate: u32,
-    state:       Arc<Mutex<TtsState>>,
+    state: Arc<Mutex<TtsState>>,
     // Kept in the signature and unused: billing moved to submit time in
     // `send_text_chunk`. Named with a leading underscore rather than removed,
     // because the receive task is the natural home for any future event that
     // genuinely belongs to completion.
-    _billing:    Option<Arc<dyn BillingCollector>>,
-    voice:       String,
+    _billing: Option<Arc<dyn BillingCollector>>,
+    voice: String,
 ) {
     log::debug!("SarvamTts: receive task started");
 
@@ -583,8 +614,14 @@ async fn run_tts_receive_task(
         match result {
             Ok(Message::Text(text)) => {
                 handle_tts_message(
-                    text.as_str(), &processor, sample_rate, &state, &_billing, &voice,
-                ).await;
+                    text.as_str(),
+                    &processor,
+                    sample_rate,
+                    &state,
+                    &_billing,
+                    &voice,
+                )
+                .await;
             }
             Ok(Message::Close(_)) => {
                 log::info!("SarvamTts: server closed WebSocket");
@@ -616,17 +653,17 @@ async fn run_tts_keepalive_task(tx: mpsc::Sender<String>) {
 }
 
 async fn handle_tts_message(
-    text:        &str,
-    processor:   &FrameProcessor,
+    text: &str,
+    processor: &FrameProcessor,
     sample_rate: u32,
-    state:       &Arc<Mutex<TtsState>>,
-    billing:     &Option<Arc<dyn BillingCollector>>,
-    voice:       &str,
+    state: &Arc<Mutex<TtsState>>,
+    billing: &Option<Arc<dyn BillingCollector>>,
+    voice: &str,
 ) {
     log::trace!("SarvamTts: raw message: {}", text);
 
     let msg: SarvamTtsMessage = match serde_json::from_str(text) {
-        Ok(m)  => m,
+        Ok(m) => m,
         Err(e) => {
             log::warn!("SarvamTts: parse error: {} — raw: {}", e, text);
             return;
@@ -637,7 +674,7 @@ async fn handle_tts_message(
         "audio" => {
             let data = match msg.data {
                 Some(d) => d,
-                None    => return,
+                None => return,
             };
 
             let b64 = match data["audio"].as_str() {
@@ -646,7 +683,7 @@ async fn handle_tts_message(
             };
 
             let mut audio = match BASE64.decode(b64) {
-                Ok(b)  => b,
+                Ok(b) => b,
                 Err(e) => {
                     log::warn!("SarvamTts: base64 decode error: {}", e);
                     return;
@@ -688,7 +725,8 @@ async fn handle_tts_message(
         }
 
         "error" => {
-            let err = msg.data
+            let err = msg
+                .data
                 .as_ref()
                 .and_then(|d| d["message"].as_str())
                 .unwrap_or("unknown error")
@@ -723,8 +761,7 @@ async fn handle_tts_message(
 fn urlencoding(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9'
-            | '-' | '_' | '.' | '~' => vec![c],
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
             ':' => vec!['%', '3', 'A'],
             '/' => vec!['%', '2', 'F'],
             _ => format!("%{:02X}", c as u32).chars().collect(),
@@ -778,8 +815,8 @@ mod tests {
     #[test]
     fn test_handler_v3_forces_preprocessing() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
-            api_key:              "test".to_string(),
-            model:                "bulbul:v3".to_string(),
+            api_key: "test".to_string(),
+            model: "bulbul:v3".to_string(),
             enable_preprocessing: false,
             ..SarvamTtsConfig::default()
         })
@@ -791,8 +828,8 @@ mod tests {
     fn test_handler_v3_clears_pitch() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "test".to_string(),
-            model:   "bulbul:v3".to_string(),
-            pitch:   Some(0.5),
+            model: "bulbul:v3".to_string(),
+            pitch: Some(0.5),
             ..SarvamTtsConfig::default()
         })
         .unwrap();
@@ -803,7 +840,7 @@ mod tests {
     fn test_handler_unsupported_model_errors() {
         let result = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "test".to_string(),
-            model:   "unknown:model".to_string(),
+            model: "unknown:model".to_string(),
             ..SarvamTtsConfig::default()
         });
         assert!(result.is_err());
@@ -813,7 +850,7 @@ mod tests {
     fn test_handler_pace_clamped_high() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "test".to_string(),
-            pace:    99.0,
+            pace: 99.0,
             ..SarvamTtsConfig::default()
         })
         .unwrap();
@@ -824,7 +861,7 @@ mod tests {
     fn test_handler_pace_clamped_low() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "test".to_string(),
-            pace:    0.01,
+            pace: 0.01,
             ..SarvamTtsConfig::default()
         })
         .unwrap();
@@ -835,7 +872,7 @@ mod tests {
     fn test_handler_v3_sample_rate() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "test".to_string(),
-            model:   "bulbul:v3".to_string(),
+            model: "bulbul:v3".to_string(),
             ..SarvamTtsConfig::default()
         })
         .unwrap();
@@ -845,7 +882,7 @@ mod tests {
     #[test]
     fn test_handler_explicit_sample_rate_respected() {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
-            api_key:     "test".to_string(),
+            api_key: "test".to_string(),
             sample_rate: Some(16000),
             ..SarvamTtsConfig::default()
         })
@@ -866,11 +903,17 @@ mod tests {
                 events: std::sync::Mutex::new(vec![]),
             })
         }
-        fn events(&self) -> Vec<BillingEvent> { self.events.lock().unwrap().clone() }
+        fn events(&self) -> Vec<BillingEvent> {
+            self.events.lock().unwrap().clone()
+        }
     }
     impl crate::billing::BillingCollector for MockCollector {
-        fn record(&self, e: BillingEvent) { self.events.lock().unwrap().push(e); }
-        fn session_id(&self) -> uuid::Uuid { self.session_id }
+        fn record(&self, e: BillingEvent) {
+            self.events.lock().unwrap().push(e);
+        }
+        fn session_id(&self) -> uuid::Uuid {
+            self.session_id
+        }
     }
 
     fn state_with_chars(n: usize) -> Arc<Mutex<TtsState>> {
@@ -894,28 +937,60 @@ mod tests {
         let mock = MockCollector::new();
         let billing: Option<Arc<dyn crate::billing::BillingCollector>> = Some(mock.clone());
 
-        handle_tts_message(r#"{"type":"done"}"#, &dummy_proc(), 22050, &state, &billing, "anushka").await;
+        handle_tts_message(
+            r#"{"type":"done"}"#,
+            &dummy_proc(),
+            22050,
+            &state,
+            &billing,
+            "anushka",
+        )
+        .await;
 
-        assert_eq!(mock.events().len(), 0, "done must not bill — send_text_chunk does");
-        assert_eq!(state.lock().await.pending_chars, 0, "pending_chars must still reset");
+        assert_eq!(
+            mock.events().len(),
+            0,
+            "done must not bill — send_text_chunk does"
+        );
+        assert_eq!(
+            state.lock().await.pending_chars,
+            0,
+            "pending_chars must still reset"
+        );
     }
 
     #[tokio::test]
     async fn billing_done_with_zero_chars_emits_no_event() {
-        let state   = state_with_chars(0);
-        let mock    = MockCollector::new();
+        let state = state_with_chars(0);
+        let mock = MockCollector::new();
         let billing: Option<Arc<dyn crate::billing::BillingCollector>> = Some(mock.clone());
 
-        handle_tts_message(r#"{"type":"done"}"#, &dummy_proc(), 22050, &state, &billing, "anushka").await;
+        handle_tts_message(
+            r#"{"type":"done"}"#,
+            &dummy_proc(),
+            22050,
+            &state,
+            &billing,
+            "anushka",
+        )
+        .await;
         assert_eq!(mock.events().len(), 0);
     }
 
     #[tokio::test]
     async fn billing_no_collector_done_does_not_panic() {
-        let state   = state_with_chars(30);
+        let state = state_with_chars(30);
         let billing: Option<Arc<dyn crate::billing::BillingCollector>> = None;
 
-        handle_tts_message(r#"{"type":"done"}"#, &dummy_proc(), 22050, &state, &billing, "anushka").await;
+        handle_tts_message(
+            r#"{"type":"done"}"#,
+            &dummy_proc(),
+            22050,
+            &state,
+            &billing,
+            "anushka",
+        )
+        .await;
         assert_eq!(state.lock().await.pending_chars, 0);
     }
 
@@ -943,7 +1018,11 @@ mod tests {
         handler.send_text_chunk("...").await;
 
         let evs = mock.events();
-        assert_eq!(evs.len(), 2, "one event per synthesised chunk, none for punctuation");
+        assert_eq!(
+            evs.len(),
+            2,
+            "one event per synthesised chunk, none for punctuation"
+        );
         let total: usize = evs
             .iter()
             .filter_map(|e| match e {
@@ -951,7 +1030,10 @@ mod tests {
                 _ => None,
             })
             .sum();
-        assert_eq!(total, "Namaste".chars().count() + "Kaise hain aap".chars().count());
+        assert_eq!(
+            total,
+            "Namaste".chars().count() + "Kaise hain aap".chars().count()
+        );
     }
 
     #[test]
@@ -960,7 +1042,9 @@ mod tests {
         let h = SarvamTtsHandler::new(SarvamTtsConfig {
             api_key: "key".into(),
             ..SarvamTtsConfig::default()
-        }).unwrap().with_billing(Arc::new(NoopBillingCollector));
+        })
+        .unwrap()
+        .with_billing(Arc::new(NoopBillingCollector));
         assert!(h.billing.is_some());
     }
 }

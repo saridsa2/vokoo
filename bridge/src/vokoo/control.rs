@@ -89,7 +89,10 @@ pub(crate) fn dialable(number: &str) -> Option<String> {
 fn carrier_rejected(body: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|v| v.get("status").and_then(|s| s.as_str().map(str::to_ascii_lowercase)))
+        .and_then(|v| {
+            v.get("status")
+                .and_then(|s| s.as_str().map(str::to_ascii_lowercase))
+        })
         .is_some_and(|s| s == "error" || s == "fail" || s == "false")
 }
 
@@ -152,9 +155,13 @@ impl CallControl {
     async fn account(&self) -> Option<Account> {
         let mut cached = self.account.lock().await;
         if cached.is_none() {
-            let key =
-                vendor_secret(&self.supabase_url, &self.service_key, &self.handle.org_id, "kookoo")
-                    .await?;
+            let key = vendor_secret(
+                &self.supabase_url,
+                &self.service_key,
+                &self.handle.org_id,
+                "kookoo",
+            )
+            .await?;
             let meta = vendor_account(
                 &self.supabase_url,
                 &self.service_key,
@@ -165,7 +172,10 @@ impl CallControl {
             .unwrap_or_default();
 
             let field = |name: &str| {
-                meta.get(name).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+                meta.get(name)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string()
             };
             let (user_name, agent_phone_name) = (field("user_name"), field("agent_phone_name"));
 
@@ -176,12 +186,24 @@ impl CallControl {
                 log::warn!(
                     "[kookoo] connection is incomplete — user_name{} agent_phone_name{}. \
                      Set them on the KooKoo connection; call control cannot work without both.",
-                    if user_name.is_empty() { " MISSING" } else { " ok" },
-                    if agent_phone_name.is_empty() { " MISSING" } else { " ok" },
+                    if user_name.is_empty() {
+                        " MISSING"
+                    } else {
+                        " ok"
+                    },
+                    if agent_phone_name.is_empty() {
+                        " MISSING"
+                    } else {
+                        " ok"
+                    },
                 );
                 return None;
             }
-            *cached = Some(Account { api_key: key, user_name, agent_phone_name });
+            *cached = Some(Account {
+                api_key: key,
+                user_name,
+                agent_phone_name,
+            });
         }
         cached.clone()
     }
@@ -251,7 +273,11 @@ impl CallControl {
             log::warn!("[kookoo] {number} is not a number that can be conferenced");
             return false;
         };
-        self.command("CONFERENCE", serde_json::json!({ "conferenceNumber": dial })).await
+        self.command(
+            "CONFERENCE",
+            serde_json::json!({ "conferenceNumber": dial }),
+        )
+        .await
     }
 
     pub async fn hold(&self) -> bool {
@@ -278,10 +304,14 @@ impl CallControl {
     /// Drop a party. `KICK_CALL` wants the number in `conferenceNumber`.
     pub async fn disconnect(&self) -> bool {
         let Some(dial) = dialable(&self.handle.caller) else {
-            log::warn!("[kookoo] cannot drop {}: not a dialable number", self.handle.caller);
+            log::warn!(
+                "[kookoo] cannot drop {}: not a dialable number",
+                self.handle.caller
+            );
             return false;
         };
-        self.command("KICK_CALL", serde_json::json!({ "conferenceNumber": dial })).await
+        self.command("KICK_CALL", serde_json::json!({ "conferenceNumber": dial }))
+            .await
     }
 }
 

@@ -52,6 +52,10 @@
         "node_modules",
         "supabase/functions",
         "packages",
+        // The Expo patient application is a separate TypeScript program with
+        // React Native libraries and its own `@/*` path rooted at `app/`.
+        // It is validated explicitly by `npm run typecheck:patient`.
+        "patient-app",
         "examples",
         "indus.sarvam.ai"
     ]

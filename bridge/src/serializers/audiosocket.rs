@@ -92,16 +92,25 @@ pub struct AudioSocketFrame {
 
 impl AudioSocketFrame {
     pub fn audio(pcm: Vec<u8>) -> Self {
-        Self { kind: FrameKind::Audio, payload: pcm }
+        Self {
+            kind: FrameKind::Audio,
+            payload: pcm,
+        }
     }
 
     pub fn terminate() -> Self {
-        Self { kind: FrameKind::Terminate, payload: Vec::new() }
+        Self {
+            kind: FrameKind::Terminate,
+            payload: Vec::new(),
+        }
     }
 
     /// One keypad character, as ASCII.
     pub fn dtmf(digit: char) -> Self {
-        Self { kind: FrameKind::Dtmf, payload: vec![digit as u8] }
+        Self {
+            kind: FrameKind::Dtmf,
+            payload: vec![digit as u8],
+        }
     }
 
     /// The digit a `0x03` frame carries.
@@ -323,7 +332,12 @@ impl AudioSocketFrameSerializer {
 
         if from_rate == self.wire_rate {
             self.out_pending.extend(super::kookoo::f32_to_i16(&f32_in));
-            self.report(from_rate, f32_in.len(), self.out_pending.len() - before, "passthrough");
+            self.report(
+                from_rate,
+                f32_in.len(),
+                self.out_pending.len() - before,
+                "passthrough",
+            );
             return;
         }
 
@@ -340,9 +354,15 @@ impl AudioSocketFrameSerializer {
         }
         if let Some((_, resampler)) = self.output_resampler.as_mut() {
             let resampled = resampler.process(&f32_in);
-            self.out_pending.extend(super::kookoo::f32_to_i16(&resampled));
+            self.out_pending
+                .extend(super::kookoo::f32_to_i16(&resampled));
         }
-        self.report(from_rate, f32_in.len(), self.out_pending.len() - before, "resampled");
+        self.report(
+            from_rate,
+            f32_in.len(),
+            self.out_pending.len() - before,
+            "resampled",
+        );
     }
 
     /// Say once what the outbound path is doing to the audio.
@@ -412,7 +432,9 @@ impl FrameSerializer for AudioSocketFrameSerializer {
         };
         log::info!(
             "AudioSocket: wire {} Hz, pipeline {} Hz, {} samples/frame",
-            self.wire_rate, self.sample_rate, self.frame_samples(),
+            self.wire_rate,
+            self.sample_rate,
+            self.frame_samples(),
         );
     }
 
@@ -424,7 +446,9 @@ impl FrameSerializer for AudioSocketFrameSerializer {
         );
         if is_end_or_cancel && !self.terminate_sent {
             self.terminate_sent = true;
-            return Some(SerializedOutput::Binary(AudioSocketFrame::terminate().encode()));
+            return Some(SerializedOutput::Binary(
+                AudioSocketFrame::terminate().encode(),
+            ));
         }
 
         match &frame.inner {
@@ -496,7 +520,9 @@ mod tests {
     /// `n` samples of PCM16 — a sawtooth, kept well inside i16 so the test
     /// exercises the resampler rather than an overflow in its own fixture.
     fn pcm(n: usize) -> Vec<u8> {
-        (0..n).flat_map(|i| (((i % 64) as i16) * 100).to_le_bytes()).collect()
+        (0..n)
+            .flat_map(|i| (((i % 64) as i16) * 100).to_le_bytes())
+            .collect()
     }
 
     #[tokio::test]
@@ -507,7 +533,10 @@ mod tests {
         // frame yields no audio — worth pinning rather than working around,
         // because it means a call loses its opening frame and not that the
         // path is broken.
-        assert!(s.deserialize(&SerializedInput::Binary(pcm(160))).await.is_none());
+        assert!(s
+            .deserialize(&SerializedInput::Binary(pcm(160)))
+            .await
+            .is_none());
 
         let mut got = None;
         for _ in 0..5 {
@@ -537,7 +566,9 @@ mod tests {
             .serialize(&Frame::output_audio(pcm(640), 16_000, 1))
             .await
             .expect("a frame");
-        let SerializedOutput::Binary(bytes) = out else { panic!("audio is binary") };
+        let SerializedOutput::Binary(bytes) = out else {
+            panic!("audio is binary")
+        };
 
         let mut reader = FrameReader::new();
         let frames = reader.feed(&bytes);
@@ -551,7 +582,10 @@ mod tests {
         let mut s = serializer().await;
         // 80 samples at 16 kHz is 40 at 8 kHz — a quarter of a frame. Padding
         // it to 160 would stretch the utterance by 15 ms of silence.
-        assert!(s.serialize(&Frame::output_audio(pcm(80), 16_000, 1)).await.is_none());
+        assert!(s
+            .serialize(&Frame::output_audio(pcm(80), 16_000, 1))
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -560,9 +594,15 @@ mod tests {
         // Buffer most of a frame, interrupt, then send a little more. If the
         // buffer had survived, the leftovers would complete a frame and the
         // caller would hear the tail of an utterance they cut off.
-        assert!(s.serialize(&Frame::output_audio(pcm(280), 16_000, 1)).await.is_none());
+        assert!(s
+            .serialize(&Frame::output_audio(pcm(280), 16_000, 1))
+            .await
+            .is_none());
         assert!(s.serialize(&Frame::interruption()).await.is_none());
-        assert!(s.serialize(&Frame::output_audio(pcm(40), 16_000, 1)).await.is_none());
+        assert!(s
+            .serialize(&Frame::output_audio(pcm(40), 16_000, 1))
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -582,7 +622,10 @@ mod tests {
     #[tokio::test]
     async fn text_on_this_socket_is_not_audio() {
         let mut s = serializer().await;
-        assert!(s.deserialize(&SerializedInput::Text("{}".into())).await.is_none());
+        assert!(s
+            .deserialize(&SerializedInput::Text("{}".into()))
+            .await
+            .is_none());
     }
 
     #[test]
@@ -597,7 +640,10 @@ mod tests {
     #[test]
     fn a_uuid_frame_reads_back_as_a_uuid() {
         let raw: Vec<u8> = (0..16).collect();
-        let frame = AudioSocketFrame { kind: FrameKind::Uuid, payload: raw };
+        let frame = AudioSocketFrame {
+            kind: FrameKind::Uuid,
+            payload: raw,
+        };
         assert_eq!(
             frame.as_uuid().as_deref(),
             Some("00010203-0405-0607-0809-0a0b0c0d0e0f"),
@@ -607,7 +653,10 @@ mod tests {
     #[test]
     fn only_a_sixteen_byte_uuid_frame_is_a_uuid() {
         // A short one is a malformed frame, not a uuid to be padded or guessed.
-        let frame = AudioSocketFrame { kind: FrameKind::Uuid, payload: vec![1, 2, 3] };
+        let frame = AudioSocketFrame {
+            kind: FrameKind::Uuid,
+            payload: vec![1, 2, 3],
+        };
         assert_eq!(frame.as_uuid(), None);
         assert_eq!(AudioSocketFrame::audio(vec![0; 16]).as_uuid(), None);
     }
@@ -618,8 +667,14 @@ mod tests {
         let mut reader = FrameReader::new();
         let whole = AudioSocketFrame::audio(vec![9; 320]).encode();
 
-        assert!(reader.feed(&whole[..2]).is_empty(), "half a header decides nothing");
-        assert!(reader.feed(&whole[2..100]).is_empty(), "a partial payload is not a frame");
+        assert!(
+            reader.feed(&whole[..2]).is_empty(),
+            "half a header decides nothing"
+        );
+        assert!(
+            reader.feed(&whole[2..100]).is_empty(),
+            "a partial payload is not a frame"
+        );
 
         let frames = reader.feed(&whole[100..]);
         assert_eq!(frames.len(), 1);
@@ -631,7 +686,13 @@ mod tests {
     fn several_frames_in_one_read_all_come_out() {
         let mut reader = FrameReader::new();
         let mut bytes = Vec::new();
-        bytes.extend(AudioSocketFrame { kind: FrameKind::Uuid, payload: vec![7; 16] }.encode());
+        bytes.extend(
+            AudioSocketFrame {
+                kind: FrameKind::Uuid,
+                payload: vec![7; 16],
+            }
+            .encode(),
+        );
         bytes.extend(AudioSocketFrame::audio(vec![1; 320]).encode());
         bytes.extend(AudioSocketFrame::terminate().encode());
 
@@ -662,7 +723,11 @@ mod tests {
         // Asterisk may add a frame type. Refusing it would cost the call; the
         // length is what lets it be stepped over.
         let mut reader = FrameReader::new();
-        let mut bytes = AudioSocketFrame { kind: FrameKind::Unknown(0x42), payload: vec![1, 2, 3] }.encode();
+        let mut bytes = AudioSocketFrame {
+            kind: FrameKind::Unknown(0x42),
+            payload: vec![1, 2, 3],
+        }
+        .encode();
         bytes.extend(AudioSocketFrame::audio(vec![5; 4]).encode());
 
         let frames = reader.feed(&bytes);

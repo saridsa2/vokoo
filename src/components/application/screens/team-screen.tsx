@@ -125,13 +125,7 @@ export const TeamScreen = () => {
     return (
         <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-6 lg:p-8">
             <header className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <h1 className="text-display-xs font-semibold text-primary">Team</h1>
-                    <p className="mt-1 text-sm text-tertiary">
-                        Everyone in this workspace — what they may do, and whether they answer the
-                        phone.
-                    </p>
-                </div>
+                <h1 className="text-display-xs font-semibold text-primary">Team</h1>
                 <Button size="sm" onClick={() => setAdding(true)}>
                     Add Member
                 </Button>

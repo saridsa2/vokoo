@@ -24,8 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use crate::frames::{Frame, FrameDirection, FrameInner, FrameProcessor, SystemFrame};
@@ -167,10 +167,7 @@ pub struct AudioSocketHandshake {
 ///
 /// Sibling of `await_kookoo_start` on the WebSocket side — same job, one
 /// handshake earlier, because AudioSocket carries no call metadata at all.
-pub async fn await_uuid(
-    stream: &mut TcpStream,
-    timeout: Duration,
-) -> Option<AudioSocketHandshake> {
+pub async fn await_uuid(stream: &mut TcpStream, timeout: Duration) -> Option<AudioSocketHandshake> {
     let mut reader = FrameReader::new();
     let mut buffer = vec![0u8; READ_BUFFER];
     let deadline = tokio::time::Instant::now() + timeout;
@@ -204,7 +201,10 @@ pub async fn await_uuid(
             }
             // Anything before the uuid cannot be attributed to a call, so it
             // is dropped rather than buffered for one we have not identified.
-            log::debug!("AudioSocket: {:?} frame before the uuid, ignored", frame.kind);
+            log::debug!(
+                "AudioSocket: {:?} frame before the uuid, ignored",
+                frame.kind
+            );
         }
     }
 }
@@ -229,8 +229,10 @@ pub struct AudioSocketTransport {
 impl AudioSocketTransport {
     pub fn new(name: &str, params: AudioSocketParams) -> Self {
         let audio_in_sample_rate = params.transport.audio_in_sample_rate.unwrap_or(16_000);
-        let audio_out_sample_rate =
-            params.transport.audio_out_sample_rate.unwrap_or(audio_in_sample_rate);
+        let audio_out_sample_rate = params
+            .transport
+            .audio_out_sample_rate
+            .unwrap_or(audio_in_sample_rate);
 
         let base = Arc::new(BaseTransport::new(name, params.transport));
 
@@ -312,7 +314,11 @@ impl AudioSocketTransport {
         handshake: AudioSocketHandshake,
         push_tx: mpsc::Sender<(Frame, FrameDirection)>,
     ) {
-        let AudioSocketHandshake { pending, mut reader, .. } = handshake;
+        let AudioSocketHandshake {
+            pending,
+            mut reader,
+            ..
+        } = handshake;
         let mut audio_out_rx = self
             .audio_out_rx
             .lock()
@@ -327,7 +333,9 @@ impl AudioSocketTransport {
                 return;
             }
         };
-        serializer.setup(self.audio_in_sample_rate, self.audio_out_sample_rate).await;
+        serializer
+            .setup(self.audio_in_sample_rate, self.audio_out_sample_rate)
+            .await;
 
         let base = self.base.clone();
         // Split so the two arms can read and write at once. A single handle
@@ -389,12 +397,12 @@ impl AudioSocketTransport {
         // `AUDIOSOCKET_DUMP=/tmp` writes the raw PCM of both directions, so the
         // audio itself can be examined rather than reasoned about.
         let dump_dir = std::env::var("AUDIOSOCKET_DUMP").ok();
-        let mut dump_in = dump_dir.as_ref().and_then(|d| {
-            std::fs::File::create(format!("{d}/as-in.raw")).ok()
-        });
-        let mut dump_out = dump_dir.as_ref().and_then(|d| {
-            std::fs::File::create(format!("{d}/as-out.raw")).ok()
-        });
+        let mut dump_in = dump_dir
+            .as_ref()
+            .and_then(|d| std::fs::File::create(format!("{d}/as-in.raw")).ok());
+        let mut dump_out = dump_dir
+            .as_ref()
+            .and_then(|d| std::fs::File::create(format!("{d}/as-out.raw")).ok());
 
         // Whatever came in with the uuid, through the same handler the loop
         // uses. A second copy of this dispatch is how the two would drift.
@@ -604,10 +612,14 @@ impl AudioSocketTransport {
         if let Some(out) = serializer.serialize(&Frame::end()).await {
             let _ = Self::write(&mut tx_half, out).await;
         }
-        let _ = tx_half.write_all(&AudioSocketFrame::terminate().encode()).await;
+        let _ = tx_half
+            .write_all(&AudioSocketFrame::terminate().encode())
+            .await;
         let _ = tx_half.flush().await;
 
-        let _ = push_tx.send((Frame::end(), FrameDirection::Downstream)).await;
+        let _ = push_tx
+            .send((Frame::end(), FrameDirection::Downstream))
+            .await;
     }
 
     /// One wire frame into the pipeline. Returns false when the call is over.
@@ -636,7 +648,10 @@ impl AudioSocketTransport {
             // act on it — this protocol has no retry — so it is logged and the
             // socket is left to close on its own terms.
             FrameKind::Error => {
-                log::warn!("AudioSocketTransport: Asterisk error frame: {:?}", frame.payload);
+                log::warn!(
+                    "AudioSocketTransport: Asterisk error frame: {:?}",
+                    frame.payload
+                );
                 true
             }
             // A keypad press while bridged. It reaches the pipeline as a
@@ -645,7 +660,8 @@ impl AudioSocketTransport {
             // should not have to.
             FrameKind::Dtmf => {
                 if let Some(digit) = frame.as_digit() {
-                    if let Some(entry) = crate::frames::KeypadEntry::from_digit(&digit.to_string()) {
+                    if let Some(entry) = crate::frames::KeypadEntry::from_digit(&digit.to_string())
+                    {
                         log::info!("AudioSocketTransport: keypad {digit}");
                         let _ = push_tx
                             .send((Frame::input_dtmf(entry), FrameDirection::Downstream))
@@ -713,7 +729,10 @@ mod tests {
     #[tokio::test]
     async fn the_uuid_frame_identifies_the_call() {
         let (mut server, mut asterisk) = pair().await;
-        let uuid = AudioSocketFrame { kind: FrameKind::Uuid, payload: (0..16).collect() };
+        let uuid = AudioSocketFrame {
+            kind: FrameKind::Uuid,
+            payload: (0..16).collect(),
+        };
         asterisk.write_all(&uuid.encode()).await.unwrap();
 
         let got = await_uuid(&mut server, UUID_WAIT).await.expect("a uuid");
@@ -727,7 +746,11 @@ mod tests {
         // only the reader drops the audio on the floor — which is what the
         // first version of this did, and what this test caught.
         let (mut server, mut asterisk) = pair().await;
-        let mut bytes = AudioSocketFrame { kind: FrameKind::Uuid, payload: vec![7; 16] }.encode();
+        let mut bytes = AudioSocketFrame {
+            kind: FrameKind::Uuid,
+            payload: vec![7; 16],
+        }
+        .encode();
         bytes.extend(AudioSocketFrame::audio(vec![1; 320]).encode());
         bytes.extend(AudioSocketFrame::audio(vec![2; 320]).encode());
         asterisk.write_all(&bytes).await.unwrap();
@@ -743,7 +766,9 @@ mod tests {
         // a task for the life of the process.
         let (mut server, _asterisk) = pair().await;
         let waited = std::time::Instant::now();
-        assert!(await_uuid(&mut server, Duration::from_millis(120)).await.is_none());
+        assert!(await_uuid(&mut server, Duration::from_millis(120))
+            .await
+            .is_none());
         assert!(waited.elapsed() < Duration::from_secs(1));
     }
 
@@ -776,9 +801,7 @@ mod tests {
         let mut buf = [0u8; 4096];
         let deadline = tokio::time::Instant::now() + Duration::from_millis(140);
         while tokio::time::Instant::now() < deadline {
-            let Ok(Ok(n)) =
-                tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await
-            else {
+            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await else {
                 break;
             };
             if n == 0 {
@@ -794,7 +817,9 @@ mod tests {
         );
         assert!(frames.iter().all(|f| f.kind == FrameKind::Audio));
         assert!(
-            frames.iter().all(|f| f.payload.len() == 320 && f.payload.iter().all(|&b| b == 0)),
+            frames
+                .iter()
+                .all(|f| f.payload.len() == 320 && f.payload.iter().all(|&b| b == 0)),
             "an idle tick is 20ms of silence",
         );
     }
@@ -830,8 +855,7 @@ mod tests {
         let mut buf = [0u8; 8192];
         let deadline = tokio::time::Instant::now() + Duration::from_millis(120);
         while tokio::time::Instant::now() < deadline {
-            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await
-            else {
+            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await else {
                 break;
             };
             if n == 0 {
@@ -889,8 +913,7 @@ mod tests {
         let mut buf = [0u8; 8192];
         let deadline = tokio::time::Instant::now() + Duration::from_millis(140);
         while tokio::time::Instant::now() < deadline {
-            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await
-            else {
+            let Ok(Ok(n)) = tokio::time::timeout_at(deadline, asterisk.read(&mut buf)).await else {
                 break;
             };
             if n == 0 {
@@ -899,7 +922,10 @@ mod tests {
             frames.extend(reader.feed(&buf[..n]));
         }
 
-        assert!(frames.len() >= 4, "the clock must keep the wire fed regardless");
+        assert!(
+            frames.len() >= 4,
+            "the clock must keep the wire fed regardless"
+        );
         assert!(
             frames.iter().all(|f| f.payload.iter().all(|&b| b == 0)),
             "with nothing queued every frame is silence",
@@ -910,6 +936,8 @@ mod tests {
     async fn a_closed_connection_does_not_wait_for_the_timeout() {
         let (mut server, asterisk) = pair().await;
         drop(asterisk);
-        assert!(await_uuid(&mut server, Duration::from_secs(30)).await.is_none());
+        assert!(await_uuid(&mut server, Duration::from_secs(30))
+            .await
+            .is_none());
     }
 }

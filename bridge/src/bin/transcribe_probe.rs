@@ -12,9 +12,9 @@
 //!
 //!   cargo run --release --bin transcribe_probe -- <listener-model>
 
+use rustvani::audio_process::resamplers::{ResamplerQuality, StreamResampler};
 use rustvani::services::realtime::gemini::{GeminiLiveConfig, GeminiLiveSession};
 use rustvani::services::realtime::{RealtimeEvent, RealtimeSession};
-use rustvani::audio_process::resamplers::{ResamplerQuality, StreamResampler};
 
 /// The realtime module keeps its own copies of these private; a probe is not a
 /// reason to widen their visibility.
@@ -72,13 +72,18 @@ async fn speech() -> Result<Vec<u8>, String> {
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let key = std::env::var("LLM_API_KEY").expect("LLM_API_KEY not set");
-    let model = std::env::args().nth(1).unwrap_or_else(|| "models/gemini-3.5-transcribe-live".into());
+    let model = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "models/gemini-3.5-transcribe-live".into());
 
     let pcm16 = match speech().await {
         Ok(p) => p,
         Err(e) => return eprintln!("could not synthesise test speech: {e}"),
     };
-    println!("spoke {:.1}s of 16 kHz audio\nlistening with {model}\n", pcm16.len() as f64 / 32_000.0);
+    println!(
+        "spoke {:.1}s of 16 kHz audio\nlistening with {model}\n",
+        pcm16.len() as f64 / 32_000.0
+    );
 
     let mut session = match GeminiLiveSession::connect(GeminiLiveConfig {
         api_key: key,
@@ -126,6 +131,10 @@ async fn main() {
 
     println!(
         "\naudio emitted by the listener: {audio_bytes} bytes{}",
-        if audio_bytes == 0 { "  (silent, as required)" } else { "  <-- WOULD TALK OVER THE CALL" }
+        if audio_bytes == 0 {
+            "  (silent, as required)"
+        } else {
+            "  <-- WOULD TALK OVER THE CALL"
+        }
     );
 }

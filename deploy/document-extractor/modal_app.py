@@ -6,7 +6,7 @@ import tempfile
 
 import modal
 
-from modal_contract import safe_diagnostic, verify_source
+from modal_contract import safe_diagnostic, should_retry_without_heading_hierarchy, verify_source
 
 
 APP_NAME = "vokoo-document-extractor"
@@ -84,17 +84,14 @@ def extractor_api():
             artifact_path = pathlib.Path(directory) / "artifact.json"
             stderr_path = pathlib.Path(directory) / "stderr.log"
             source_path.write_bytes(payload)
-            with artifact_path.open("wb") as artifact_file, stderr_path.open("wb") as stderr_file:
-                try:
+            def run_docling(include_heading_hierarchy: bool):
+                command = ["docling-rs", "--to", "json"]
+                if include_heading_hierarchy:
+                    command.append("--heading-hierarchy")
+                command.extend(["--skip-ocr", str(source_path)])
+                with artifact_path.open("wb") as artifact_file, stderr_path.open("wb") as stderr_file:
                     result = subprocess.run(
-                        [
-                            "docling-rs",
-                            "--to",
-                            "json",
-                            "--heading-hierarchy",
-                            "--skip-ocr",
-                            str(source_path),
-                        ],
+                        command,
                         stdin=subprocess.DEVNULL,
                         stdout=artifact_file,
                         stderr=stderr_file,
@@ -102,15 +99,27 @@ def extractor_api():
                         timeout=540,
                         check=False,
                     )
-                except subprocess.TimeoutExpired as problem:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="Docling timed out",
-                        headers={"Retry-After": "30"},
-                    ) from problem
+                return result
+
+            try:
+                result = run_docling(include_heading_hierarchy=True)
+                stderr = stderr_path.read_bytes()[:8192].decode("utf-8", errors="replace")
+                if should_retry_without_heading_hierarchy(result.returncode, stderr):
+                    print(
+                        "docling-rs heading hierarchy failed; retrying without it",
+                        flush=True,
+                    )
+                    result = run_docling(include_heading_hierarchy=False)
+                    stderr = stderr_path.read_bytes()[:8192].decode("utf-8", errors="replace")
+            except subprocess.TimeoutExpired as problem:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Docling timed out",
+                    headers={"Retry-After": "30"},
+                ) from problem
             if result.returncode != 0:
                 diagnostic = safe_diagnostic(
-                    stderr_path.read_bytes()[:8192].decode("utf-8", errors="replace"),
+                    stderr,
                     directory,
                 )
                 print(f"docling-rs exited {result.returncode}: {diagnostic}", flush=True)

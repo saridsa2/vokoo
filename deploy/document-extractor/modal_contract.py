@@ -18,3 +18,12 @@ def safe_diagnostic(stderr: str, staging_directory: str, max_bytes: int = 2048) 
         if character in "\n\r\t" or character.isprintable()
     )
     return printable.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+
+
+def should_retry_without_heading_hierarchy(returncode: int, stderr: str) -> bool:
+    """Recognize the optional heading pass failing inside Docling.rs."""
+    return (
+        returncode != 0
+        and "heading_hierarchy" in stderr
+        and "not a char boundary" in stderr
+    )

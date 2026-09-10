@@ -1,0 +1,102 @@
+use std::sync::Arc;
+
+use tokio::sync::mpsc;
+
+use super::input::BaseInputTransport;
+use super::output::{BaseOutputTransport, OutputMessage};
+use super::params::TransportParams;
+use crate::frames::{FrameDirection, FrameHandler, FrameProcessor};
+
+// ---------------------------------------------------------------------------
+// BaseTransport
+// ---------------------------------------------------------------------------
+
+pub struct BaseTransport {
+    input_processor: FrameProcessor,
+    output_processor: FrameProcessor,
+    input_transport: Arc<BaseInputTransport>,
+    output_transport: Arc<BaseOutputTransport>,
+}
+
+impl BaseTransport {
+    pub fn new(name: &str, params: TransportParams) -> Self {
+        let input_transport = Arc::new(BaseInputTransport::new(params.clone()));
+        let output_transport = Arc::new(BaseOutputTransport::new(params));
+
+        let input_processor = FrameProcessor::new(
+            format!("{}Input", name),
+            Box::new(InputHandlerWrapper(input_transport.clone())),
+            false,
+        );
+
+        let output_processor = FrameProcessor::new(
+            format!("{}Output", name),
+            Box::new(OutputHandlerWrapper(output_transport.clone())),
+            false,
+        );
+
+        Self {
+            input_processor,
+            output_processor,
+            input_transport,
+            output_transport,
+        }
+    }
+
+    /// The input FrameProcessor — place first in the pipeline.
+    pub fn input(&self) -> FrameProcessor {
+        self.input_processor.clone()
+    }
+
+    /// The output FrameProcessor — place last in the pipeline.
+    pub fn output(&self) -> FrameProcessor {
+        self.output_processor.clone()
+    }
+
+    /// Wire up audio output to a channel.
+    pub fn set_audio_out_tx(&self, tx: mpsc::Sender<OutputMessage>) {
+        self.output_transport.set_audio_out_tx(tx);
+    }
+
+    /// Push a raw audio chunk into the input transport's audio queue.
+    pub async fn push_audio_frame(&self, data: crate::frames::AudioRawData) -> bool {
+        self.input_transport.push_audio_frame(data).await
+    }
+
+    /// Clone the audio sender for transports that need to own it.
+    pub fn audio_sender(&self) -> tokio::sync::mpsc::Sender<crate::frames::AudioRawData> {
+        self.input_transport.audio_sender()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thin wrappers: Arc<Transport> → Box<dyn FrameHandler>
+// ---------------------------------------------------------------------------
+
+struct InputHandlerWrapper(Arc<BaseInputTransport>);
+
+#[async_trait::async_trait]
+impl FrameHandler for InputHandlerWrapper {
+    async fn on_process_frame(
+        &self,
+        processor: &FrameProcessor,
+        frame: crate::frames::Frame,
+        direction: crate::frames::FrameDirection,
+    ) -> crate::error::Result<()> {
+        self.0.on_process_frame(processor, frame, direction).await
+    }
+}
+
+struct OutputHandlerWrapper(Arc<BaseOutputTransport>);
+
+#[async_trait::async_trait]
+impl FrameHandler for OutputHandlerWrapper {
+    async fn on_process_frame(
+        &self,
+        processor: &FrameProcessor,
+        frame: crate::frames::Frame,
+        direction: FrameDirection,
+    ) -> crate::error::Result<()> {
+        self.0.on_process_frame(processor, frame, direction).await
+    }
+}

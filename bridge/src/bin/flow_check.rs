@@ -8,7 +8,9 @@ async fn main() {
 
     let base = std::env::var("SUPABASE_URL").unwrap_or_default();
     let key = std::env::var("SUPABASE_SERVICE_ROLE_KEY").unwrap_or_default();
-    let did = std::env::args().nth(1).unwrap_or_else(|| "918040802529".into());
+    let did = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "918040802529".into());
     // Keys to press, in order, one per menu the flow reaches:
     //     flow_check 918040802529 2
     // walks past a language menu by pressing 2. Without them the tool stops at
@@ -37,11 +39,8 @@ async fn main() {
         rustvani::vokoo::Handovers::new(),
     );
 
-    let mut runner = match FlowRunner::for_entry(
-        &flow,
-        &control,
-        EntryPoint::new(TRIGGER_ANSWERED),
-    ) {
+    let mut runner = match FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_ANSWERED))
+    {
         Ok(runner) => runner,
         Err(error) => {
             println!("INVALID FLOW: {error}");
@@ -50,12 +49,22 @@ async fn main() {
     };
     let action = loop {
         let action = runner.advance().await;
-        let NodeAction::CollectDigits { node, prompt, language, keys, timeout_seconds, .. } = &action
+        let NodeAction::CollectDigits {
+            node,
+            prompt,
+            language,
+            keys,
+            timeout_seconds,
+            ..
+        } = &action
         else {
             break action;
         };
 
-        println!("-> ASKS FOR A KEY at '{}' ({}s, spoken in {language})", node.name, timeout_seconds);
+        println!(
+            "-> ASKS FOR A KEY at '{}' ({}s, spoken in {language})",
+            node.name, timeout_seconds
+        );
         println!("   says         : {prompt}");
         for (key, label) in keys {
             let next = flow.next(&node.id, key).unwrap_or("(nothing wired)");
@@ -83,8 +92,15 @@ async fn main() {
     };
 
     match action {
-        NodeAction::RunAgent { node, agent_id, timeout_seconds } => {
-            println!("-> reaches AGENT '{}' agent_id={agent_id} timeout={timeout_seconds}s", node.name);
+        NodeAction::RunAgent {
+            node,
+            agent_id,
+            timeout_seconds,
+        } => {
+            println!(
+                "-> reaches AGENT '{}' agent_id={agent_id} timeout={timeout_seconds}s",
+                node.name
+            );
 
             // The engine the call would run on, resolved the same way the bridge
             // resolves it. Worth printing here because the alternative is
@@ -119,9 +135,11 @@ async fn main() {
                                 .unwrap_or_else(|| "provider default".into()),
                         );
                     } else {
-                        for (stage, label) in
-                            [("stt", "listening"), ("llm", "thinking"), ("tts", "speaking")]
-                        {
+                        for (stage, label) in [
+                            ("stt", "listening"),
+                            ("llm", "thinking"),
+                            ("tts", "speaking"),
+                        ] {
                             println!(
                                 "     {label:<11}: {} {}{}",
                                 engine.get(stage, "provider").unwrap_or("NOT SET"),
@@ -144,12 +162,9 @@ async fn main() {
             }
 
             for outcome in ["done", "wants_human", "out_of_scope", "gone_quiet"] {
-                let mut r = FlowRunner::for_entry(
-                    &flow,
-                    &control,
-                    EntryPoint::new(TRIGGER_ANSWERED),
-                )
-                .expect("resolved answering flow lost its call.answered entry");
+                let mut r =
+                    FlowRunner::for_entry(&flow, &control, EntryPoint::new(TRIGGER_ANSWERED))
+                        .expect("resolved answering flow lost its call.answered entry");
                 let _ = r.advance().await;
                 r.agent_finished(&node.id, outcome);
                 // Only report where it would go; do not fire carrier commands.
@@ -162,13 +177,19 @@ async fn main() {
         // opens on a monitor node is a real shape the runner reports; the dry
         // run has nothing to listen to, so it says so and stops.
         NodeAction::Monitor { node, .. } => {
-            println!("-> opens on MONITOR '{}' — nothing to listen to in a dry run", node.name);
+            println!(
+                "-> opens on MONITOR '{}' — nothing to listen to in a dry run",
+                node.name
+            );
             return;
         }
         // The loop above consumes every menu, so this arm exists only to make
         // the match total.
         NodeAction::CollectDigits { node, .. } => {
-            println!("-> menu '{}' escaped the loop above — this is a bug", node.name);
+            println!(
+                "-> menu '{}' escaped the loop above — this is a bug",
+                node.name
+            );
         }
         NodeAction::Finished(reason) => {
             println!("-> the call would END without a conversation: {reason}");

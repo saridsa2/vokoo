@@ -72,6 +72,7 @@ pub struct AgentConversation {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActionOperation {
     Request {
+        actor: RequestActor,
         what: String,
         instructions: String,
         expires_days: u32,
@@ -90,6 +91,26 @@ pub enum ActionOperation {
         capability: String,
         description: String,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestActor {
+    Patient,
+    Clinician,
+    CareTeam,
+    System,
+}
+
+impl RequestActor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Patient => "patient",
+            Self::Clinician => "clinician",
+            Self::CareTeam => "care_team",
+            Self::System => "system",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq)]

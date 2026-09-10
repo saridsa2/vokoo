@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use futures::{SinkExt, StreamExt};
 use log;
 use serde::Deserialize;
@@ -39,7 +39,10 @@ use crate::utils::sentence_splitter::{extract_sentences, find_sentence_end};
 use crate::utils::text_preprocessor::preprocess_for_tts;
 
 fn now() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 #[derive(Debug, Clone)]
@@ -156,7 +159,11 @@ impl ElevenLabsTtsHandler {
         // Checked here rather than at connect: a rate it cannot produce is a
         // configuration error, and a call is the wrong place to learn that.
         output_format(config.sample_rate)?;
-        Ok(Self { config, state: Arc::new(Mutex::new(TtsState::default())), billing: None })
+        Ok(Self {
+            config,
+            state: Arc::new(Mutex::new(TtsState::default())),
+            billing: None,
+        })
     }
 
     pub fn into_processor(self) -> FrameProcessor {
@@ -176,7 +183,9 @@ impl ElevenLabsTtsHandler {
         let format = match output_format(config.sample_rate) {
             Ok(format) => format,
             Err(problem) => {
-                let _ = processor.push_error(format!("ElevenLabsTts: {problem}"), true).await;
+                let _ = processor
+                    .push_error(format!("ElevenLabsTts: {problem}"), true)
+                    .await;
                 return;
             }
         };
@@ -203,7 +212,9 @@ impl ElevenLabsTtsHandler {
                 // A wrong voice id and a rejected key both land here, and they
                 // need different fixes, so the message is passed through whole.
                 log::error!("ElevenLabsTts: connect failed: {error}");
-                let _ = processor.push_error(format!("ElevenLabsTts: {error}"), false).await;
+                let _ = processor
+                    .push_error(format!("ElevenLabsTts: {error}"), false)
+                    .await;
                 return;
             }
         };
@@ -238,7 +249,9 @@ impl ElevenLabsTtsHandler {
 
         if let Err(error) = sink.send(Message::Text(bos.to_string().into())).await {
             log::error!("ElevenLabsTts: could not open the stream: {error}");
-            let _ = processor.push_error(format!("ElevenLabsTts: {error}"), false).await;
+            let _ = processor
+                .push_error(format!("ElevenLabsTts: {error}"), false)
+                .await;
             return;
         }
 

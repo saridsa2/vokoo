@@ -74,7 +74,10 @@ pub async fn call(
         .await;
 
     let body: Value = match response {
-        Ok(r) => r.json().await.unwrap_or_else(|e| json!({ "message": e.to_string() })),
+        Ok(r) => r
+            .json()
+            .await
+            .unwrap_or_else(|e| json!({ "message": e.to_string() })),
         Err(e) => {
             log::warn!("[tool] {tool} could not be reached: {e}");
             return ToolReply {
@@ -104,7 +107,10 @@ pub async fn call(
     };
 
     log::info!("[tool] {tool} -> {outcome}");
-    ToolReply { outcome: outcome.into(), detail: body }
+    ToolReply {
+        outcome: outcome.into(),
+        detail: body,
+    }
 }
 
 /// Run a tool the model asked for, mid-conversation.
@@ -146,9 +152,9 @@ pub async fn call_live(
         .await;
 
     match response {
-        Ok(r) => r.json().await.unwrap_or_else(|e| {
-            json!({ "ok": false, "error": "unreadable", "message": e.to_string() })
-        }),
+        Ok(r) => r.json().await.unwrap_or_else(
+            |e| json!({ "ok": false, "error": "unreadable", "message": e.to_string() }),
+        ),
         Err(e) => {
             log::warn!("[tool] {tool} could not be reached: {e}");
             json!({ "ok": false, "error": "unreachable", "message": e.to_string() })

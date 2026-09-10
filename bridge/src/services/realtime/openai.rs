@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -55,11 +55,21 @@ pub struct OpenAIRealtimeConfig {
 impl std::fmt::Debug for OpenAIRealtimeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAIRealtimeConfig")
-            .field("api_key", &if self.api_key.is_empty() { "unset" } else { "set" })
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    "unset"
+                } else {
+                    "set"
+                },
+            )
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("voice", &self.voice)
-            .field("instructions", &format_args!("{} chars", self.instructions.len()))
+            .field(
+                "instructions",
+                &format_args!("{} chars", self.instructions.len()),
+            )
             .field("sample_rate", &self.sample_rate)
             .field("tools", &format_args!("{} declared", self.tools.len()))
             .field("tool_choice", &self.tool_choice)
@@ -104,16 +114,18 @@ fn record_usage(
     model: &str,
     usage: &Value,
 ) {
-    let count = |parent: &Value, key: &str| parent.get(key).and_then(Value::as_u64).unwrap_or(0) as u32;
+    let count =
+        |parent: &Value, key: &str| parent.get(key).and_then(Value::as_u64).unwrap_or(0) as u32;
     let input = count(usage, "input_tokens");
     let output = count(usage, "output_tokens");
     if input == 0 && output == 0 {
         return;
     }
 
-    if let (Some(inputs), Some(outputs)) =
-        (usage.get("input_token_details"), usage.get("output_token_details"))
-    {
+    if let (Some(inputs), Some(outputs)) = (
+        usage.get("input_token_details"),
+        usage.get("output_token_details"),
+    ) {
         log::info!(
             "openai realtime usage: in {input} (audio {}, text {}, cached {}) out {output} (audio {}, text {})",
             count(inputs, "audio_tokens"),
@@ -176,7 +188,8 @@ impl OpenAIRealtimeSession {
         // `audio` and not inside a nested `function` object.
         if !cfg.tools.is_empty() {
             session["tools"] = json!(cfg.tools);
-            session["tool_choice"] = json!(cfg.tool_choice.clone().unwrap_or_else(|| "auto".into()));
+            session["tool_choice"] =
+                json!(cfg.tool_choice.clone().unwrap_or_else(|| "auto".into()));
         }
         json!({ "type": "session.update", "session": session })
     }
@@ -394,7 +407,13 @@ impl OpenAIRealtimeSession {
             log::debug!("openai realtime session task exited");
         });
 
-        Ok(Self { audio_tx, text_tx, tool_tx, events: Some(events), rate: cfg.sample_rate })
+        Ok(Self {
+            audio_tx,
+            text_tx,
+            tool_tx,
+            events: Some(events),
+            rate: cfg.sample_rate,
+        })
     }
 }
 
@@ -460,11 +479,23 @@ mod tests {
 
         // Each of these was a live invalid_request_error at some point.
         assert_eq!(s["type"], "realtime", "session.type is required");
-        assert!(s.get("modalities").is_none(), "renamed to output_modalities");
+        assert!(
+            s.get("modalities").is_none(),
+            "renamed to output_modalities"
+        );
         assert_eq!(s["output_modalities"][0], "audio");
-        assert!(s.get("turn_detection").is_none(), "must nest under audio.input");
-        assert_eq!(s["audio"]["input"]["turn_detection"]["type"], "semantic_vad");
-        assert_eq!(s["audio"]["output"]["format"]["rate"], 24_000, "output rate required");
+        assert!(
+            s.get("turn_detection").is_none(),
+            "must nest under audio.input"
+        );
+        assert_eq!(
+            s["audio"]["input"]["turn_detection"]["type"],
+            "semantic_vad"
+        );
+        assert_eq!(
+            s["audio"]["output"]["format"]["rate"], 24_000,
+            "output rate required"
+        );
         assert_eq!(s["instructions"], "be brief");
     }
 
@@ -481,20 +512,32 @@ mod tests {
         };
         let s = &OpenAIRealtimeSession::session_update(&cfg)["session"];
 
-        assert_eq!(s["tools"][0]["name"], "check_slots", "name is flat, not under .function");
-        assert!(s["tools"][0].get("function").is_none(), "that shape is chat completions', not realtime's");
+        assert_eq!(
+            s["tools"][0]["name"], "check_slots",
+            "name is flat, not under .function"
+        );
+        assert!(
+            s["tools"][0].get("function").is_none(),
+            "that shape is chat completions', not realtime's"
+        );
         assert_eq!(s["tools"][0]["type"], "function");
         // Absent means the model never calls anything, which is how an agent
         // with skills ends up with none of them reachable.
         assert_eq!(s["tool_choice"], "auto");
-        assert!(s["audio"].get("tools").is_none(), "tools do not nest under audio");
+        assert!(
+            s["audio"].get("tools").is_none(),
+            "tools do not nest under audio"
+        );
     }
 
     #[test]
     fn no_tools_means_no_tool_fields_at_all() {
         let s = &OpenAIRealtimeSession::session_update(&OpenAIRealtimeConfig::default())["session"];
         assert!(s.get("tools").is_none());
-        assert!(s.get("tool_choice").is_none(), "an empty declaration is not the same as none");
+        assert!(
+            s.get("tool_choice").is_none(),
+            "an empty declaration is not the same as none"
+        );
     }
 
     #[test]
@@ -521,9 +564,15 @@ mod tests {
             .iter()
             .filter(|i| i.get("type").and_then(Value::as_str) == Some("function_call"))
             .collect();
-        assert_eq!(calls.len(), 1, "the assistant message must not be mistaken for a call");
+        assert_eq!(
+            calls.len(),
+            1,
+            "the assistant message must not be mistaken for a call"
+        );
 
-        let raw = calls[0]["arguments"].as_str().expect("arguments arrive as a string");
+        let raw = calls[0]["arguments"]
+            .as_str()
+            .expect("arguments arrive as a string");
         let args: Value = serde_json::from_str(raw).expect("and parse to an object");
         assert_eq!(args["doctor"], "cardiologist");
         assert_eq!(calls[0]["call_id"], "call_sHlR7iaFwQ2YQOqm");

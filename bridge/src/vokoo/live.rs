@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
 /// One call, as it looks while it is happening.
@@ -99,7 +99,10 @@ impl Default for LiveCalls {
         // buffer exists to avoid waking on every frame of a burst, not to
         // preserve history.
         let (changed, _) = broadcast::channel(16);
-        Self { inner: Arc::new(Mutex::new(HashMap::new())), changed }
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            changed,
+        }
     }
 }
 
@@ -142,7 +145,10 @@ impl LiveCalls {
             map.insert(id.to_string(), call);
         }
         self.announce();
-        LiveGuard { id: id.to_string(), calls: self.clone() }
+        LiveGuard {
+            id: id.to_string(),
+            calls: self.clone(),
+        }
     }
 
     /// Fill in what was not known when the call was registered.
@@ -184,10 +190,7 @@ impl LiveCalls {
     }
 
     /// The way into one call's model session, if it has one.
-    pub fn steering(
-        &self,
-        id: &str,
-    ) -> Option<Arc<crate::services::realtime::RealtimeControls>> {
+    pub fn steering(&self, id: &str) -> Option<Arc<crate::services::realtime::RealtimeControls>> {
         self.inner.lock().ok()?.get(id)?.steer.clone()
     }
 
@@ -196,7 +199,11 @@ impl LiveCalls {
     /// What decides whether a whisper is audio or text: a supervisor coaching a
     /// colleague speaks to them, and a supervisor coaching a model writes to it.
     pub fn has_human(&self, id: &str) -> bool {
-        self.inner.lock().ok().and_then(|m| m.get(id).map(|c| c.human)).unwrap_or(false)
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|m| m.get(id).map(|c| c.human))
+            .unwrap_or(false)
     }
 
     /// A person has joined this call.
@@ -216,7 +223,9 @@ impl LiveCalls {
     /// nobody: we do not know who it belongs to, and guessing would show one
     /// tenant another's caller id.
     pub fn snapshot(&self, org_id: &str) -> Vec<Value> {
-        let Ok(map) = self.inner.lock() else { return Vec::new() };
+        let Ok(map) = self.inner.lock() else {
+            return Vec::new();
+        };
         map.iter()
             .filter(|(_, call)| call.org_id.as_deref() == Some(org_id))
             .map(|(id, call)| {
@@ -258,7 +267,10 @@ pub struct Presence {
 impl Default for Presence {
     fn default() -> Self {
         let (changed, _) = broadcast::channel(16);
-        Self { inner: Arc::new(Mutex::new(HashMap::new())), changed }
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            changed,
+        }
     }
 }
 
@@ -283,8 +295,10 @@ impl Presence {
     /// push three identical frames to every open dashboard for one person
     /// going on duty.
     pub fn replace(&self, rows: &[crate::vokoo::ari::Presence]) {
-        let next: HashMap<String, (bool, usize)> =
-            rows.iter().map(|p| (p.endpoint.clone(), (p.online, p.calls))).collect();
+        let next: HashMap<String, (bool, usize)> = rows
+            .iter()
+            .map(|p| (p.endpoint.clone(), (p.online, p.calls)))
+            .collect();
         let differs = match self.inner.lock() {
             Ok(mut map) => {
                 if *map == next {
@@ -307,7 +321,9 @@ impl Presence {
     /// endpoint" together, because they are the same fact to somebody deciding
     /// whether a call can be handed over.
     pub fn state_of(&self, endpoint: &str) -> &'static str {
-        let Ok(map) = self.inner.lock() else { return "offline" };
+        let Ok(map) = self.inner.lock() else {
+            return "offline";
+        };
         match map.get(endpoint) {
             Some((true, calls)) if *calls > 0 => "on_call",
             Some((true, _)) => "online",
@@ -317,7 +333,10 @@ impl Presence {
 
     /// How many of these endpoints are on a call.
     pub fn on_call(&self, endpoints: &[String]) -> usize {
-        endpoints.iter().filter(|e| self.state_of(e) == "on_call").count()
+        endpoints
+            .iter()
+            .filter(|e| self.state_of(e) == "on_call")
+            .count()
     }
 }
 
@@ -404,13 +423,20 @@ mod tests {
     }
 
     fn seen(endpoint: &str, online: bool, calls: usize) -> crate::vokoo::ari::Presence {
-        crate::vokoo::ari::Presence { endpoint: endpoint.into(), online, calls }
+        crate::vokoo::ari::Presence {
+            endpoint: endpoint.into(),
+            online,
+            calls,
+        }
     }
 
     #[test]
     fn presence_has_three_states() {
         let presence = Presence::new();
-        presence.replace(&[seen("vayuveda-4001", true, 0), seen("vayuveda-4002", true, 1)]);
+        presence.replace(&[
+            seen("vayuveda-4001", true, 0),
+            seen("vayuveda-4002", true, 1),
+        ]);
         assert_eq!(presence.state_of("vayuveda-4001"), "online");
         assert_eq!(presence.state_of("vayuveda-4002"), "on_call");
         // Never heard of and not registered are the same thing to somebody

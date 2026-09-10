@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // Core modules (always available)
 // ---------------------------------------------------------------------------
+pub mod adapters;
 pub mod agents;
 pub mod audio_capture;
+pub mod audio_process;
 pub mod billing;
 pub mod clock;
 pub mod context;
@@ -12,10 +14,8 @@ pub mod metrics;
 pub mod observer;
 pub mod pipeline;
 pub mod processors;
-pub mod utils;
-pub mod audio_process;
-pub mod adapters;
 pub mod turn;
+pub mod utils;
 
 // ---------------------------------------------------------------------------
 // Feature-gated modules
@@ -66,34 +66,39 @@ pub mod vokoo;
 // ---------------------------------------------------------------------------
 // Core re-exports (always available)
 // ---------------------------------------------------------------------------
-pub use audio_capture::{AudioCaptureCollector, AudioCaptureProcessor, AudioStorage, LocalAudioStorage, NoopAudioCaptureCollector, RecordedSegment, SessionAudioCapture};
 #[cfg(feature = "db-postgres")]
 pub use audio_capture::PostgresAudioMetaStorage;
-pub use billing::{BillingCollector, BillingEvent, LogBillingStorage, NoopBillingCollector, SessionBilling};
+pub use audio_capture::{
+    AudioCaptureCollector, AudioCaptureProcessor, AudioStorage, LocalAudioStorage,
+    NoopAudioCaptureCollector, RecordedSegment, SessionAudioCapture,
+};
 pub use billing::events::{TranscriptEntry, TranscriptRole};
 #[cfg(feature = "db-postgres")]
 pub use billing::PostgresBillingStorage;
-pub use clock::{BaseClock, SystemClock, system_clock};
+pub use billing::{
+    BillingCollector, BillingEvent, LogBillingStorage, NoopBillingCollector, SessionBilling,
+};
+pub use clock::{system_clock, BaseClock, SystemClock};
+pub use context::{shared_context, LLMContext, ToolCall};
 pub use error::{PipecatError, Result};
 pub use frames::{
     AudioRawData, ControlFrame, DataFrame, DataFrameData, ErrorFrameData, Frame, FrameDirection,
-    FrameHandler, FrameInner, FrameKind, FrameProcessor, FrameProcessorSetup, KeypadEntry,
-    PassthroughHandler, ProcessorBusHandle, StartFrameData, SystemFrame, TranscriptionData,
-    FunctionCallData, FunctionCallResultData,
+    FrameHandler, FrameInner, FrameKind, FrameProcessor, FrameProcessorSetup, FunctionCallData,
+    FunctionCallResultData, KeypadEntry, PassthroughHandler, ProcessorBusHandle, StartFrameData,
+    SystemFrame, TranscriptionData,
 };
-pub use context::{shared_context, LLMContext, ToolCall};
 pub use pipeline::{FinishReason, Pipeline, PipelineLifecycle, PipelineParams, PipelineTask};
-pub use processors::llm_user_aggregator::LLMUserAggregator;
 pub use processors::llm_assistant_aggregator::LLMAssistantAggregator;
+pub use processors::llm_user_aggregator::LLMUserAggregator;
 
 // ---------------------------------------------------------------------------
 // Feature-gated re-exports
 // ---------------------------------------------------------------------------
 
 // VAD (pure-Rust parts always available; ONNX backend gated behind vad-silero-ort)
-pub use vad::{SileroVadNative, VadAnalyzer, VadBackend, VadParams, VadProcessor, VadState};
 #[cfg(feature = "vad-silero-ort")]
 pub use vad::SileroVadOrt;
+pub use vad::{SileroVadNative, VadAnalyzer, VadBackend, VadParams, VadProcessor, VadState};
 
 // Transport
 #[cfg(feature = "transport-websocket")]
@@ -135,7 +140,7 @@ pub use services::{SarvamSttConfig, SarvamSttHandler};
 pub use services::{SixtyDbEncoding, SixtyDbSttConfig, SixtyDbSttHandler};
 
 #[cfg(feature = "llm-openai")]
-pub use services::{OpenAILLMConfig, OpenAILLMHandler, FunctionRegistry};
+pub use services::{FunctionRegistry, OpenAILLMConfig, OpenAILLMHandler};
 
 #[cfg(feature = "llm-sarvam")]
 pub use services::{SarvamLLMConfig, SarvamLLMHandler};
