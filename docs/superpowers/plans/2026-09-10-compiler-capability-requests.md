@@ -154,7 +154,7 @@ git commit -m "feat: describe requestable compiler gaps"
 
 **Interfaces:**
 - Consumes `CompilerGap.details` from Task 1.
-- Produces RPCs `request_compiler_capability(uuid,text)`, `resolve_compiler_capability_request(uuid,text,text,uuid,jsonb,text)`, `transition_compiler_capability_request(uuid,text,text)`, and `enqueue_compiler_recompile(uuid)`.
+- Produces RPCs `request_compiler_capability(uuid,text)`, `resolve_compiler_capability_request(uuid,text,text,text,jsonb,text)`, `transition_compiler_capability_request(uuid,text,text)`, and `enqueue_compiler_recompile(uuid)`. The catalogue node ID parameter is `text`, matching `catalogue_node_types.id`.
 - Produces tables `capability_requests`, `compiler_capability_adapters`, and
   `compiler_capability_resolutions`.
 
