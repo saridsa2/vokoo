@@ -48,6 +48,14 @@ impl CompilerRepository for FakeRepository {
             },
             catalogue: CatalogueSnapshot::default(),
             resources: WorkspaceResources::default(),
+            resolutions: run
+                .input_snapshot
+                .get("resolutions")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| CompilerRepositoryError::permanent("invalid resolutions"))?
+                .unwrap_or_default(),
         })
     }
     async fn load_steps(
@@ -186,6 +194,47 @@ async fn retry_resumes_completed_lowering_without_model_work() {
         .unwrap();
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
     assert_eq!(repository.0.lock().unwrap().materialized, 1);
+}
+
+#[tokio::test]
+async fn records_the_frozen_resolution_before_lowering() {
+    let repository = Arc::new(repository(true));
+    repository
+        .0
+        .lock()
+        .unwrap()
+        .claim
+        .as_mut()
+        .unwrap()
+        .input_snapshot = json!({
+        "resolutions": [{
+            "resolution_id": "00000000-0000-4000-8000-000000000001",
+            "recommendation_id": "HLT-1",
+            "capability_key": "clinical.task",
+            "adapter_key": "clinical-task-escalate-notify-v1",
+            "adapter_version": 1,
+            "node_type_id": "escalate.notify",
+            "mapping": {"to":"clinician","urgency":"soon"}
+        }]
+    });
+    let executor = Arc::new(executor(Ok(CompilationOutput::default())));
+
+    CompilerWorker::new(repository.clone(), executor, "worker")
+        .run_once()
+        .await
+        .unwrap();
+
+    let state = repository.0.lock().unwrap();
+    let resolution = state
+        .appended
+        .iter()
+        .find(|step| step["kind"] == "resolve")
+        .expect("resolution trace step");
+    assert_eq!(resolution["result"]["resolutions"][0]["adapter_version"], 1);
+    assert_eq!(
+        resolution["result"]["resolutions"][0]["resolution_id"],
+        "00000000-0000-4000-8000-000000000001"
+    );
 }
 
 #[tokio::test]

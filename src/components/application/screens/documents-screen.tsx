@@ -847,6 +847,16 @@ function IntelligenceResult({
 }
 
 function traceSummary(step: CompilerRunReport["steps"][number]): string {
+    if (step.kind === "resolve" && Array.isArray(step.result.resolutions)) {
+        const applied = step.result.resolutions.flatMap((value) => {
+            if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+            const resolution = value as Record<string, unknown>;
+            if (typeof resolution.resolution_id !== "string" || typeof resolution.adapter_key !== "string") return [];
+            const version = typeof resolution.adapter_version === "number" ? ` v${resolution.adapter_version}` : "";
+            return [`${resolution.adapter_key}${version} (${resolution.resolution_id})`];
+        });
+        if (applied.length) return `Applied frozen resolution: ${applied.join(", ")}`;
+    }
     if (typeof step.result.summary === "string" && step.result.summary.trim()) return step.result.summary;
     const counts = ["agent_count", "flow_count", "gap_count", "task_count"].flatMap((key) =>
         typeof step.result[key] === "number" ? [`${String(key).replace("_", " ")}: ${step.result[key]}`] : [],

@@ -1,8 +1,9 @@
 use rustvani::vokoo::compiler::{
-    lower, validate_output, Action, ActionOperation, AgentConversation, CarePathProgram,
-    CatalogueField, CatalogueNode, CatalogueOutcome, CatalogueSnapshot, CompletionSpec,
-    EvidenceRef, EvidenceRole, FailurePolicy, GapSeverity, Population, Recommendation,
-    RequestActor, Threshold, TriggerOperation, TriggerSpec, WorkspaceResources,
+    lower, validate_output, Action, ActionOperation, AgentConversation,
+    CapabilityResolutionSnapshot, CarePathProgram, CatalogueField, CatalogueNode, CatalogueOutcome,
+    CatalogueSnapshot, CompletionSpec, EvidenceRef, EvidenceRole, FailurePolicy, GapSeverity,
+    Population, Recommendation, RequestActor, Threshold, TriggerOperation, TriggerSpec,
+    WorkspaceResources,
 };
 use serde_json::{json, Value};
 
@@ -195,6 +196,18 @@ fn hba1c_program(actions: Vec<Action>) -> CarePathProgram {
     }
 }
 
+fn clinical_task_resolution() -> CapabilityResolutionSnapshot {
+    CapabilityResolutionSnapshot {
+        id: "00000000-0000-4000-8000-000000000001".into(),
+        recommendation_id: "NG28-1.6.1".into(),
+        capability_key: "clinical.task".into(),
+        adapter_key: "clinical-task-escalate-notify-v1".into(),
+        adapter_version: 1,
+        node_type_id: "escalate.notify".into(),
+        mapping: json!({"to":"clinician","urgency":"soon"}),
+    }
+}
+
 #[test]
 fn recurring_request_lowers_to_real_components_and_safe_branches() {
     let program = hba1c_program(vec![Action {
@@ -212,7 +225,7 @@ fn recurring_request_lowers_to_real_components_and_safe_branches() {
         )],
     }]);
 
-    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
     assert!(output.gaps.is_empty(), "unexpected gaps: {:?}", output.gaps);
     assert_eq!(output.flows.len(), 1);
     assert!(output.agents.is_empty());
@@ -264,7 +277,7 @@ fn clinician_directed_requests_do_not_become_patient_outreach() {
         )],
     }]);
 
-    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
 
     assert!(output.flows.is_empty());
     assert_eq!(output.gaps.len(), 1);
@@ -284,6 +297,91 @@ fn clinician_directed_requests_do_not_become_patient_outreach() {
             "expires_days": 7
         })
     );
+
+    let resolved = lower(
+        &program,
+        &catalogue(),
+        &WorkspaceResources::default(),
+        &[clinical_task_resolution()],
+    );
+    assert!(resolved
+        .gaps
+        .iter()
+        .all(|gap| gap.code != "unsupported_action_actor"));
+    assert_eq!(resolved.flows.len(), 1);
+    let task = resolved.flows[0]
+        .graph
+        .nodes
+        .iter()
+        .find(|node| node.id == "order-genotyping")
+        .expect("resolved clinician task");
+    assert_eq!(task.implementation, "escalate.notify");
+    assert_eq!(task.config["to"], "clinician");
+    assert_eq!(task.config["urgency"], "soon");
+    assert_eq!(task.config["note"], "Order CYP3A5 genotyping.");
+    assert!(resolved.flows[0].graph.transitions.iter().any(|edge| {
+        edge.from == "order-genotyping"
+            && edge.outcome == "failed"
+            && edge.to == "ng28-1-6-1-escalation"
+    }));
+}
+
+#[test]
+fn rejects_invalid_clinical_task_resolution_snapshots() {
+    let program = hba1c_program(vec![Action {
+        key: "review-prophylaxis".into(),
+        operation: ActionOperation::Request {
+            actor: RequestActor::CareTeam,
+            what: "medication_review".into(),
+            instructions: "Review prophylaxis with the transplant team.".into(),
+            expires_days: 3,
+        },
+        evidence: vec![evidence(
+            "chunk-monitoring",
+            "The transplant team should review prophylaxis.",
+            EvidenceRole::Requirement,
+        )],
+    }]);
+    let mut invalid = Vec::new();
+    let mut wrong_capability = clinical_task_resolution();
+    wrong_capability.capability_key = "clinical.threshold_mapping".into();
+    invalid.push(wrong_capability);
+    let mut wrong_version = clinical_task_resolution();
+    wrong_version.adapter_version = 2;
+    invalid.push(wrong_version);
+    let mut wrong_node = clinical_task_resolution();
+    wrong_node.node_type_id = "outreach.request".into();
+    invalid.push(wrong_node);
+    let mut extra_mapping = clinical_task_resolution();
+    extra_mapping.mapping = json!({"to":"clinician","urgency":"soon","extra":true});
+    invalid.push(extra_mapping);
+
+    for resolution in invalid {
+        let output = lower(
+            &program,
+            &catalogue(),
+            &WorkspaceResources::default(),
+            &[resolution],
+        );
+        assert!(output.flows.is_empty());
+        assert_eq!(output.gaps[0].code, "unsupported_action_actor");
+    }
+
+    let mut inactive_catalogue = catalogue();
+    inactive_catalogue
+        .nodes
+        .iter_mut()
+        .find(|node| node.id == "escalate.notify")
+        .unwrap()
+        .is_active = false;
+    let output = lower(
+        &program,
+        &inactive_catalogue,
+        &WorkspaceResources::default(),
+        &[clinical_task_resolution()],
+    );
+    assert!(output.flows.is_empty());
+    assert_eq!(output.gaps[0].code, "unsupported_action_actor");
 }
 
 #[test]
@@ -317,7 +415,7 @@ fn unsupported_action_becomes_a_gap_without_an_approximate_node() {
         },
     ]);
 
-    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
     assert_eq!(output.gaps.len(), 1);
     assert_eq!(output.gaps[0].code, "missing_capability");
     assert_eq!(
@@ -372,7 +470,7 @@ fn repeated_threshold_gaps_share_one_materialization_identity() {
         },
     ];
 
-    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
     let threshold_gaps = output
         .gaps
         .iter()
@@ -412,7 +510,7 @@ fn conversational_action_creates_a_linked_draft_agent() {
         serde_json::from_value(encoded).expect("deserialize source-bound program");
     assert_eq!(decoded, program);
 
-    let output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
     assert_eq!(output.agents.len(), 1);
     let agent = &output.agents[0];
     let node = output.flows[0]
@@ -445,7 +543,7 @@ fn validation_rejects_invented_uncited_and_unsafe_output() {
             EvidenceRole::Requirement,
         )],
     }]);
-    let mut output = lower(&program, &catalogue(), &WorkspaceResources::default());
+    let mut output = lower(&program, &catalogue(), &WorkspaceResources::default(), &[]);
     output.flows[0].graph.nodes[2].implementation = "laboratory.order".into();
     output.flows[0]
         .graph

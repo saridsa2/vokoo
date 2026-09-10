@@ -329,6 +329,7 @@ begin
   end if;
   select coalesce(jsonb_agg(jsonb_build_object(
     'request_id', q.id, 'gap_id', q.gap_id, 'resolution_id', r.id,
+    'recommendation_id', g.recommendation_id,
     'capability_key', r.capability_key, 'adapter_key', r.adapter_key,
     'adapter_version', r.adapter_version, 'node_type_id', r.node_type_id,
     'mapping', r.mapping
@@ -336,6 +337,7 @@ begin
   into v_resolutions
   from public.capability_requests q
   join public.compiler_capability_resolutions r on r.id = q.active_resolution_id and r.status = 'active'
+  join public.compiler_gaps g on g.id = q.gap_id and g.run_id = q.run_id and g.org_id = q.org_id
   join public.compiler_capability_adapters a on a.adapter_key = r.adapter_key
     and a.adapter_version = r.adapter_version and a.is_active
     and r.node_type_id = any(a.compatible_node_type_ids)

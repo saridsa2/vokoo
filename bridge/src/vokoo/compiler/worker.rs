@@ -273,6 +273,40 @@ where
                 .load_input(run)
                 .await
                 .map_err(worker_repository_error)?;
+            if !input.resolutions.is_empty()
+                && !steps
+                    .iter()
+                    .any(|step| step.kind == "resolve" && step.status == "completed")
+            {
+                let resolution_refs = input
+                    .resolutions
+                    .iter()
+                    .map(|resolution| {
+                        json!({
+                            "resolution_id": resolution.id,
+                            "recommendation_id": resolution.recommendation_id,
+                            "capability_key": resolution.capability_key,
+                            "adapter_key": resolution.adapter_key,
+                            "adapter_version": resolution.adapter_version,
+                            "node_type_id": resolution.node_type_id,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                self.repository
+                    .append_step(
+                        &run.id,
+                        &self.worker_id,
+                        json!({
+                            "kind": "resolve",
+                            "status": "completed",
+                            "task_key": "frozen-capability-resolutions",
+                            "input_refs": {},
+                            "result": { "resolutions": resolution_refs },
+                        }),
+                    )
+                    .await
+                    .map_err(worker_repository_error)?;
+            }
             let (output, traces) = match self.executor.compile(run, input).await {
                 Ok(result) => result,
                 Err((error, traces)) => {

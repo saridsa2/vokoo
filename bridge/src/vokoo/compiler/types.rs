@@ -225,6 +225,18 @@ pub struct WorkspaceResources {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CapabilityResolutionSnapshot {
+    #[serde(alias = "resolution_id")]
+    pub id: String,
+    pub recommendation_id: String,
+    pub capability_key: String,
+    pub adapter_key: String,
+    pub adapter_version: u32,
+    pub node_type_id: String,
+    pub mapping: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct AgentDraft {
     pub key: String,
     pub name: String,

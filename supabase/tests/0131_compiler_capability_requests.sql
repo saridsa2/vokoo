@@ -182,7 +182,8 @@ begin
   v_child := public.enqueue_compiler_recompile('90000000-0000-0000-0000-000000000131');
   if v_child->>'parent_run_id' <> '90000000-0000-0000-0000-000000000131'
      or coalesce(v_child->>'resolution_digest', '') !~ '^[0-9a-f]{64}$'
-     or jsonb_array_length(v_child#>'{input_snapshot,resolutions}') <> 1 then
+     or jsonb_array_length(v_child#>'{input_snapshot,resolutions}') <> 1
+     or v_child#>>'{input_snapshot,resolutions,0,recommendation_id}' <> 'HLT-1' then
     raise exception 'recompile did not freeze the active resolution';
   end if;
 end;

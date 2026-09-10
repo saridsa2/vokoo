@@ -7,7 +7,10 @@ use serde_json::{json, Value};
 
 use crate::vokoo::documents::{DocumentEvidence, EvidenceChunk};
 
-use super::{CatalogueSnapshot, CompilationOutput, CompilerInput, WorkspaceResources};
+use super::{
+    CapabilityResolutionSnapshot, CatalogueSnapshot, CompilationOutput, CompilerInput,
+    WorkspaceResources,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -302,6 +305,16 @@ impl CompilerRepository for PostgrestCompilerRepository {
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         )?;
+        let resolutions: Vec<CapabilityResolutionSnapshot> = serde_json::from_value(
+            run.input_snapshot
+                .get("resolutions")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .map_err(|_| CompilerRepositoryError::permanent("invalid frozen capability resolutions"))?;
+        super::lower::validate_capability_resolutions(&resolutions, &catalogue).map_err(|_| {
+            CompilerRepositoryError::permanent("invalid frozen capability resolutions")
+        })?;
         Ok(CompilerInput {
             run_id: run.id.clone(),
             version_id: run.file_version_id.clone(),
@@ -312,6 +325,7 @@ impl CompilerRepository for PostgrestCompilerRepository {
             },
             catalogue,
             resources,
+            resolutions,
         })
     }
     async fn load_steps(

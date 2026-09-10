@@ -2599,7 +2599,7 @@ async fn get_compiler_run(
     let organization=org_id(&headers)?.to_owned();
     let client=authed_client(&state,&headers).await?;
     let mut runs=client.database().from("compiler_runs")
-        .select("id,file_id,file_version_id,compiler_id,status,provider,model,compiler_version,prompt_version,attempt_count,max_attempts,summary,coverage,last_error_code,created_at,started_at,completed_at,updated_at")
+        .select("id,file_id,file_version_id,compiler_id,status,provider,model,compiler_version,prompt_version,attempt_count,max_attempts,summary,coverage,last_error_code,parent_run_id,resolution_digest,created_at,started_at,completed_at,updated_at")
         .eq("org_id",&organization).eq("id",&id).limit(1).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
     let run=runs.pop().ok_or_else(||ApiError::NotFound(format!("compiler run '{id}' was not found")))?;
     let steps=client.database().from("compiler_steps").select("id,sequence,kind,status,task_key,page_start,page_end,input_refs,result,input_tokens,output_tokens,duration_ms,retry_count,error_code,created_at")

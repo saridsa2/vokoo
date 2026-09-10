@@ -8,6 +8,7 @@ pub fn lower(
     program: &CarePathProgram,
     catalogue: &CatalogueSnapshot,
     resources: &WorkspaceResources,
+    resolutions: &[CapabilityResolutionSnapshot],
 ) -> CompilationOutput {
     let available = catalogue
         .nodes
@@ -18,7 +19,13 @@ pub fn lower(
     let mut output = CompilationOutput::default();
 
     for recommendation in &program.recommendations {
-        lower_recommendation(recommendation, &available, resources, &mut output);
+        lower_recommendation(
+            recommendation,
+            &available,
+            resources,
+            resolutions,
+            &mut output,
+        );
     }
     merge_gap_identities(&mut output.gaps);
     output
@@ -55,6 +62,7 @@ fn lower_recommendation(
     recommendation: &Recommendation,
     available: &HashMap<&str, &CatalogueNode>,
     resources: &WorkspaceResources,
+    resolutions: &[CapabilityResolutionSnapshot],
     output: &mut CompilationOutput,
 ) {
     let recommendation_key = stable_key(&recommendation.id);
@@ -84,6 +92,10 @@ fn lower_recommendation(
     let mut required = vec![trigger_component];
     let mut needs_escalation = recommendation.completion.is_some();
     let mut has_supported_action = false;
+    let clinical_task_resolution = resolutions.iter().find(|resolution| {
+        resolution.recommendation_id == recommendation.id
+            && valid_clinical_task_resolution(resolution, available)
+    });
     for action in &recommendation.actions {
         match &action.operation {
             ActionOperation::Request {
@@ -91,6 +103,19 @@ fn lower_recommendation(
                 ..
             } => {
                 required.push("outreach.request");
+                needs_escalation = true;
+                has_supported_action = true;
+            }
+            ActionOperation::Request {
+                actor: RequestActor::Clinician | RequestActor::CareTeam,
+                ..
+            } if clinical_task_resolution.is_some() => {
+                required.push(
+                    clinical_task_resolution
+                        .expect("checked above")
+                        .node_type_id
+                        .as_str(),
+                );
                 needs_escalation = true;
                 has_supported_action = true;
             }
@@ -276,6 +301,29 @@ fn lower_recommendation(
                     None,
                 )
             }
+            ActionOperation::Request {
+                actor: RequestActor::Clinician | RequestActor::CareTeam,
+                instructions,
+                ..
+            } => {
+                let resolution =
+                    clinical_task_resolution.expect("validated before graph construction");
+                let mapping = resolution
+                    .mapping
+                    .as_object()
+                    .expect("validated resolution mapping");
+                clinical_failures.push((action_id.clone(), "failed"));
+                (
+                    resolution.node_type_id.as_str(),
+                    json!({
+                        "to": mapping["to"],
+                        "urgency": mapping["urgency"],
+                        "note": instructions,
+                    }),
+                    "notified",
+                    None,
+                )
+            }
             ActionOperation::Request { .. } => continue,
             ActionOperation::Conversation(conversation) => {
                 let key = format!("{recommendation_key}-{action_id}-agent");
@@ -410,6 +458,58 @@ fn lower_recommendation(
             transitions,
         },
     });
+}
+
+pub(crate) fn validate_capability_resolutions(
+    resolutions: &[CapabilityResolutionSnapshot],
+    catalogue: &CatalogueSnapshot,
+) -> Result<(), &'static str> {
+    let available = catalogue
+        .nodes
+        .iter()
+        .filter(|node| node.is_active && node.families.iter().any(|family| family == "care_path"))
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut identities = std::collections::HashSet::new();
+    for resolution in resolutions {
+        if resolution.id.parse::<uuid::Uuid>().is_err()
+            || resolution.recommendation_id.trim().is_empty()
+            || !valid_clinical_task_resolution(resolution, &available)
+            || !identities.insert((
+                resolution.recommendation_id.as_str(),
+                resolution.capability_key.as_str(),
+            ))
+        {
+            return Err("invalid_capability_resolution");
+        }
+    }
+    Ok(())
+}
+
+fn valid_clinical_task_resolution(
+    resolution: &CapabilityResolutionSnapshot,
+    available: &HashMap<&str, &CatalogueNode>,
+) -> bool {
+    if resolution.capability_key != "clinical.task"
+        || resolution.adapter_key != "clinical-task-escalate-notify-v1"
+        || resolution.adapter_version != 1
+        || resolution.node_type_id != "escalate.notify"
+        || !available.contains_key(resolution.node_type_id.as_str())
+    {
+        return false;
+    }
+    let Some(mapping) = resolution.mapping.as_object() else {
+        return false;
+    };
+    if mapping.len() != 2 {
+        return false;
+    }
+    let recipient = mapping.get("to").and_then(Value::as_str);
+    let urgency = mapping.get("urgency").and_then(Value::as_str);
+    matches!(
+        recipient,
+        Some("primary_team" | "on_call" | "clinician" | "coordinator")
+    ) && matches!(urgency, Some("routine" | "soon" | "urgent" | "immediate"))
 }
 
 fn lower_trigger(trigger: &TriggerSpec) -> (&'static str, &'static str, String, Value) {

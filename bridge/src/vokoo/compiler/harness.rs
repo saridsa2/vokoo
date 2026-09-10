@@ -8,8 +8,9 @@ use serde_json::{json, Value};
 use crate::vokoo::documents::{DocumentEvidence, EvidenceChunk};
 
 use super::{
-    lower, validate_output, CarePathProgram, CatalogueSnapshot, CompilationOutput, CompilerError,
-    CompilerModel, ModelPhase, ModelRequest, Recommendation, TokenUsage, WorkspaceResources,
+    lower, validate_output, CapabilityResolutionSnapshot, CarePathProgram, CatalogueSnapshot,
+    CompilationOutput, CompilerError, CompilerModel, ModelPhase, ModelRequest, Recommendation,
+    TokenUsage, WorkspaceResources,
 };
 
 pub const MAX_SECTION_TASKS: usize = 4;
@@ -27,6 +28,7 @@ pub struct CompilerInput {
     pub evidence: DocumentEvidence,
     pub catalogue: CatalogueSnapshot,
     pub resources: WorkspaceResources,
+    pub resolutions: Vec<CapabilityResolutionSnapshot>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize, PartialEq, Eq)]
@@ -107,6 +109,8 @@ impl<'a> CompilerHarness<'a> {
     }
 
     pub async fn compile(&self, input: CompilerInput) -> Result<CompilationOutput, CompilerError> {
+        super::lower::validate_capability_resolutions(&input.resolutions, &input.catalogue)
+            .map_err(CompilerError::model)?;
         if !input
             .evidence
             .compiler_matches
@@ -239,7 +243,12 @@ impl<'a> CompilerHarness<'a> {
             title: reconciliation.title,
             recommendations,
         };
-        let output = lower(&program, &input.catalogue, &input.resources);
+        let output = lower(
+            &program,
+            &input.catalogue,
+            &input.resources,
+            &input.resolutions,
+        );
         let validation = validate_output(&output, &input.catalogue, &program);
         if let Err(errors) = validation {
             let code = errors

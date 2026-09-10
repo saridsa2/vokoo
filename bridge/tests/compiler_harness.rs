@@ -4,11 +4,11 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use rustvani::vokoo::compiler::{
-    Action, ActionOperation, AisdkCompilerModel, CatalogueField, CatalogueNode, CatalogueOutcome,
-    CatalogueSnapshot, CompilerError, CompilerHarness, CompilerInput, CompilerModel, EvidenceRef,
-    EvidenceRole, FailurePolicy, ModelRequest, ModelResponse, Population, Recommendation,
-    RequestActor, TokenUsage, TraceEvent, TraceSink, TriggerOperation, TriggerSpec,
-    WorkspaceResources,
+    Action, ActionOperation, AisdkCompilerModel, CapabilityResolutionSnapshot, CatalogueField,
+    CatalogueNode, CatalogueOutcome, CatalogueSnapshot, CompilerError, CompilerHarness,
+    CompilerInput, CompilerModel, EvidenceRef, EvidenceRole, FailurePolicy, ModelRequest,
+    ModelResponse, Population, Recommendation, RequestActor, TokenUsage, TraceEvent, TraceSink,
+    TriggerOperation, TriggerSpec, WorkspaceResources,
 };
 use rustvani::vokoo::documents::{DocumentEvidence, EvidenceChunk};
 use serde_json::{json, Value};
@@ -465,6 +465,30 @@ fn constructs_only_supported_operator_resolved_providers() {
     assert!(AisdkCompilerModel::new("minimax", "model", "").is_err());
 }
 
+#[tokio::test]
+async fn rejects_an_invalid_frozen_resolution_before_model_work() {
+    let model = ScriptedModel::new(vec![]);
+    let trace = RecordingTrace::default();
+    let mut compiler_input = input();
+    compiler_input.resolutions = vec![CapabilityResolutionSnapshot {
+        id: "00000000-0000-4000-8000-000000000001".into(),
+        recommendation_id: "hba1c-monitoring".into(),
+        capability_key: "clinical.task".into(),
+        adapter_key: "clinical-task-escalate-notify-v1".into(),
+        adapter_version: 99,
+        node_type_id: "escalate.notify".into(),
+        mapping: json!({"to":"clinician","urgency":"soon"}),
+    }];
+
+    let error = CompilerHarness::new(&model, &trace)
+        .compile(compiler_input)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "invalid_capability_resolution");
+    assert!(model.requests.lock().unwrap().is_empty());
+}
+
 fn input() -> CompilerInput {
     CompilerInput {
         run_id: "run-1".into(),
@@ -493,6 +517,7 @@ fn input() -> CompilerInput {
         },
         catalogue: catalogue(),
         resources: WorkspaceResources::default(),
+        resolutions: vec![],
     }
 }
 
@@ -624,7 +649,7 @@ fn catalogue() -> CatalogueSnapshot {
             ),
             node(
                 "escalate.notify",
-                &["created", "failed"],
+                &["notified", "failed"],
                 vec![
                     field(
                         "to",
