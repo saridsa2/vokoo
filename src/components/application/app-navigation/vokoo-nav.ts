@@ -1,5 +1,6 @@
 import {
     IconAgents,
+    IconCarePaths,
     IconCohorts,
     IconDashboard,
     IconCallFlows,
@@ -61,7 +62,7 @@ export const NAV_SECTIONS: Array<{ label: string; items: NavItemType[] }> = [
         label: "Care",
         items: [
             { label: "Patients", href: "/patients", icon: IconPatients },
-            { label: "Care Paths", href: "/care-paths", icon: IconCohorts, badge: "Alpha" },
+            { label: "Care Paths", href: "/care-paths", icon: IconCarePaths, badge: "Alpha" },
             { label: "Cohorts", href: "/cohorts", icon: IconCohorts },
             // Its own entry rather than a tab inside a cohort: an enrolment is
             // read from both ends — everyone on this path, and every path this

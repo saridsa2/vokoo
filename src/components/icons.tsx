@@ -86,6 +86,7 @@ import {
     faRadar,
     faRectangleList,
     faRightFromBracket,
+    faRoute,
     faScissors,
     faShieldCheck,
     faShieldHalved,
@@ -290,11 +291,12 @@ export const IconCallLogs = icon(faRectangleList);
 // was still wearing the magic wand from when the section was called VoKoo Labs.
 export const IconCallFlows = icon(faPhoneVolume);
 
-/* The care population. A pulse for the person, a group-with-a-cross for the
-   cohort, and a checked list for enrolment — three distinct silhouettes at
-   20px, which is what the rail actually renders. `IconAgents` already wears
-   plain `faUsers`, so a cohort cannot have it. */
+/* The care population. A pulse for the person, a route for the longitudinal
+   path, a group-with-a-cross for the cohort, and a checked list for enrolment —
+   distinct silhouettes at 20px, which is what the rail actually renders.
+   `IconAgents` already wears plain `faUsers`, so a cohort cannot have it. */
 export const IconPatients = icon(faHeartPulse);
+export const IconCarePaths = icon(faRoute);
 export const IconCohorts = icon(faUsersMedical);
 export const IconEnrolments = icon(faListCheck);
 export const IconIntegrations = icon(faPlug);
