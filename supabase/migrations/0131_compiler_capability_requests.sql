@@ -247,12 +247,15 @@ begin
     raise exception 'operator access required' using errcode = '42501';
   end if;
   if p_status not in ('under_review','needs_information','delivering','declined','cancelled')
-     or (p_status in ('needs_information','declined') and btrim(coalesce(p_response,'')) = '')
+     or (p_status in ('needs_information','delivering','declined') and btrim(coalesce(p_response,'')) = '')
      or char_length(coalesce(p_response,'')) > 2000 then
     raise exception 'invalid capability request transition' using errcode = 'P0004';
   end if;
   update public.capability_requests set
-    status = p_status, operator_response = nullif(btrim(p_response), ''), updated_at = now()
+    status = p_status,
+    operator_response = case when p_status = 'delivering' then operator_response else nullif(btrim(p_response), '') end,
+    delivery_reference = case when p_status = 'delivering' then nullif(btrim(p_response), '') else delivery_reference end,
+    updated_at = now()
   where id = p_request_id and status <> 'resolved' returning * into v_request;
   if v_request.id is null then raise exception 'capability request not found or terminal' using errcode = 'P0004'; end if;
   return to_jsonb(v_request);
@@ -379,6 +382,60 @@ end;
 $$;
 revoke all on function public.enqueue_compiler_recompile(uuid) from public, anon;
 grant execute on function public.enqueue_compiler_recompile(uuid) to authenticated;
+
+create or replace function public.operator_compiler_capability_requests()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'operator access required' using errcode = '42501';
+  end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', q.id, 'org_id', q.org_id, 'organization_name', o.name,
+      'run_id', q.run_id, 'gap_id', q.gap_id,
+      'capability_key', q.capability_key, 'requested_contract', q.requested_contract,
+      'contract_digest', q.contract_digest, 'status', q.status,
+      'workspace_note', q.workspace_note, 'operator_response', q.operator_response,
+      'delivery_reference', q.delivery_reference,
+      'active_resolution_id', q.active_resolution_id,
+      'created_at', q.created_at, 'updated_at', q.updated_at,
+      'demand_count', (
+        select count(*) from public.capability_requests demand
+        where demand.capability_key = q.capability_key
+          and demand.contract_digest = q.contract_digest
+      )
+    ) order by q.created_at desc)
+    from public.capability_requests q
+    join public.organizations o on o.id = q.org_id
+  ), '[]'::jsonb);
+end;
+$$;
+revoke all on function public.operator_compiler_capability_requests() from public, anon;
+grant execute on function public.operator_compiler_capability_requests() to authenticated;
+
+create or replace function public.operator_compiler_capability_adapters()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'operator access required' using errcode = '42501';
+  end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'adapter_key', a.adapter_key, 'adapter_version', a.adapter_version,
+      'capability_key', a.capability_key, 'label', a.label,
+      'mapping_schema', a.mapping_schema,
+      'compatible_nodes', coalesce((
+        select jsonb_agg(jsonb_build_object('id', n.id, 'label', n.label) order by n.sort_order)
+        from public.catalogue_node_types n
+        where n.is_active and n.id = any(a.compatible_node_type_ids)
+      ), '[]'::jsonb)
+    ) order by a.capability_key, a.adapter_key, a.adapter_version)
+    from public.compiler_capability_adapters a where a.is_active
+  ), '[]'::jsonb);
+end;
+$$;
+revoke all on function public.operator_compiler_capability_adapters() from public, anon;
+grant execute on function public.operator_compiler_capability_adapters() to authenticated;
 
 notify pgrst, 'reload schema';
 

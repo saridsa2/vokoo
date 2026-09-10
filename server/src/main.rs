@@ -249,6 +249,29 @@ struct StartCompilationRequest {
     compiler_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequestCompilerCapabilityBody {
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolveCompilerCapabilityBody {
+    adapter_key: String,
+    node_type_id: String,
+    mapping: Value,
+    operator_response: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TransitionCompilerCapabilityBody {
+    #[serde(default)]
+    response: String,
+}
+
 const CARE_PATH_COMPILER_VERSION: &str = "care-path-v1";
 const CARE_PATH_PROMPT_VERSION: &str = "care-path-prompt-v1";
 
@@ -267,6 +290,82 @@ fn version_supports_compilation(version: &Value) -> Result<(), ApiError> {
         .and_then(Value::as_array).is_some_and(|items| items.iter().any(|item| item.get("compiler_id").and_then(Value::as_str)==Some("care_path")));
     if !recommended { return Err(ApiError::Conflict("Workspace Intelligence did not recommend the care_path compiler".into())); }
     Ok(())
+}
+
+fn compiler_gap_presentation(code: &str, missing_capability: Option<&str>) -> Value {
+    match (code, missing_capability) {
+        ("threshold_requires_mapping", Some("clinical.threshold_mapping")) => json!({
+            "title": "Clinical threshold cannot be evaluated",
+            "capability_label": "Evaluate a clinical observation threshold",
+            "class": "missing_mapping",
+            "requestable": true,
+        }),
+        ("unsupported_action_actor", Some("clinical.task")) => json!({
+            "title": "Care-team work cannot be created",
+            "capability_label": "Create work for a clinician",
+            "class": "missing_capability",
+            "requestable": true,
+        }),
+        _ => json!({
+            "title": "Compiler gap",
+            "capability_label": null,
+            "class": "unknown",
+            "requestable": false,
+        }),
+    }
+}
+
+fn decorate_compiler_gaps(mut gaps: Vec<Value>, requests: Vec<Value>) -> Vec<Value> {
+    let by_gap = requests.into_iter().filter_map(|request| {
+        let id = request.get("gap_id").and_then(Value::as_str)?.to_owned();
+        Some((id, request))
+    }).collect::<std::collections::HashMap<_, _>>();
+    for gap in &mut gaps {
+        let Some(object) = gap.as_object_mut() else { continue };
+        let code = object.get("code").and_then(Value::as_str).unwrap_or_default().to_owned();
+        let capability = object.get("missing_capability").and_then(Value::as_str).map(str::to_owned);
+        object.insert("presentation".into(), compiler_gap_presentation(&code, capability.as_deref()));
+        let request = object.get("id").and_then(Value::as_str)
+            .and_then(|id| by_gap.get(id)).cloned().unwrap_or(Value::Null);
+        object.insert("capability_request".into(), request);
+    }
+    gaps
+}
+
+fn validate_resolve_capability_body(body: &ResolveCompilerCapabilityBody) -> Result<(), ApiError> {
+    if body.adapter_key != "clinical-task-escalate-notify-v1"
+        || body.node_type_id != "escalate.notify"
+        || body.operator_response.trim().is_empty()
+        || body.operator_response.len() > 2_000
+    {
+        return Err(ApiError::BadRequest("unsupported compiler capability resolution".into()));
+    }
+    let mapping = body.mapping.as_object().ok_or_else(|| ApiError::BadRequest("mapping must be an object".into()))?;
+    if mapping.len() != 2 || !mapping.contains_key("to") || !mapping.contains_key("urgency") {
+        return Err(ApiError::BadRequest("mapping contains unsupported fields".into()));
+    }
+    let recipient = mapping.get("to").and_then(Value::as_str).unwrap_or_default();
+    let urgency = mapping.get("urgency").and_then(Value::as_str).unwrap_or_default();
+    if !["primary_team", "on_call", "clinician", "coordinator"].contains(&recipient)
+        || !["routine", "soon", "urgent", "immediate"].contains(&urgency)
+    {
+        return Err(ApiError::BadRequest("mapping contains unsupported values".into()));
+    }
+    Ok(())
+}
+
+fn validate_capability_transition(action: &str, response: &str) -> Result<&'static str, ApiError> {
+    let status = match action {
+        "review" => "under_review",
+        "request-information" => "needs_information",
+        "deliver" => "delivering",
+        "decline" => "declined",
+        _ => return Err(ApiError::BadRequest("unsupported capability request action".into())),
+    };
+    if response.len() > 2_000 || (["request-information", "deliver", "decline"].contains(&action) && response.trim().is_empty()) {
+        return Err(ApiError::BadRequest("this action requires a concise operator response".into()));
+    }
+    Ok(status)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2485,7 +2584,8 @@ fn public_compiler_run(run: Value) -> Option<Value> {
     const FIELDS: &[&str] = &[
         "id", "file_id", "file_version_id", "compiler_id", "status", "provider", "model",
         "compiler_version", "prompt_version", "attempt_count", "max_attempts", "summary",
-        "coverage", "last_error_code", "created_at", "started_at", "completed_at", "updated_at",
+        "coverage", "last_error_code", "parent_run_id", "resolution_digest",
+        "created_at", "started_at", "completed_at", "updated_at",
     ];
     Some(Value::Object(FIELDS.iter().filter_map(|key| {
         object.get(*key).cloned().map(|value| ((*key).to_string(), value))
@@ -2504,13 +2604,15 @@ async fn get_compiler_run(
     let run=runs.pop().ok_or_else(||ApiError::NotFound(format!("compiler run '{id}' was not found")))?;
     let steps=client.database().from("compiler_steps").select("id,sequence,kind,status,task_key,page_start,page_end,input_refs,result,input_tokens,output_tokens,duration_ms,retry_count,error_code,created_at")
         .eq("org_id",&organization).eq("run_id",&id).order("sequence",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
-    let gaps=client.database().from("compiler_gaps").select("id,step_id,code,severity,recommendation_id,explanation,missing_capability,evidence,review_status,resolution_note,created_at,updated_at")
+    let gaps=client.database().from("compiler_gaps").select("id,step_id,code,severity,recommendation_id,explanation,missing_capability,details,evidence,review_status,resolution_note,created_at,updated_at")
         .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
+    let requests=client.database().from("capability_requests").select("id,gap_id,capability_key,requested_contract,status,workspace_note,operator_response,delivery_reference,active_resolution_id,created_at,updated_at")
+        .eq("org_id",&organization).eq("run_id",&id).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
     let artifacts=client.database().from("compiler_artifacts").select("id,artifact_type,stable_key,role,agent_id,flow_id,created_at")
         .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
     let evidence=client.database().from("compiler_evidence_links").select("id,artifact_id,target_path,chunk_id,excerpt,recommendation_id,evidence_role,created_at")
         .eq("org_id",&organization).eq("run_id",&id).order("created_at",supabase::types::OrderDirection::Ascending).execute::<Value>().await.map_err(|error|publish_error(error.to_string()))?;
-    Ok(Json(ApiResponse{data:json!({"run":run,"steps":sanitize_compiler_steps(steps),"gaps":gaps,"artifacts":artifacts,"evidence":evidence}),meta:json!({"resource":"compiler-runs"})}))
+    Ok(Json(ApiResponse{data:json!({"run":run,"steps":sanitize_compiler_steps(steps),"gaps":decorate_compiler_gaps(gaps,requests),"artifacts":artifacts,"evidence":evidence}),meta:json!({"resource":"compiler-runs"})}))
 }
 
 async fn cancel_compiler_run(
@@ -2529,6 +2631,98 @@ async fn cancel_compiler_run(
     let data=public_compiler_run(raw).ok_or_else(||ApiError::upstream("compiler run response was invalid"))?;
     Ok(Json(ApiResponse{data,meta:json!({"resource":"compiler-runs"})}))
 }
+
+async fn request_compiler_capability(
+    State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+    Json(body): Json<RequestCompilerCapabilityBody>,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    validated_uuid(&id, "compiler gap id")?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    assert_org_membership(&client, &organization).await?;
+    if body.note.as_deref().is_some_and(|note| note.len() > 1_000) {
+        return Err(ApiError::BadRequest("workspace note is too long".into()));
+    }
+    let data = client.database().rpc("request_compiler_capability", Some(json!({
+        "p_gap_id": id, "p_note": body.note,
+    }))).await.map_err(|error| publish_error(error.to_string()))?;
+    Ok((StatusCode::CREATED, Json(ApiResponse { data, meta: json!({"resource":"capability-requests"}) })))
+}
+
+async fn recompile_with_capabilities(
+    State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+) -> Result<(StatusCode, Json<ApiResponse<Value>>), ApiError> {
+    validated_uuid(&id, "compiler run id")?;
+    let organization = org_id(&headers)?.to_owned();
+    let client = authed_client(&state, &headers).await?;
+    assert_org_membership(&client, &organization).await?;
+    let raw = client.database().rpc("enqueue_compiler_recompile", Some(json!({"p_parent_run_id":id})))
+        .await.map_err(|error| publish_error(error.to_string()))?;
+    let data = public_compiler_run(raw).ok_or_else(|| ApiError::upstream("compiler recompile response was invalid"))?;
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse { data, meta: json!({"resource":"compiler-runs"}) })))
+}
+
+async fn operator_capability_requests(
+    State(state): State<AppState>, headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client.database().rpc("operator_compiler_capability_requests", None)
+        .await.map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({"resource":"operator-capability-requests"}) }))
+}
+
+async fn operator_compiler_capability_adapters(
+    State(state): State<AppState>, headers: HeaderMap,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    let client = authed_client(&state, &headers).await?;
+    let data = client.database().rpc("operator_compiler_capability_adapters", None)
+        .await.map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({"resource":"compiler-capability-adapters"}) }))
+}
+
+async fn operator_resolve_existing_capability(
+    State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+    Json(body): Json<ResolveCompilerCapabilityBody>,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    validated_uuid(&id, "capability request id")?;
+    validate_resolve_capability_body(&body)?;
+    let client = authed_client(&state, &headers).await?;
+    let data = client.database().rpc("resolve_compiler_capability_request", Some(json!({
+        "p_request_id":id, "p_resolution_type":"existing_component",
+        "p_adapter_key":body.adapter_key, "p_node_type_id":body.node_type_id,
+        "p_mapping":body.mapping, "p_response":body.operator_response,
+    }))).await.map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({"resource":"compiler-capability-resolutions"}) }))
+}
+
+async fn operator_transition_capability(
+    state: AppState, id: String, headers: HeaderMap,
+    action: &'static str, body: TransitionCompilerCapabilityBody,
+) -> Result<Json<ApiResponse<Value>>, ApiError> {
+    validated_uuid(&id, "capability request id")?;
+    let status = validate_capability_transition(action, &body.response)?;
+    let client = authed_client(&state, &headers).await?;
+    let data = client.database().rpc("transition_compiler_capability_request", Some(json!({
+        "p_request_id":id, "p_status":status, "p_response":body.response,
+    }))).await.map_err(|error| publish_error(error.to_string()))?;
+    Ok(Json(ApiResponse { data, meta: json!({"resource":"capability-requests"}) }))
+}
+
+macro_rules! capability_transition_handler {
+    ($name:ident, $action:literal) => {
+        async fn $name(
+            State(state): State<AppState>, Path(id): Path<String>, headers: HeaderMap,
+            Json(body): Json<TransitionCompilerCapabilityBody>,
+        ) -> Result<Json<ApiResponse<Value>>, ApiError> {
+            operator_transition_capability(state, id, headers, $action, body).await
+        }
+    };
+}
+
+capability_transition_handler!(operator_review_capability_request, "review");
+capability_transition_handler!(operator_request_capability_information, "request-information");
+capability_transition_handler!(operator_deliver_capability, "deliver");
+capability_transition_handler!(operator_decline_capability_request, "decline");
 
 async fn operator_embedding_profiles(
     State(state): State<AppState>,
@@ -4696,6 +4890,13 @@ fn app(state: AppState) -> Router {
         .route("/api/v1/me/organizations", get(list_my_organizations))
         .route("/api/v1/me/profile", post(set_my_name))
         .route("/api/v1/operator/me", get(operator_me))
+        .route("/api/v1/operator/capability-requests", get(operator_capability_requests))
+        .route("/api/v1/operator/compiler-capability-adapters", get(operator_compiler_capability_adapters))
+        .route("/api/v1/operator/capability-requests/{id}/review", post(operator_review_capability_request))
+        .route("/api/v1/operator/capability-requests/{id}/request-information", post(operator_request_capability_information))
+        .route("/api/v1/operator/capability-requests/{id}/resolve-existing", post(operator_resolve_existing_capability))
+        .route("/api/v1/operator/capability-requests/{id}/deliver", post(operator_deliver_capability))
+        .route("/api/v1/operator/capability-requests/{id}/decline", post(operator_decline_capability_request))
         .route(
             "/api/v1/operator/embedding-profiles",
             get(operator_embedding_profiles),
@@ -4820,6 +5021,8 @@ fn app(state: AppState) -> Router {
         )
         .route("/api/v1/compiler-runs/{id}", get(get_compiler_run))
         .route("/api/v1/compiler-runs/{id}/cancel", post(cancel_compiler_run))
+        .route("/api/v1/compiler-runs/{id}/recompile", post(recompile_with_capabilities))
+        .route("/api/v1/compiler-gaps/{id}/capability-request", post(request_compiler_capability))
         .route("/api/v1/document-jobs/{id}", get(get_document_job))
         .route("/api/v1/documents/search", post(search_documents))
         .route("/api/v1/documents/{id}/analyze", post(analyze_document))
@@ -5078,6 +5281,52 @@ mod tests {
         assert!(!encoded.contains("last_error_detail"));
         assert!(!encoded.contains("catalogue_digest"));
         assert_eq!(response["status"],"queued");
+    }
+
+    #[test]
+    fn known_gap_codes_get_labels_without_exposing_codes_as_titles() {
+        let presentation = compiler_gap_presentation("unsupported_action_actor", Some("clinical.task"));
+        assert_eq!(presentation["title"], "Care-team work cannot be created");
+        assert_eq!(presentation["capability_label"], "Create work for a clinician");
+        assert_eq!(presentation["requestable"], true);
+        assert_ne!(presentation["title"], "unsupported_action_actor");
+    }
+
+    #[test]
+    fn unknown_gap_codes_are_not_requestable() {
+        let presentation = compiler_gap_presentation("invented", Some("invented"));
+        assert_eq!(presentation["title"], "Compiler gap");
+        assert_eq!(presentation["requestable"], false);
+    }
+
+    #[test]
+    fn capability_resolution_accepts_only_the_registered_adapter_contract() {
+        let valid = ResolveCompilerCapabilityBody {
+            adapter_key: "clinical-task-escalate-notify-v1".into(),
+            node_type_id: "escalate.notify".into(),
+            mapping: json!({"to":"clinician","urgency":"routine"}),
+            operator_response: "Use Notify care team for clinician work.".into(),
+        };
+        validate_resolve_capability_body(&valid).unwrap();
+
+        let mut invalid = valid.clone();
+        invalid.adapter_key = "invented-adapter".into();
+        assert!(validate_resolve_capability_body(&invalid).is_err());
+        invalid = valid.clone();
+        invalid.mapping = json!({"to":"clinician","urgency":"routine","graph":{}});
+        assert!(validate_resolve_capability_body(&invalid).is_err());
+        invalid = valid;
+        invalid.node_type_id = "outreach.request".into();
+        assert!(validate_resolve_capability_body(&invalid).is_err());
+    }
+
+    #[test]
+    fn capability_transitions_require_operator_explanations() {
+        assert_eq!(validate_capability_transition("review", "").unwrap(), "under_review");
+        assert!(validate_capability_transition("decline", "").is_err());
+        assert!(validate_capability_transition("request-information", "").is_err());
+        assert!(validate_capability_transition("deliver", "").is_err());
+        assert!(validate_capability_transition("invented", "reason").is_err());
     }
 
     #[test]

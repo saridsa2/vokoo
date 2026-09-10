@@ -63,6 +63,15 @@ export type DocumentSearchResponse = {
     embedding_profile_id: string;
 };
 
+export type ResolveCapabilityBody = {
+    adapter_key: string;
+    node_type_id: string;
+    mapping: { to: "primary_team" | "on_call" | "clinician" | "coordinator"; urgency: "routine" | "soon" | "urgent" | "immediate" };
+    operator_response: string;
+};
+
+export type OperatorCapabilityAction = "review" | "request-information" | "deliver" | "decline";
+
 export type DocumentJob = {
     id: string;
     file_id: string;
@@ -366,6 +375,45 @@ export const api = {
             `/api/v1/compiler-runs/${encodeURIComponent(id)}/cancel`,
             { method: "POST" },
             context,
+        ),
+
+    requestCompilerCapability: (gapId: string, note: string, context: AccessContext) =>
+        request<{ id: string; status: string }>(
+            `/api/v1/compiler-gaps/${encodeURIComponent(gapId)}/capability-request`,
+            { method: "POST", body: JSON.stringify({ note }) },
+            context,
+        ),
+
+    recompileWithCapabilities: (runId: string, context: AccessContext) =>
+        request<{ id: string; status: string; parent_run_id: string; resolution_digest: string }>(
+            `/api/v1/compiler-runs/${encodeURIComponent(runId)}/recompile`,
+            { method: "POST" },
+            context,
+        ),
+
+    operatorCapabilityRequests: <T>(context: AccessContext) =>
+        request<T>("/api/v1/operator/capability-requests", {}, asOperator(context)),
+
+    operatorCompilerCapabilityAdapters: <T>(context: AccessContext) =>
+        request<T>("/api/v1/operator/compiler-capability-adapters", {}, asOperator(context)),
+
+    operatorResolveCapability: <T>(requestId: string, body: ResolveCapabilityBody, context: AccessContext) =>
+        request<T>(
+            `/api/v1/operator/capability-requests/${encodeURIComponent(requestId)}/resolve-existing`,
+            { method: "POST", body: JSON.stringify(body) },
+            asOperator(context),
+        ),
+
+    operatorTransitionCapabilityRequest: <T>(
+        requestId: string,
+        action: OperatorCapabilityAction,
+        body: { response?: string },
+        context: AccessContext,
+    ) =>
+        request<T>(
+            `/api/v1/operator/capability-requests/${encodeURIComponent(requestId)}/${action}`,
+            { method: "POST", body: JSON.stringify(body) },
+            asOperator(context),
         ),
 
     searchDocuments: (body: DocumentSearchRequest, context: AccessContext) =>
