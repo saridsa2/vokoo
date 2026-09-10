@@ -140,6 +140,11 @@ The requested contract contains only the typed compiler need. For a threshold
 this includes observation, operator, value, and unit. It does not duplicate a
 full evidence excerpt or document page.
 
+`compiler_gaps` gains a `details` JSON object populated by deterministic
+lowering so this contract is never reconstructed by parsing human-readable
+explanations. Known gap definitions validate the object before a request can be
+created; legacy gaps with empty details remain readable but cannot be requested.
+
 ### `compiler_capability_resolutions`
 
 A resolution is reusable and operator-controlled:
