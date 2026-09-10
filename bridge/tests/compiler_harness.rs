@@ -108,6 +108,16 @@ async fn runs_bounded_non_overlapping_workers_and_emits_source_safe_trace() {
     assert!(requests[0]
         .tool_description
         .contains("maximize longitudinal care-path coverage"));
+    assert_eq!(requests[0].schema["properties"]["tasks"]["minItems"], 1);
+    assert_eq!(requests[0].schema["properties"]["tasks"]["maxItems"], 4);
+    assert_eq!(
+        requests[0].schema["$defs"]["SectionTask"]["properties"]["chunk_ids"]["minItems"],
+        1
+    );
+    assert_eq!(
+        requests[0].schema["$defs"]["SectionTask"]["properties"]["chunk_ids"]["maxItems"],
+        20
+    );
     assert_eq!(
         requests[0].payload["page_map"][0]["preview"],
         "Review HbA1c every 90 days"
@@ -475,7 +485,7 @@ async fn rejects_an_invalid_frozen_resolution_before_model_work() {
         recommendation_id: "hba1c-monitoring".into(),
         capability_key: "clinical.task".into(),
         adapter_key: "clinical-task-escalate-notify-v1".into(),
-        adapter_version: 99,
+        adapter_version: "99".into(),
         node_type_id: "escalate.notify".into(),
         mapping: json!({"to":"clinician","urgency":"soon"}),
     }];

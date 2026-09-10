@@ -231,6 +231,10 @@ impl CompilerModel for AisdkCompilerModel {
 fn correction_instruction(code: &str) -> &'static str {
     match code {
         "required_tool_not_called" => "You must call the named tool exactly once.",
+        "task_limit" => "Return between one and four tasks, inclusive; combine related source sections rather than returning a fifth task.",
+        "chunk_outside_task_pages" => {
+            "Every chunk_id must refer to a chunk whose page_start and page_end are inside that task's page range."
+        }
         "invalid_tool_output_recommendations" => {
             "recommendations must be an array of objects matching the tool schema."
         }

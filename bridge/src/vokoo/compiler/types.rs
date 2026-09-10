@@ -231,7 +231,7 @@ pub struct CapabilityResolutionSnapshot {
     pub recommendation_id: String,
     pub capability_key: String,
     pub adapter_key: String,
-    pub adapter_version: u32,
+    pub adapter_version: String,
     pub node_type_id: String,
     pub mapping: Value,
 }

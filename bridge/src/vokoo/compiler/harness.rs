@@ -37,11 +37,13 @@ pub struct SectionTask {
     pub heading: String,
     pub page_start: usize,
     pub page_end: usize,
+    #[schemars(length(min = 1, max = 20))]
     pub chunk_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 struct DelegationPlan {
+    #[schemars(length(min = 1, max = 4))]
     tasks: Vec<SectionTask>,
     #[serde(default)]
     excluded_sections: Vec<String>,

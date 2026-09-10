@@ -202,10 +202,26 @@ fn clinical_task_resolution() -> CapabilityResolutionSnapshot {
         recommendation_id: "NG28-1.6.1".into(),
         capability_key: "clinical.task".into(),
         adapter_key: "clinical-task-escalate-notify-v1".into(),
-        adapter_version: 1,
+        adapter_version: "1".into(),
         node_type_id: "escalate.notify".into(),
         mapping: json!({"to":"clinician","urgency":"soon"}),
     }
+}
+
+#[test]
+fn capability_resolution_accepts_the_text_version_stored_by_postgres() {
+    let resolution: CapabilityResolutionSnapshot = serde_json::from_value(json!({
+        "resolution_id": "00000000-0000-4000-8000-000000000001",
+        "recommendation_id": "NG28-1.6.1",
+        "capability_key": "clinical.task",
+        "adapter_key": "clinical-task-escalate-notify-v1",
+        "adapter_version": "1",
+        "node_type_id": "escalate.notify",
+        "mapping": {"to": "clinician", "urgency": "routine"}
+    }))
+    .expect("database resolution snapshot should deserialize");
+
+    assert_eq!(resolution.adapter_version, "1");
 }
 
 #[test]
@@ -327,6 +343,39 @@ fn clinician_directed_requests_do_not_become_patient_outreach() {
 }
 
 #[test]
+fn platform_clinical_task_resolution_applies_to_new_recommendation_ids() {
+    let program = hba1c_program(vec![Action {
+        key: "order-genotyping".into(),
+        operation: ActionOperation::Request {
+            actor: RequestActor::Clinician,
+            what: "test".into(),
+            instructions: "Order CYP3A5 genotyping.".into(),
+            expires_days: 7,
+        },
+        evidence: vec![evidence(
+            "chunk-monitoring",
+            "Clinicians should order CYP3A5 genotyping.",
+            EvidenceRole::Requirement,
+        )],
+    }]);
+    let mut platform_resolution = clinical_task_resolution();
+    platform_resolution.recommendation_id = "recommendation-from-an-earlier-run".into();
+
+    let output = lower(
+        &program,
+        &catalogue(),
+        &WorkspaceResources::default(),
+        &[platform_resolution],
+    );
+
+    assert_eq!(output.flows.len(), 1);
+    assert!(output
+        .gaps
+        .iter()
+        .all(|gap| gap.code != "unsupported_action_actor"));
+}
+
+#[test]
 fn rejects_invalid_clinical_task_resolution_snapshots() {
     let program = hba1c_program(vec![Action {
         key: "review-prophylaxis".into(),
@@ -347,7 +396,7 @@ fn rejects_invalid_clinical_task_resolution_snapshots() {
     wrong_capability.capability_key = "clinical.threshold_mapping".into();
     invalid.push(wrong_capability);
     let mut wrong_version = clinical_task_resolution();
-    wrong_version.adapter_version = 2;
+    wrong_version.adapter_version = "2".into();
     invalid.push(wrong_version);
     let mut wrong_node = clinical_task_resolution();
     wrong_node.node_type_id = "outreach.request".into();

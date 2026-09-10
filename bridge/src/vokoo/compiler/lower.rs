@@ -92,10 +92,9 @@ fn lower_recommendation(
     let mut required = vec![trigger_component];
     let mut needs_escalation = recommendation.completion.is_some();
     let mut has_supported_action = false;
-    let clinical_task_resolution = resolutions.iter().find(|resolution| {
-        resolution.recommendation_id == recommendation.id
-            && valid_clinical_task_resolution(resolution, available)
-    });
+    let clinical_task_resolution = resolutions
+        .iter()
+        .find(|resolution| valid_clinical_task_resolution(resolution, available));
     for action in &recommendation.actions {
         match &action.operation {
             ActionOperation::Request {
@@ -492,7 +491,7 @@ fn valid_clinical_task_resolution(
 ) -> bool {
     if resolution.capability_key != "clinical.task"
         || resolution.adapter_key != "clinical-task-escalate-notify-v1"
-        || resolution.adapter_version != 1
+        || resolution.adapter_version != "1"
         || resolution.node_type_id != "escalate.notify"
         || !available.contains_key(resolution.node_type_id.as_str())
     {
