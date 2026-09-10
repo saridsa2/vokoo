@@ -5,6 +5,7 @@ import {
     IconPhoneNumbers,
     IconLock,
     IconShapes,
+    IconIssues,
 } from "@/components/icons";
 import type { NavItemType } from "./config";
 
@@ -41,6 +42,7 @@ export const PLATFORM_SECTIONS: Array<{ label: string; items: NavItemType[] }> =
         // them belong to a tenant, which is why none appear in the console.
         label: "Supply",
         items: [
+            { label: "Capability requests", href: "/platform/capability-requests", icon: IconIssues },
             { label: "Numbers", href: "/platform/numbers", icon: IconPhoneNumbers },
             // The product itself: which model hears, thinks and speaks, and
             // what a minute on that chain is sold for. It sits under Supply
