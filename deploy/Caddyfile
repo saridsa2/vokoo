@@ -50,7 +50,13 @@ sip.sarvathra.ai {
 # ranking, and a `permanent` redirect is what tells a crawler which one counts.
 sarvathra.ai {
 	encode gzip
-	reverse_proxy 127.0.0.1:3000
+	reverse_proxy 127.0.0.1:13000 127.0.0.1:3000 {
+		lb_policy first
+		fail_duration 10s
+		max_fails 1
+		lb_try_duration 3s
+		lb_try_interval 250ms
+	}
 }
 
 www.sarvathra.ai {
@@ -59,12 +65,24 @@ www.sarvathra.ai {
 
 console.sarvathra.ai {
 	encode gzip
-	reverse_proxy 127.0.0.1:3000
+	reverse_proxy 127.0.0.1:13000 127.0.0.1:3000 {
+		lb_policy first
+		fail_duration 10s
+		max_fails 1
+		lb_try_duration 3s
+		lb_try_interval 250ms
+	}
 }
 
 platform.sarvathra.ai {
 	encode gzip
-	reverse_proxy 127.0.0.1:3000
+	reverse_proxy 127.0.0.1:13000 127.0.0.1:3000 {
+		lb_policy first
+		fail_duration 10s
+		max_fails 1
+		lb_try_duration 3s
+		lb_try_interval 250ms
+	}
 }
 
 # The control plane, over TLS.
@@ -97,6 +115,12 @@ api.sarvathra.ai {
 	}
 
 	handle {
-		reverse_proxy 127.0.0.1:8081
+		reverse_proxy 127.0.0.1:18081 127.0.0.1:8081 {
+			lb_policy first
+			fail_duration 10s
+			max_fails 1
+			lb_try_duration 3s
+			lb_try_interval 250ms
+		}
 	}
 }
