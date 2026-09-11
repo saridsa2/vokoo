@@ -212,7 +212,7 @@ async fn records_the_frozen_resolution_before_lowering() {
             "recommendation_id": "HLT-1",
             "capability_key": "clinical.task",
             "adapter_key": "clinical-task-escalate-notify-v1",
-            "adapter_version": 1,
+            "adapter_version": "1",
             "node_type_id": "escalate.notify",
             "mapping": {"to":"clinician","urgency":"soon"}
         }]
@@ -230,7 +230,10 @@ async fn records_the_frozen_resolution_before_lowering() {
         .iter()
         .find(|step| step["kind"] == "resolve")
         .expect("resolution trace step");
-    assert_eq!(resolution["result"]["resolutions"][0]["adapter_version"], 1);
+    assert_eq!(
+        resolution["result"]["resolutions"][0]["adapter_version"],
+        "1"
+    );
     assert_eq!(
         resolution["result"]["resolutions"][0]["resolution_id"],
         "00000000-0000-4000-8000-000000000001"

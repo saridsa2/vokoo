@@ -1,4 +1,9 @@
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use axum::{
     body::Body,
@@ -55,6 +60,10 @@ impl Config {
             .unwrap_or_else(|_| "8081".into())
             .parse::<u16>()
             .map_err(|_| ApiError::configuration("CONTROLPLANE_PORT must be a valid port"))?;
+        let host = env::var("CONTROLPLANE_HOST")
+            .unwrap_or_else(|_| "0.0.0.0".into())
+            .parse::<IpAddr>()
+            .map_err(|_| ApiError::configuration("CONTROLPLANE_HOST must be a valid IP address"))?;
         // **A list, not one origin.** There are two products on two hostnames
         // now, and a developer running the console locally is a third — one
         // value meant deploying broke local work and local work broke the
@@ -79,7 +88,7 @@ impl Config {
             supabase_anon_key,
             supabase_jwt_secret,
             run_secret,
-            bind: SocketAddr::from(([0, 0, 0, 0], port)),
+            bind: SocketAddr::new(host, port),
             cors_origins,
         })
     }
