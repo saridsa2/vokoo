@@ -111,7 +111,13 @@ api.sarvathra.ai {
 	# API on the internet behind nothing but the anon key; this path handles
 	# a single-use token from an email and is designed to be public.
 	handle /auth/v1/verify* {
-		reverse_proxy 127.0.0.1:8000
+		reverse_proxy 127.0.0.1:18000 127.0.0.1:8000 {
+			lb_policy first
+			fail_duration 10s
+			max_fails 1
+			lb_try_duration 3s
+			lb_try_interval 250ms
+		}
 	}
 
 	handle {

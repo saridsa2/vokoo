@@ -7,9 +7,9 @@ set -a
 source "$SARVATHRA_ROOT/shared/document-worker.env"
 set +a
 
-# Keep the Mini consumer passive until the VPS compiler worker is stopped as
-# part of a separately reviewed cutover.
-export VOKOO_COMPILER_ENABLED=false
+# The Mini is the production document and compiler worker. Only one host may
+# run this consumer at a time; the VPS unit is stopped during cutover.
+export VOKOO_COMPILER_ENABLED=true
 export VOKOO_DOCUMENT_EXTRACTION_PROVIDER=docling-modal
 export VOKOO_DOCLING_VERSION=1.37.0
 export VOKOO_DOCLING_TIMEOUT_SECONDS=600
