@@ -6,6 +6,7 @@ import { Chip, NavRow, Panel, SectionHeading } from "@/components/Panel"
 import { PillButton } from "@/components/PillButton"
 import { LargeTitle, PinnedHeader, usePinnedHeader } from "@/components/PinnedHeader"
 import { Screen } from "@/components/Screen"
+import { HERO_MINT, ScreenHero } from "@/components/ScreenHero"
 import { Text } from "@/components/Text"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { TAB_OVERHANG } from "@/navigators/SarvTabBar"
@@ -44,17 +45,30 @@ export const CareTeamScreen: FC<CareTeamScreenProps> = function CareTeamScreen({
       <Screen
         preset="scroll"
         contentContainerStyle={themed($container)}
-        safeAreaEdges={["top"]}
         ScrollViewProps={scrollProps}
       >
-        <LargeTitle title="Your care team" subtitle={`${PROVIDER.from}, ${PROVIDER.city}`} />
+        <View style={themed($bleed)}>
+          <ScreenHero
+            title="Your care team"
+            subtitle={`${PROVIDER.from}, ${PROVIDER.city}`}
+            art={require("../../assets/images/hero-team.png")}
+          />
+        </View>
 
         <Panel accent={theme.colors.error}>
-          <Text preset="formHelper" text="IF SOMETHING IS WRONG NOW" style={themed($label)} />
+          {/**
+           * One line, not two.
+           *
+           * It had a heading — "IF SOMETHING IS WRONG NOW" — and then a
+           * sentence restating it. The only part of the sentence doing work was
+           * *do not send a message*, which is the whole reason this panel sits
+           * above messaging, so that survives and the rest goes. Below it is a
+           * list and a phone number; nothing needs to say "ring".
+           */}
           <Text
-            preset="default"
-            text="Ring the unit — do not send a message — if:"
-            style={themed($body)}
+            preset="formHelper"
+            text="RING — DO NOT MESSAGE — IF"
+            style={themed($label)}
           />
           {/* A list rather than a sentence, because somebody frightened at
             eleven at night reads down a list and does not read a paragraph.
@@ -94,11 +108,6 @@ export const CareTeamScreen: FC<CareTeamScreenProps> = function CareTeamScreen({
             last
           />
         </Panel>
-        <Text
-          preset="formHelper"
-          text="Messages are read during clinic hours, Monday to Saturday. They are not the way to reach anyone urgently."
-          style={themed($subtitle)}
-        />
 
         <SectionHeading text="Who is looking after you" />
         <Panel>
@@ -108,17 +117,14 @@ export const CareTeamScreen: FC<CareTeamScreenProps> = function CareTeamScreen({
               title={member.name}
               subtitle={member.role}
               last={i === CARE_TEAM.length - 1}
+              /* A chip, and a short one. "At the desk today" beside a pip took
+                 half the row, which is what pushed every role onto a second
+                 line — and the pip said the same thing the chip's colour says. */
               right={
-                <View style={themed($presence)}>
-                  <Pip
-                    color={member.available ? theme.colors.done : theme.colors.palette.neutral400}
-                  />
-                  <Text
-                    preset="formHelper"
-                    text={member.available ? "At the desk today" : "Away"}
-                    style={themed($subtitle)}
-                  />
-                </View>
+                <Chip
+                  tone={member.available ? "done" : "neutral"}
+                  text={member.available ? "At the desk" : "Away"}
+                />
               }
             />
           ))}
@@ -130,17 +136,32 @@ export const CareTeamScreen: FC<CareTeamScreenProps> = function CareTeamScreen({
       <PinnedHeader
         title="Your care team"
         scrollY={scrollY}
+        background={HERO_MINT}
         right={<Chip tone={onDuty ? "done" : "neutral"} text={`${onDuty} at the desk`} />}
       />
     </View>
   )
 }
 
+const $bleed: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginHorizontal: -spacing.lg,
+  marginTop: -spacing.lg,
+  marginBottom: spacing.xs,
+})
+
 const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.lg,
   paddingTop: spacing.lg,
-  /* Clears the raised Sarv square, so the last card is never trapped under it. */
-  paddingBottom: spacing.xxl + TAB_OVERHANG,
+  /**
+   * Clears the raised Sarv square, and nothing more.
+   *
+   * It was `spacing.xxl + TAB_OVERHANG` — 80pt — on a scene that is not
+   * overlaid by the bar at all: React Navigation lays the bar below it, so the
+   * only thing reaching into the scene is the square, by `TAB_OVERHANG`. The
+   * extra 48 was a second clearance for a bar that was never in the way, and it
+   * left a dead band under the last card on every tab.
+   */
+  paddingBottom: TAB_OVERHANG + 5,
   gap: spacing.md,
 })
 

@@ -142,22 +142,50 @@ export function SarvTabBar({ state, navigation }: BottomTabBarProps) {
           accessibilityState={{ selected: sarvFocused }}
           style={({ pressed }) => [
             themed($raisedSlot),
-            { bottom: bottom + RAISE },
+            /**
+             * It settles all the way into the bar once you are on it.
+             *
+             * The raise is an invitation: it lifts Sarv out of the row of
+             * destinations to say it is someone to talk to rather than a place
+             * to look at. On the Sarv screen that invitation has been accepted,
+             * so it stops asking.
+             *
+             * Dropping it by `RAISE` was not enough — the white square plus its
+             * label is taller than the bar, so it still stood proud of it. Being
+             * *in* the bar means occupying the bar's own height and being
+             * centred in it, exactly like the four tabs beside it; the square
+             * goes and the mark becomes an icon the size of theirs. It also
+             * gives the composer back the space it was hanging over, which is
+             * the screen that most needs it.
+             */
+            sarvFocused
+              ? { bottom, height: BAR_HEIGHT, justifyContent: "center" }
+              : { bottom: bottom + RAISE },
             pressed && { opacity: 0.85 },
           ]}
         >
-          <View style={[themed($raised), sarvFocused && themed($raisedFocused)]}>
-            {/* The logo in its own blue. Every earlier attempt fixed contrast
-                by taking the colour away — white on ink, then white on the
-                accent — and each one traded the brand for prominence it did not
-                need. The square already stands out by breaking the bar. */}
+          {/* The logo in its own blue. Every earlier attempt fixed contrast by
+              taking the colour away — white on ink, then white on the accent —
+              and each one traded the brand for prominence it did not need. The
+              square already stands out by breaking the bar, and on the screen
+              where it is not breaking anything it does not need to. */}
+          {sarvFocused ? (
             <Image
               source={mark}
-              style={themed($mark)}
+              style={themed($markSettled)}
               resizeMode="contain"
               accessibilityIgnoresInvertColors
             />
-          </View>
+          ) : (
+            <View style={themed($raised)}>
+              <Image
+                source={mark}
+                style={themed($mark)}
+                resizeMode="contain"
+                accessibilityIgnoresInvertColors
+              />
+            </View>
+          )}
           {/* Named like its neighbours. The mark is distinctive, but four
               labelled tabs and one unlabelled square reads as an omission —
               and these are patients who should never have to infer. */}
@@ -235,10 +263,9 @@ const $raised: ThemedStyle<ViewStyle> = ({ colors }) => ({
   borderColor: colors.border,
 })
 
-/* Selected takes an ink edge and nothing else. Sarv is always Sarv; a control
-   that restyles itself on focus reads as a different control. */
-const $raisedFocused: ThemedStyle<ViewStyle> = ({ colors }) => ({
-  borderColor: colors.text,
-})
 
 const $mark: ThemedStyle<ImageStyle> = () => ({ width: 28, height: 34 })
+
+/* The size the four Glyphs beside it are drawn at, so the row reads as five
+   tabs rather than four and a guest. */
+const $markSettled: ThemedStyle<ImageStyle> = () => ({ width: 22, height: 26 })

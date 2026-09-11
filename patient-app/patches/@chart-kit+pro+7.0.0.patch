@@ -1,0 +1,13 @@
+diff --git a/node_modules/@chart-kit/pro/dist/react-native/charts/radar/RadarChart.js b/node_modules/@chart-kit/pro/dist/react-native/charts/radar/RadarChart.js
+index 8f2dcc8..4f25964 100644
+--- a/node_modules/@chart-kit/pro/dist/react-native/charts/radar/RadarChart.js
++++ b/node_modules/@chart-kit/pro/dist/react-native/charts/radar/RadarChart.js
+@@ -99,7 +99,7 @@ export const RadarChart = ({ categoryKey = getDefaultKey("metric"), data, height
+                             return null;
+                         }
+                         return (_jsx(Circle, { cx: labelHitTarget.x, cy: labelHitTarget.y, fill: theme.background, fillOpacity: 0.01, onPress: () => selectAxis(index), r: labelHitTarget.radius }, `label-hit-${toLabel(row[categoryKey])}-${index}`));
+-                    })] }), _jsx(Text, { style: [styles.selectedLabel, { color: theme.text }], children: selectedLabel }), _jsx(Text, { style: [styles.caption, { color: theme.mutedText }], children: "Tap an axis to focus a KPI" })] }));
++                    })] }), null, null] }));
+ };
+ const styles = StyleSheet.create({
+     caption: {

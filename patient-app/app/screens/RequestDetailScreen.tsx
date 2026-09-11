@@ -129,8 +129,26 @@ export const RequestDetailScreen: FC<RequestDetailScreenProps> = function Reques
               />
             )}
           </>
+        ) : request.kind === "measurement" ? (
+          /**
+           * A reading is typed, not answered.
+           *
+           * This shared the `questions` branch, so a spirometry reading offered
+           * "Answer the three questions" — and there is no question, there is a
+           * number on a device in the patient's hand.
+           */
+          <PillButton text="Enter your reading" onPress={() => setOutcome("fulfilled")} />
         ) : (
-          <PillButton text="Answer the three questions" onPress={() => setOutcome("fulfilled")} />
+          /* It opens the questionnaire now. This marked the request fulfilled
+             and asked nothing — a task the app set and then blocked.
+
+             No count in the label: the card already says how many, and a number
+             written in two places drifts the first time a questionnaire changes
+             — it had, the card said six and this said three. */
+          <PillButton
+            text="Answer the questions"
+            onPress={() => navigation.navigate("Questionnaire", { requestId: request.id })}
+          />
         )}
 
         <PillButton

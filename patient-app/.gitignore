@@ -90,3 +90,7 @@ web-build/
 # Dependency Graph Visualizations
 app-dependency-graph.svg
 app-dependency-graph.png
+
+# Expo web build output. 10 MB of generated files.
+dist/
+

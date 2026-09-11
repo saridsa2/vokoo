@@ -1,5 +1,5 @@
 import { FC } from "react"
-import { Pressable, TextStyle, View, ViewStyle } from "react-native"
+import { Linking, Pressable, TextStyle, View, ViewStyle } from "react-native"
 
 import { Glyph } from "@/components/Glyph"
 import { NavRow, Panel, SectionHeading } from "@/components/Panel"
@@ -67,7 +67,7 @@ export const CohortScreen: FC<CohortScreenProps> = function CohortScreen({ navig
         />
       </Panel>
 
-      <SectionHeading text="Who is looking after you" />
+      <SectionHeading text="Your unit" />
       <Panel>
         {CARE_TEAM.map((member, i) => (
           <NavRow
@@ -113,6 +113,22 @@ export const CohortScreen: FC<CohortScreenProps> = function CohortScreen({ navig
         variant="destructive"
         onPress={() => navigation.navigate("MessageThread")}
       />
+
+      {/**
+       * The credit the artwork's licence requires.
+       *
+       * Storyset is free for commercial use *with* attribution, so this is an
+       * obligation rather than a courtesy — and an obligation that is only met
+       * if a user can actually reach it. It sits at the foot of the programme
+       * screen because that is the app's one "about this" page; the day there
+       * is a proper licences screen it moves there whole.
+       */}
+      <Text
+        preset="formHelper"
+        text="Illustrations by Storyset — storyset.com"
+        style={themed($credit)}
+        onPress={() => Linking.openURL("https://storyset.com")}
+      />
     </Screen>
   )
 }
@@ -153,3 +169,9 @@ const $initials: ThemedStyle<ViewStyle> = ({ colors }) => ({
 })
 
 const $initialsText: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.textDim })
+
+const $credit: ThemedStyle<TextStyle> = ({ colors, spacing }) => ({
+  color: colors.textDim,
+  textAlign: "center",
+  marginTop: spacing.md,
+})

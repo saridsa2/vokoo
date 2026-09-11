@@ -33,14 +33,25 @@ export type MainTabParamList = {
 export type AppStackParamList = {
   SignIn: undefined
   Register: undefined
+  /** What the app would like from the phone, explained before it is asked. */
+  Permissions: undefined
   Main: NavigatorScreenParams<MainTabParamList>
   /** One outreach request, opened to answer it. */
   RequestDetail: { requestId: string }
+  /* Answering a `questions` request. Takes the request so the screen can
+     report back which one was answered. */
+  Questionnaire: { requestId: string }
+  /* A bench for the on-device model. Deep link only — see the screen. */
+  /* Offered at the end of onboarding, and only where the phone can run it. */
+  Intelligence: undefined
+  LocalModel: undefined
   /** The programme this patient is on — the cohort, from their side. */
   Cohort: undefined
   MessageThread: undefined
   /** A live call with the agent, in the app. */
   Call: undefined
+  /** One measurement's full history, opened from a ring or a card. */
+  MetricDetail: { metricKey: string }
 }
 
 export type AppStackScreenProps<T extends keyof AppStackParamList> = NativeStackScreenProps<

@@ -22,9 +22,22 @@ export const Panel: FC<{
   /** Tints the left edge — the node-card rule from the console: an element that
    *  belongs to something takes its colour. */
   accent?: string
-}> = function Panel({ children, onPress, accent }) {
+  /**
+   * For a panel whose children bring their own padding.
+   *
+   * A grouped list of `NavRow`s is the case that needs it: the rows pad
+   * themselves, so the panel must not pad again — otherwise the hairlines
+   * between them stop short of the card's edges and the group reads as
+   * separate boxes rather than one list.
+   */
+  style?: ViewStyle
+}> = function Panel({ children, onPress, accent, style: override }) {
   const { themed } = useAppTheme()
-  const style = [themed($panel), accent ? { borderLeftWidth: 4, borderLeftColor: accent } : null]
+  const style = [
+    themed($panel),
+    accent ? { borderLeftWidth: 4, borderLeftColor: accent } : null,
+    override,
+  ]
 
   if (!onPress) return <View style={style}>{children}</View>
 
@@ -106,7 +119,7 @@ export const NavRow: FC<{
     >
       {left ? <View style={themed($navRowLeft)}>{left}</View> : null}
       <View style={$navRowBody}>
-        <Text preset="default" text={title} style={themed($navRowTitle)} />
+        <Text preset="bold" text={title} style={themed($navRowTitle)} />
         {subtitle ? (
           <Text preset="formHelper" text={subtitle} style={themed($navRowSubtitle)} />
         ) : null}
@@ -145,7 +158,20 @@ const $chip: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   alignSelf: "flex-start",
 })
 
-const $chipText: ThemedStyle<TextStyle> = () => ({ letterSpacing: 0.2 })
+/**
+ * 12, not body scale.
+ *
+ * `formHelper` is the app's small preset, but it is scaled by the reader's font
+ * setting like everything else — at 1.15 a chip's word came out the same size
+ * as the title it sat beside, so "Read by your team" read as loud as the name
+ * of the report. A chip is a label on something, and it should never be able to
+ * out-shout the thing it labels.
+ */
+const $chipText: ThemedStyle<TextStyle> = () => ({
+  letterSpacing: 0.2,
+  fontSize: 12,
+  lineHeight: 16,
+})
 
 const $navRow: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexDirection: "row",
@@ -159,10 +185,29 @@ const $navRowRule: ThemedStyle<ViewStyle> = ({ colors }) => ({
   borderBottomColor: colors.separator,
 })
 
-const $navRowLeft: ThemedStyle<ViewStyle> = () => ({ width: 28, alignItems: "center" })
+/* `minWidth`, not `width`. A fixed 28 keeps small glyphs aligned down a column,
+   which is why it is here — but it also clipped anything larger, and a 38pt
+   task icon was the first thing that was. */
+const $navRowLeft: ThemedStyle<ViewStyle> = () => ({ minWidth: 28, alignItems: "center" })
 
 const $navRowBody: ViewStyle = { flex: 1, gap: 2 }
 
-const $navRowTitle: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.text })
+/**
+ * 15 over 12, and the title carries weight.
+ *
+ * Both lines were body-scale presets — `default` over `formHelper` — which on
+ * this device land close enough together that a name and the role under it read
+ * as two equal lines of the same thing. The step has to be visible at arm's
+ * length, because these rows are scanned rather than read.
+ */
+const $navRowTitle: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.text,
+  fontSize: 15,
+  lineHeight: 19,
+})
 
-const $navRowSubtitle: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.textDim })
+const $navRowSubtitle: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.textDim,
+  fontSize: 12,
+  lineHeight: 16,
+})

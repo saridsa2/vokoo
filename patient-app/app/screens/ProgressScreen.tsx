@@ -1,15 +1,21 @@
-import { FC } from "react"
+import { FC, useState } from "react"
 import { TextStyle, View, ViewStyle } from "react-native"
 
 import { JourneyTimeline } from "@/components/JourneyTimeline"
+import { HeadroomRibbon } from "@/components/HeadroomRibbon"
+import { SymptomProfile } from "@/components/SymptomProfile"
 import { HomeChart } from "@/components/HomeChart"
-import { Chip, Panel, SectionHeading } from "@/components/Panel"
+import { MedicineLevel } from "@/components/MedicineLevel"
+import { WearableTrends } from "@/components/WearableTrends"
+import { WearableGate } from "@/components/WearableGate"
+import { HERO_MINT, ScreenHero } from "@/components/ScreenHero"
+import { Chip, Panel } from "@/components/Panel"
 import { LargeTitle, PinnedHeader, usePinnedHeader } from "@/components/PinnedHeader"
 import { Screen } from "@/components/Screen"
 import { Text } from "@/components/Text"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { TAB_OVERHANG } from "@/navigators/SarvTabBar"
-import { COHORT, MILESTONES, PASSIVE, SPIROMETRY, TACROLIMUS } from "@/services/mock/careData"
+import { COHORT, PASSIVE, SPIROMETRY, TACROLIMUS } from "@/services/mock/careData"
 import { useAppTheme } from "@/theme/context"
 import type { ThemedStyle } from "@/theme/types"
 
@@ -34,47 +40,48 @@ interface ProgressScreenProps extends MainTabScreenProps<"Progress"> {}
 export const ProgressScreen: FC<ProgressScreenProps> = function ProgressScreen({ navigation }) {
   const { themed, theme } = useAppTheme()
 
+  /**
+   * Each card's rail takes that card's own verdict.
+   *
+   * It was `theme.colors.done` on both, hardcoded — so a reading headed "Ring
+   * the unit" in amber still had a green edge down its side, which is the card
+   * making two claims and the quieter one being true. The components compute
+   * the verdict, so they report it up rather than this screen guessing.
+   */
+  const [settled, setSettled] = useState<Record<string, boolean>>({})
+  const railFor = (key: string) =>
+    settled[key] === false ? theme.colors.expiring : theme.colors.done
+
   const { scrollY, scrollProps } = usePinnedHeader()
 
   /* Fixed in the mock. Derived from `cohort_members.joined_at` for real, which
      is why nothing here computes it from the device clock — a phone with the
      wrong date should not move a patient through their programme. */
   const weeksIn = 6
-  const current = MILESTONES.find((m) => m.state === "current")
 
   return (
     <View style={$root}>
       <Screen
         preset="scroll"
         contentContainerStyle={themed($container)}
-        safeAreaEdges={["top"]}
         ScrollViewProps={scrollProps}
       >
-        <LargeTitle title="Where you are" subtitle={COHORT.name} />
-
-        <Panel accent={theme.colors.asked}>
-          <View style={themed($figureRow)}>
-            <Text preset="heading" text={String(weeksIn)} style={themed($figure)} />
-            <View style={$figureBody}>
-              <Text preset="subheading" text="weeks since your transplant" style={themed($body)} />
-              <Text
-                preset="formHelper"
-                text={`Started ${COHORT.startedOn}${COHORT.weeks ? ` · ${COHORT.weeks} weeks in the programme` : ""}`}
-                style={themed($subtitle)}
-              />
-            </View>
-          </View>
-          {/* A bar, not a ring. A ring implies completion is the goal; this is
-            elapsed time in a year of follow-up, and that is all it claims. */}
-          <View style={themed($track)}>
-            <View
-              style={[
-                themed($trackFill),
-                { width: `${Math.min(100, (weeksIn / (COHORT.weeks ?? 52)) * 100)}%` },
-              ]}
-            />
-          </View>
-        </Panel>
+        {/**
+         * The road is not here any more.
+         *
+         * Progress carried a second copy of the care path, under its own
+         * heading — the same six milestones the whole of Today is built around,
+         * two taps apart. A patient who has just scrolled past the road does
+         * not need to be shown it again; what this screen is for is the
+         * readings, which Today does not carry at all.
+         */}
+        <View style={themed($bleed)}>
+          <ScreenHero
+            title="Your readings"
+            subtitle={`Week ${weeksIn} · ${COHORT.name}`}
+            art={require("../../assets/images/hero-progress.png")}
+          />
+        </View>
 
         {/**
          * The charts come before the timeline, and that ordering is the argument
@@ -86,12 +93,27 @@ export const ProgressScreen: FC<ProgressScreenProps> = function ProgressScreen({
          * transplant recipient is actually watching. Putting the plan first would
          * make them scroll past everyone's schedule to reach their own numbers.
          */}
-        <Panel accent={theme.colors.asked}>
-          <HomeChart series={SPIROMETRY} />
+        {/* Opens the long view: Month / 6 months / Year in percent of baseline.
+            The card is the fortnight; the screen behind it is the drift, which
+            is the question a fortnight cannot be asked. */}
+        <Panel
+          accent={railFor(SPIROMETRY.key)}
+          onPress={() => navigation.navigate("MetricDetail", { metricKey: SPIROMETRY.key })}
+        >
+          <HeadroomRibbon
+            series={SPIROMETRY}
+            onVerdict={(ok) => setSettled((p) => (p[SPIROMETRY.key] === ok ? p : { ...p, [SPIROMETRY.key]: ok }))}
+          />
         </Panel>
 
-        <Panel accent={theme.colors.done}>
-          <HomeChart series={TACROLIMUS} />
+        <Panel
+          accent={railFor(TACROLIMUS.key)}
+          onPress={() => navigation.navigate("MetricDetail", { metricKey: TACROLIMUS.key })}
+        >
+          <MedicineLevel
+            series={TACROLIMUS}
+            onVerdict={(ok) => setSettled((p) => (p[TACROLIMUS.key] === ok ? p : { ...p, [TACROLIMUS.key]: ok }))}
+          />
         </Panel>
 
         {/**
@@ -103,49 +125,70 @@ export const ProgressScreen: FC<ProgressScreenProps> = function ProgressScreen({
          * A patient who reads a sleep chart as a task has been given a job by a
          * clinic that never set one.
          */}
-        <SectionHeading text="From your watch" />
-        {PASSIVE.map((series) => (
-          <Panel key={series.key}>
-            <HomeChart series={series} height={104} />
-          </Panel>
-        ))}
+        {/**
+         * One row each, not one chart each, and no heading over them.
+         *
+         * These are the numbers nobody asked the patient for — a wearable
+         * reported them. Given the same treatment as the morning blow they read
+         * as three more things to keep up with; as compact metrics they read as
+         * what they are, which is context.
+         *
+         * "From your wearable" sat above the card and earned nothing: a moon, a
+         * heart and a pair of footprints already say where these came from, and
+         * a heading that only restates its own contents is a line of furniture.
+         *
+         * Rings rather than rows, because a ring answers "how much of today is
+         * done" without a number — which is the weight a reading nobody asked
+         * for deserves.
+         */}
+        {/* The rings only exist once a wearable does. Everything about *not*
+            having one — never asked, refused, no health store at all — is five
+            different screens, and the gate is where they live. */}
+        {/* The six domains the weekly request asks about. Not a measurement
+            over time, so it does not belong with the two cards above it — six
+            things at one moment is a different question and gets a different
+            shape. */}
+        <SymptomProfile />
 
-        {current && (
-          <Panel>
-            <Text preset="formHelper" text="NEXT" style={themed($label)} />
-            <Text preset="subheading" text={current.title} style={themed($body)} />
-            <Text preset="default" text={current.when} style={themed($subtitle)} />
-            {current.detail ? (
-              <Text preset="formHelper" text={current.detail} style={themed($subtitle)} />
-            ) : null}
-          </Panel>
-        )}
-
-        <SectionHeading
-          text="Your journey"
-          action={{ text: "Details", onPress: () => navigation.navigate("Cohort") }}
-        />
-        <Panel>
-          <JourneyTimeline milestones={MILESTONES} />
-        </Panel>
+        <WearableGate>
+          <WearableTrends
+            series={PASSIVE}
+            onOpen={(metricKey) => navigation.navigate("MetricDetail", { metricKey })}
+          />
+        </WearableGate>
       </Screen>
 
       {/* The weeks figure follows the title up: on a screen of charts it is the
           one number that says which patient's week this is. */}
       <PinnedHeader
-        title="Where you are"
+        title="Your readings"
         scrollY={scrollY}
-        right={<Chip tone="asked" text={`Week ${weeksIn}`} />}
+        background={HERO_MINT}
+        right={<Chip tone="done" text={`Week ${weeksIn}`} />}
       />
     </View>
   )
 }
 
+const $bleed: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginHorizontal: -spacing.lg,
+  marginTop: -spacing.lg,
+  marginBottom: spacing.xs,
+})
+
 const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.lg,
   paddingTop: spacing.lg,
-  /* Clears the raised Sarv square, so the last card is never trapped under it. */
-  paddingBottom: spacing.xxl + TAB_OVERHANG,
+  /**
+   * Clears the raised Sarv square, and nothing more.
+   *
+   * It was `spacing.xxl + TAB_OVERHANG` — 80pt — on a scene that is not
+   * overlaid by the bar at all: React Navigation lays the bar below it, so the
+   * only thing reaching into the scene is the square, by `TAB_OVERHANG`. The
+   * extra 48 was a second clearance for a bar that was never in the way, and it
+   * left a dead band under the last card on every tab.
+   */
+  paddingBottom: TAB_OVERHANG + 5,
   gap: spacing.md,
 })
 

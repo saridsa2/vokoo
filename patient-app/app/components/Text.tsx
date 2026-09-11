@@ -111,6 +111,18 @@ const $presets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   ],
   subheading: [$baseStyle, { ...$sizeStyles.lg, ...$fontWeightStyles.medium }],
   formLabel: [$baseStyle, { ...$fontWeightStyles.medium }],
-  formHelper: [$baseStyle, { ...$sizeStyles.sm, ...$fontWeightStyles.normal }],
+  /**
+   * A hint, and it has to look like one.
+   *
+   * It was `sm` + normal + the base ink — which is `$baseStyle` exactly, in
+   * every one of its three properties. So a field's helper rendered
+   * indistinguishable from body text and from the label above it, and a form
+   * read as four equally loud sentences per question. A step down in both size
+   * and colour is what makes it supporting text rather than more content.
+   */
+  formHelper: [
+    $baseStyle,
+    ({ colors }) => ({ ...$sizeStyles.xs, ...$fontWeightStyles.normal, color: colors.textDim }),
+  ],
 }
 const $rtlStyle: TextStyle = isRTL ? { writingDirection: "rtl" } : {}

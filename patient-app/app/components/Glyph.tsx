@@ -10,11 +10,14 @@ import {
   faFileLines,
   faHouse,
   faLungs,
+  faHeartPulse,
   faMessage,
+  faMoon,
   faPaperclip,
   faPaperPlaneTop,
   faPhone,
   faShieldCheck,
+  faShoePrints,
   faUserDoctor,
   faVial,
   faXmark,
@@ -90,6 +93,11 @@ const GLYPHS = {
   breath: faLungs,
   /** A date on the programme rather than a task. */
   calendar: faCalendarDays,
+
+  /** What a wearable reports, and nobody was asked for. */
+  sleep: faMoon,
+  heart: faHeartPulse,
+  steps: faShoePrints,
 } satisfies Record<string, IconDefinition>
 
 export type GlyphName = keyof typeof GLYPHS

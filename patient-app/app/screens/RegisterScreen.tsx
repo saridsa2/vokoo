@@ -3,11 +3,13 @@ import { TextStyle, View, ViewStyle } from "react-native"
 
 import { Glyph } from "@/components/Glyph"
 import { PillButton } from "@/components/PillButton"
+import { PinnedHeader, usePinnedHeader } from "@/components/PinnedHeader"
 import { Screen } from "@/components/Screen"
+import { HERO_MINT, ScreenHero } from "@/components/ScreenHero"
 import { Text } from "@/components/Text"
 import { TextField } from "@/components/TextField"
+import { DateField } from "@/components/DateField"
 import { Checkbox } from "@/components/Toggle/Checkbox"
-import { Wordmark } from "@/components/Wordmark"
 import type { AppStackScreenProps } from "@/navigators/navigationTypes"
 import { PROVIDER } from "@/services/mock/careData"
 import { useAppTheme } from "@/theme/context"
@@ -39,101 +41,111 @@ interface RegisterScreenProps extends AppStackScreenProps<"Register"> {}
 
 export const RegisterScreen: FC<RegisterScreenProps> = function RegisterScreen({ navigation }) {
   const { themed, theme } = useAppTheme()
+  const { scrollY, scrollProps } = usePinnedHeader()
 
-  const [hospital, setHospital] = useState(PROVIDER.full)
+  /**
+   * Empty, not pre-filled.
+   *
+   * It defaulted to the one hospital in the mock, so the screen asked a
+   * question it had already answered — and on a real build with more than one
+   * unit it would quietly submit the wrong one for anybody who did not notice.
+   */
+  const [hospital, setHospital] = useState("")
   const [name, setName] = useState("")
-  const [dob, setDob] = useState("")
+  const [dob, setDob] = useState<Date | undefined>(undefined)
   const [uhid, setUhid] = useState("")
   const [consented, setConsented] = useState(false)
   const [sent, setSent] = useState(false)
 
-  const ready = name.trim().length > 2 && dob.trim().length >= 8 && consented
+  const ready = name.trim().length > 2 && dob !== undefined && consented
 
   if (sent) return <Waiting onBack={() => navigation.navigate("SignIn")} />
 
   return (
-    <Screen
-      preset="scroll"
-      contentContainerStyle={themed($container)}
-      safeAreaEdges={["top", "bottom"]}
-    >
-      <View style={themed($top)}>
-        <Wordmark size="sm" />
-        <Text preset="heading" text="Let us find you" style={themed($title)} />
-        <Text
-          preset="default"
-          text="We will match these against your hospital record. Your care team confirms it before anything is shared."
-          style={themed($subtitle)}
-        />
-      </View>
+    <View style={$root}>
+      <Screen
+        preset="scroll"
+        contentContainerStyle={themed($container)}
+        ScrollViewProps={scrollProps}
+        safeAreaEdges={["bottom"]}
+      >
+        {/* The same head every other screen wears: a full-bleed band that
+            shrinks into the pinned bar as the form scrolls under it. This
+            screen had a wordmark, a loose picture and a title that all left
+            the screen together on the first swipe. */}
+        <View style={themed($bleed)}>
+          <ScreenHero
+            title="Let us find you"
+            art={require("../../assets/images/hero-register.png")}
+          />
+        </View>
 
-      <View style={themed($form)}>
-        {/* The hospital comes first because it decides everything after it:
+        <View style={themed($form)}>
+          {/* The hospital comes first because it decides everything after it:
             whose record is searched, who confirms, and whose care team the
             consent below is about. A patient is treated somewhere before they
             are treated by anyone. */}
-        <TextField
-          value={hospital}
-          onChangeText={setHospital}
-          label="Where are you treated?"
-          helper="The hospital that gave you this app."
-          placeholder={PROVIDER.full}
-        />
-        <TextField
-          value={name}
-          onChangeText={setName}
-          label="Your full name"
-          helper="As it appears on your hospital paperwork."
-          placeholder="Sunita Reddy"
-          autoCapitalize="words"
-          autoComplete="name"
-        />
-        <TextField
-          value={dob}
-          onChangeText={setDob}
-          label="Date of birth"
-          placeholder="DD / MM / YYYY"
-          keyboardType="number-pad"
-        />
-        <TextField
-          value={uhid}
-          onChangeText={setUhid}
-          label="Hospital number (if you have it)"
-          helper="On your card or the top of a discharge summary. It makes the match quicker; you can leave it out."
-          placeholder="0000000"
-          autoCapitalize="characters"
-        />
+          <TextField
+            value={hospital}
+            onChangeText={setHospital}
+            label="Where are you treated?"
+            placeholder={PROVIDER.full}
+          />
+          {/* The placeholder is not a name. "Sunita Reddy" was both the hint and
+            the patient the mock signs in as, so the field looked pre-filled
+            with the right answer — the one thing a placeholder must never look
+            like. */}
+          <TextField
+            value={name}
+            onChangeText={setName}
+            label="Your full name"
+            placeholder="As written on your hospital record"
+            autoCapitalize="words"
+            autoComplete="name"
+          />
+          <DateField value={dob} onChange={setDob} label="Date of birth" />
+          <TextField
+            value={uhid}
+            onChangeText={setUhid}
+            label="Hospital number (if you have it)"
+            helper="On your card, or the top of a discharge summary."
+            placeholder="0000000"
+            autoCapitalize="characters"
+          />
 
-        <View style={themed($consent)}>
-          <Checkbox
-            value={consented}
-            onValueChange={setConsented}
-            label={`My care team at ${hospital.split(",")[0] || "the hospital"} may see the reports and answers I send here.`}
+          <View style={themed($consent)}>
+            <Checkbox
+              value={consented}
+              onValueChange={setConsented}
+              label={`My care team at ${hospital.split(",")[0] || "the hospital"} may see the reports and answers I send here.`}
+            />
+          </View>
+        </View>
+
+        <View style={themed($bottom)}>
+          <View style={themed($assurance)}>
+            <Glyph name="shield" size={18} color={theme.colors.textDim} />
+            <Text
+              preset="formHelper"
+              text="Nothing is shared with anyone outside your care team, and nothing is sold."
+              style={themed($assuranceText)}
+            />
+          </View>
+          <PillButton
+            text="Ask your hospital to connect you"
+            onPress={() => setSent(true)}
+            disabled={!ready}
+          />
+          <PillButton
+            text="I already have an account"
+            variant="quiet"
+            onPress={() => navigation.navigate("SignIn")}
           />
         </View>
-      </View>
+      </Screen>
 
-      <View style={themed($bottom)}>
-        <View style={themed($assurance)}>
-          <Glyph name="shield" size={18} color={theme.colors.asked} />
-          <Text
-            preset="formHelper"
-            text="Nothing is shared with anyone outside your care team, and nothing is sold."
-            style={themed($assuranceText)}
-          />
-        </View>
-        <PillButton
-          text="Ask your hospital to connect you"
-          onPress={() => setSent(true)}
-          disabled={!ready}
-        />
-        <PillButton
-          text="I already have an account"
-          variant="quiet"
-          onPress={() => navigation.navigate("SignIn")}
-        />
-      </View>
-    </Screen>
+      <PinnedHeader title="Let us find you" scrollY={scrollY} background={HERO_MINT} />
+    </View>
   )
 }
 
@@ -166,35 +178,56 @@ const Waiting: FC<{ onBack: () => void }> = function Waiting({ onBack }) {
   )
 }
 
+const $root: ViewStyle = { flex: 1 }
+
+const $bleed: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginHorizontal: -spacing.lg,
+  marginTop: -spacing.lg,
+  marginBottom: spacing.xs,
+})
+
 const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flexGrow: 1,
   paddingHorizontal: spacing.lg,
-  paddingTop: spacing.xl,
+  paddingTop: spacing.lg,
   paddingBottom: spacing.lg,
-  gap: spacing.xl,
+  gap: spacing.md,
 })
 
-const $top: ThemedStyle<ViewStyle> = ({ spacing }) => ({ gap: spacing.xs })
-
 const $title: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.text })
-
-const $subtitle: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.textDim })
 
 const $form: ThemedStyle<ViewStyle> = ({ spacing }) => ({ gap: spacing.md })
 
 const $consent: ThemedStyle<ViewStyle> = ({ spacing }) => ({ marginTop: spacing.xs })
 
-const $bottom: ThemedStyle<ViewStyle> = ({ spacing }) => ({ gap: spacing.sm, marginTop: "auto" })
+/* `flexShrink: 0` and no grow: the buttons inside are `flexGrow: 1` blocks, and
+   in a flexGrow container they would take the page's free space instead of the
+   auto margin that is meant to pin this group to the bottom. */
+const $bottom: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  gap: spacing.sm,
+  marginTop: "auto",
+  flexGrow: 0,
+  flexShrink: 0,
+})
 
+/**
+ * Neutral, not blue.
+ *
+ * It was `askedBackground` with an `asked` shield — the accent this palette
+ * reserves for *the one thing being asked of you*. A privacy line asks nothing;
+ * it reassures. Wearing the accent it competed with the button directly above
+ * it, so the screen made two claims on the eye and neither of them was the
+ * action.
+ */
 const $assurance: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
   flexDirection: "row",
   alignItems: "center",
   gap: spacing.xs,
-  backgroundColor: colors.askedBackground,
+  backgroundColor: colors.palette.neutral300,
   padding: spacing.sm,
 })
 
-const $assuranceText: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.text, flex: 1 })
+const $assuranceText: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.textDim, flex: 1 })
 
 const $waiting: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   flex: 1,

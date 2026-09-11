@@ -6,6 +6,7 @@ import { Chip, Panel } from "@/components/Panel"
 import { PillButton } from "@/components/PillButton"
 import { LargeTitle, PinnedHeader, usePinnedHeader } from "@/components/PinnedHeader"
 import { Screen } from "@/components/Screen"
+import { HERO_MINT, ScreenHero } from "@/components/ScreenHero"
 import { Text } from "@/components/Text"
 import type { MainTabScreenProps } from "@/navigators/navigationTypes"
 import { TAB_OVERHANG } from "@/navigators/SarvTabBar"
@@ -42,13 +43,14 @@ export const ReportsScreen: FC<ReportsScreenProps> = function ReportsScreen(_pro
       <Screen
         preset="scroll"
         contentContainerStyle={themed($container)}
-        safeAreaEdges={["top"]}
         ScrollViewProps={scrollProps}
       >
-        <LargeTitle
-          title="What you have sent"
-          subtitle={`Your care team at ${PROVIDER.name.split(" ")[0]} can see all of these. Nobody else can.`}
-        />
+        <View style={themed($bleed)}>
+          <ScreenHero
+            title="Reports"
+            art={require("../../assets/images/hero-reports.png")}
+          />
+        </View>
 
         <PillButton
           text="Send something now"
@@ -59,19 +61,14 @@ export const ReportsScreen: FC<ReportsScreenProps> = function ReportsScreen(_pro
         {REPORTS.map((report) => (
           <ReportCard key={report.id} report={report} />
         ))}
-
-        <Text
-          preset="formHelper"
-          text="Reports stay here for as long as your hospital keeps them. Ask the unit if you want a copy removed."
-          style={themed($footnote)}
-        />
       </Screen>
 
       {/* What is still with the unit — the one thing a patient checks this
           screen for after sending something. */}
       <PinnedHeader
-        title="What you have sent"
+        title="Reports"
         scrollY={scrollY}
+        background={HERO_MINT}
         right={
           waiting > 0 ? <Chip text={`${waiting} waiting`} /> : <Chip tone="done" text="All read" />
         }
@@ -94,7 +91,7 @@ const ReportCard: FC<{ report: Report }> = function ReportCard({ report }) {
       <View style={themed($row)}>
         <Glyph name="reports" size={22} color={theme.colors.textDim} />
         <View style={$rowBody}>
-          <Text preset="default" text={report.title} style={themed($body)} />
+          <Text preset="bold" text={report.title} style={themed($cardTitle)} />
           <Text
             preset="formHelper"
             text={`Sent ${report.sentOn} · ${report.pages} page${report.pages === 1 ? "" : "s"}`}
@@ -117,17 +114,49 @@ const ReportCard: FC<{ report: Report }> = function ReportCard({ report }) {
   )
 }
 
+const $bleed: ThemedStyle<ViewStyle> = ({ spacing }) => ({
+  marginHorizontal: -spacing.lg,
+  marginTop: -spacing.lg,
+  marginBottom: spacing.xs,
+})
+
 const $container: ThemedStyle<ViewStyle> = ({ spacing }) => ({
   paddingHorizontal: spacing.lg,
   paddingTop: spacing.lg,
-  /* Clears the raised Sarv square, so the last card is never trapped under it. */
-  paddingBottom: spacing.xxl + TAB_OVERHANG,
+  /**
+   * Clears the raised Sarv square, and nothing more.
+   *
+   * It was `spacing.xxl + TAB_OVERHANG` — 80pt — on a scene that is not
+   * overlaid by the bar at all: React Navigation lays the bar below it, so the
+   * only thing reaching into the scene is the square, by `TAB_OVERHANG`. The
+   * extra 48 was a second clearance for a bar that was never in the way, and it
+   * left a dead band under the last card on every tab.
+   */
+  paddingBottom: TAB_OVERHANG + 5,
   gap: spacing.md,
 })
 
 const $root: ViewStyle = { flex: 1 }
 
-const $subtitle: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.textDim })
+/**
+ * 15 over 12, matching every other list in the app.
+ *
+ * A report's name and the line under it saying when it was sent were both at
+ * body scale, so a card read as two equal sentences with a chip beneath. The
+ * name is the thing being looked for; the date is how you tell two of them
+ * apart once you have found it.
+ */
+const $cardTitle: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.text,
+  fontSize: 15,
+  lineHeight: 19,
+})
+
+const $subtitle: ThemedStyle<TextStyle> = ({ colors }) => ({
+  color: colors.textDim,
+  fontSize: 12,
+  lineHeight: 16,
+})
 
 const $body: ThemedStyle<TextStyle> = ({ colors }) => ({ color: colors.text })
 

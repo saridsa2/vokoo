@@ -32,6 +32,16 @@ export interface PinnedHeaderProps {
   scrollY: Animated.Value
   /** Sits at the right of the compact bar — a count, a state, an action. */
   right?: ReactNode
+  /**
+   * The bar's own ground, when the screen it pins has one of its own.
+   *
+   * Defaults to the app background, which is right for a plain list. A screen
+   * that opens on a coloured band needs to pass that colour: the bar takes over
+   * from a large title *in place*, so a bar in a different colour reads as the
+   * page changing rather than as the title shrinking — which is exactly what
+   * the mint hero on Today did.
+   */
+  background?: string
 }
 
 /** Where the large title has travelled far enough for the bar to take over. */
@@ -41,6 +51,7 @@ export const PinnedHeader: FC<PinnedHeaderProps> = function PinnedHeader({
   title,
   scrollY,
   right,
+  background,
 }) {
   const { themed } = useAppTheme()
   const { top } = useSafeAreaInsets()
@@ -58,7 +69,14 @@ export const PinnedHeader: FC<PinnedHeaderProps> = function PinnedHeader({
     /* Never takes a touch. It carries a title and a chip, neither of which is
        pressable, and it sits over the top of a scrolling list — so anything it
        captured would be a tap the patient aimed at the first card. */
-    <Animated.View style={[themed($bar), { paddingTop: top, opacity }]} pointerEvents="none">
+    <Animated.View
+      style={[
+        themed($bar),
+        { paddingTop: top, opacity },
+        background ? { backgroundColor: background } : null,
+      ]}
+      pointerEvents="none"
+    >
       <View style={themed($barRow)}>
         <Text preset="bold" text={title} style={themed($barTitle)} numberOfLines={1} />
         {right}
